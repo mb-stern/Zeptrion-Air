@@ -13,28 +13,120 @@
       "type": "ExpansionPanel",
       "caption": "Kanal 1",
       "items": [
-        {"type":"ValidationTextBox","name":"Channel1Name","caption":"Name"},
-        {"type":"Select","name":"Channel1Type","caption":"Art","options":[
-          {"caption":"Nicht verwendet","value":"unused"},
-          {"caption":"Licht","value":"light"},
-          {"caption":"Dimmer / DALI","value":"dimmer"},
-          {"caption":"Store / Rollo","value":"shutter"}
-        ]},
-        {"type":"CheckBox","name":"Channel1Scenes","caption":"Szenen 1-4 bereitstellen"}
+        {
+          "type": "ValidationTextBox",
+          "name": "Channel1Name",
+          "caption": "Name"
+        },
+        {
+          "type": "Select",
+          "name": "Channel1Type",
+          "caption": "Art",
+          "options": [
+            {
+              "caption": "Nicht verwendet",
+              "value": "unused"
+            },
+            {
+              "caption": "Licht",
+              "value": "light"
+            },
+            {
+              "caption": "Dimmer / DALI",
+              "value": "dimmer"
+            },
+            {
+              "caption": "Store / Rollo",
+              "value": "shutter"
+            }
+          ]
+        },
+        {
+          "type": "CheckBox",
+          "name": "Channel1Scenes",
+          "caption": "Szenen 1-4 bereitstellen"
+        }
       ]
     },
     {
       "type": "ExpansionPanel",
       "caption": "Kanal 2",
       "items": [
-        {"type":"ValidationTextBox","name":"Channel2Name","caption":"Name"},
-        {"type":"Select","name":"Channel2Type","caption":"Art","options":[
-          {"caption":"Nicht verwendet","value":"unused"},
-          {"caption":"Licht","value":"light"},
-          {"caption":"Dimmer / DALI","value":"dimmer"},
-          {"caption":"Store / Rollo","value":"shutter"}
-        ]},
-        {"type":"CheckBox","name":"Channel2Scenes","caption":"Szenen 1-4 bereitstellen"}
+        {
+          "type": "ValidationTextBox",
+          "name": "Channel2Name",
+          "caption": "Name"
+        },
+        {
+          "type": "Select",
+          "name": "Channel2Type",
+          "caption": "Art",
+          "options": [
+            {
+              "caption": "Nicht verwendet",
+              "value": "unused"
+            },
+            {
+              "caption": "Licht",
+              "value": "light"
+            },
+            {
+              "caption": "Dimmer / DALI",
+              "value": "dimmer"
+            },
+            {
+              "caption": "Store / Rollo",
+              "value": "shutter"
+            }
+          ]
+        },
+        {
+          "type": "CheckBox",
+          "name": "Channel2Scenes",
+          "caption": "Szenen 1-4 bereitstellen"
+        }
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Variablen",
+      "expanded": true,
+      "items": [
+        {
+          "type": "CheckBox",
+          "name": "ShowOnline",
+          "caption": "Erreichbar"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowIPAddress",
+          "caption": "IP-Adresse"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowDeviceTypeInfo",
+          "caption": "Gerätetyp"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowSerialNumberInfo",
+          "caption": "Seriennummer"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowSoftwareInfo",
+          "caption": "Software / Firmware"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowRSSI",
+          "caption": "WLAN RSSI"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowChannelActualValues",
+          "caption": "Kanal-Istwerte"
+        }
       ]
     },
     {
@@ -51,8 +143,20 @@
     }
   ],
   "status": [
-    {"code":102,"icon":"active","caption":"Aktiv"},
-    {"code":201,"icon":"inactive","caption":"IP-Adresse / Hostname fehlt"},
-    {"code":202,"icon":"error","caption":"Kommunikationsfehler"}
+    {
+      "code": 102,
+      "icon": "active",
+      "caption": "Aktiv"
+    },
+    {
+      "code": 201,
+      "icon": "inactive",
+      "caption": "IP-Adresse / Hostname fehlt"
+    },
+    {
+      "code": 202,
+      "icon": "error",
+      "caption": "Kommunikationsfehler"
+    }
   ]
 }
