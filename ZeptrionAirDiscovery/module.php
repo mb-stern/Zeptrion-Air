@@ -108,14 +108,28 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
         // API Kap. 4: aktuelle Firmware annonciert _zapp._tcp.
         // Nur wenn dort nichts gefunden wird, suchen wir als Fallback über _http._tcp.
-        $this->CollectServices($zcID, '_zapp._tcp', false, $found);
+        // Die zeptrionAIR WLAN-Module antworten auf mDNS nicht immer alle im
+        // selben Query-Lauf. Mehrere kurze Läufe zusammenführen; vorhandene Hosts
+        // werden durch den Hostnamen als Array-Key automatisch dedupliziert.
+        $previousCount = -1;
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $this->CollectServices($zcID, '_zapp._tcp', false, $found);
+            $count = count($found);
+            $this->SendDebug('Discovery', '_zapp._tcp Lauf ' . $attempt . ': insgesamt ' . $count . ' Geräte', 0);
 
-        if ($found === []) {
-            $this->SendDebug('Discovery', 'Keine _zapp._tcp Geräte gefunden, verwende Legacy-Fallback _http._tcp', 0);
-            $this->CollectServices($zcID, '_http._tcp', true, $found);
-        } else {
-            $this->SendDebug('Discovery', '_zapp._tcp erfolgreich - Legacy-Suche wird übersprungen', 0);
+            if ($attempt > 1 && $count === $previousCount) {
+                break;
+            }
+            $previousCount = $count;
+            if ($attempt < 3) {
+                usleep(250000);
+            }
         }
+
+        // Legacy-Ankündigungen immer ergänzend abfragen. Bisher wurde _http._tcp
+        // übersprungen, sobald auch nur ein einziges _zapp._tcp Gerät gefunden war.
+        // Dadurch konnten einzelne Geräte zeitweise aus der Liste fehlen.
+        $this->CollectServices($zcID, '_http._tcp', true, $found);
 
         $this->EnrichDevicesParallel($found);
 
