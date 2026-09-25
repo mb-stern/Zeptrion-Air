@@ -24,10 +24,10 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyBoolean('ShowSoftwareInfo', false);
         $this->RegisterPropertyBoolean('ShowRSSI', true);
         $this->RegisterPropertyBoolean('ShowChannelActualValues', false);
-        $this->RegisterPropertyBoolean('ShowScenes', false);
+        $this->RegisterPropertyBoolean('ShowScenes', false); // Migration: wird nicht mehr für neue Szenenauswahl verwendet.
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
-        $this->RegisterTimer('SceneResetTimer', 0, 'ZEPA_ResetSceneVariables($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
         // Migrationsbereinigung: Dieser Timer existierte kurzzeitig in einer
         // Entwicklungsversion. Registrieren mit 0 deaktiviert einen eventuell
         // noch in bestehenden Instanzen gespeicherten NotifyTimer zuverlässig.
@@ -40,10 +40,44 @@ class ZeptrionAir extends IPSModuleStrict
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 10000);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'DownTimeMs', 10000);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'StepPercent', 10);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'LamellaTimeMs', 350);
             for ($scene = 1; $scene <= 4; $scene++) {
                 $this->RegisterPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name', 'Szene ' . $scene);
+                $this->RegisterPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible', false);
             }
         }
+    }
+
+    public function GetConfigurationForm(): string
+    {
+        $path = __DIR__ . '/form.json';
+        $form = json_decode((string)file_get_contents($path), true);
+        if (!is_array($form)) {
+            return '{}';
+        }
+
+        foreach ($form['elements'] ?? [] as &$element) {
+            if (($element['type'] ?? '') !== 'ExpansionPanel' || !preg_match('/^Kanal ([1-4])$/', (string)($element['caption'] ?? ''), $match)) {
+                continue;
+            }
+            $channel = (int)$match[1];
+            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+            foreach ($element['items'] ?? [] as &$item) {
+                $name = (string)($item['name'] ?? '');
+                if ($name === 'Channel' . $channel . 'DimmerConfig') {
+                    $item['visible'] = $type === 'dimmer';
+                } elseif ($name === 'Channel' . $channel . 'ShutterConfig') {
+                    $item['visible'] = $type === 'shutter';
+                }
+            }
+            unset($item);
+        }
+        unset($element);
+
+        return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     public function ApplyChanges(): void
@@ -54,6 +88,7 @@ class ZeptrionAir extends IPSModuleStrict
         // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('NotifyTimer', 0);
         $this->SetTimerInterval('NotifyStartTimer', 0);
+        $this->SetTimerInterval('SceneResetTimer', 0);
 
         $this->RegisterProfiles();
         $this->ApplyChannelVariables();
@@ -267,7 +302,6 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->RecallScene($channel, $scene)) {
                     $this->SetValueIfChanged((string)$Ident, $scene);
-                    $this->SetTimerInterval('SceneResetTimer', 1000);
                 }
                 return;
         }
@@ -476,8 +510,15 @@ class ZeptrionAir extends IPSModuleStrict
             if (!IPS_VariableProfileExists($profile)) {
                 IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
             }
-            IPS_SetVariableProfileAssociation($profile, 0, 'Bereit', '', -1);
+            // Vorhandene Zuordnungen entfernen, damit abgewählte Szenen auch
+            // wirklich aus der Steuervariable verschwinden.
+            for ($scene = 0; $scene <= 4; $scene++) {
+                IPS_SetVariableProfileAssociation($profile, $scene, '', '', -1);
+            }
             for ($scene = 1; $scene <= 4; $scene++) {
+                if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                    continue;
+                }
                 $sceneName = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
                 if ($sceneName === '') {
                     $sceneName = 'Szene ' . $scene;
@@ -832,12 +873,25 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($ident);
             }
 
-            if ($active && $this->ReadPropertyBoolean('ShowScenes')) {
-                $ident = 'Ch' . $channel . 'Scene';
+            $showSceneVariable = false;
+            for ($scene = 1; $scene <= 4; $scene++) {
+                if ($this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                    $showSceneVariable = true;
+                    break;
+                }
+            }
+
+            $sceneIdent = 'Ch' . $channel . 'Scene';
+            if ($active && $showSceneVariable) {
                 $sceneName = $name . ' Szenen';
-                $this->RegisterVariableInteger($ident, $sceneName, 'ZEPA.Scene.' . $this->InstanceID . '.' . $channel, $channel * 10 + 5);
-                $this->SetVariableName($ident, $sceneName);
-                $this->EnableAction($ident);
+                $this->RegisterVariableInteger($sceneIdent, $sceneName, 'ZEPA.Scene.' . $this->InstanceID . '.' . $channel, $channel * 10 + 5);
+                $this->SetVariableName($sceneIdent, $sceneName);
+                $this->EnableAction($sceneIdent);
+            } else {
+                $sceneID = @$this->GetIDForIdent($sceneIdent);
+                if ($sceneID > 0) {
+                    $this->UnregisterVariable($sceneIdent);
+                }
             }
         }
     }
