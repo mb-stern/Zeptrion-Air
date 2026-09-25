@@ -111,32 +111,31 @@ class ZeptrionAir extends IPSModuleStrict
             $channelElements[] = $element;
         }
 
-        // Hostfeld kompakt: Hostname/IP und direkter Geräte-Link in einer Zeile.
-        $host = trim($this->ReadPropertyString('Host'));
-        if ($host !== '') {
-            $ip = gethostbyname($host);
-            if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
-                $ip = '';
-            }
-            foreach ($otherElements as &$element) {
-                if (($element['name'] ?? '') !== 'Host') {
-                    continue;
-                }
-                $caption = 'IP-Adresse / Hostname';
-                if ($ip !== '' && $ip !== $host) {
-                    $caption .= '  ·  IP: ' . $ip;
-                }
-                $caption .= '  ·  http://' . $host . '/';
-                $element['caption'] = $caption;
-                break;
-            }
-            unset($element);
-        }
-
-        // Kanäle zuerst, danach die allgemeinen Geräte-/Variableneinstellungen.
+        // Host-Eingabe und anklickbaren Geräte-Link in derselben Zeile anzeigen.
         $prefix = [];
-        while ($otherElements !== [] && in_array(($otherElements[0]['name'] ?? ''), ['Host'], true)) {
-            $prefix[] = array_shift($otherElements);
+        if ($otherElements !== [] && (($otherElements[0]['name'] ?? '') === 'Host')) {
+            $hostElement = array_shift($otherElements);
+            $host = trim($this->ReadPropertyString('Host'));
+            $rowItems = [$hostElement];
+            if ($host !== '') {
+                $ip = gethostbyname($host);
+                if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
+                    $ip = '';
+                }
+                $caption = 'Gerät öffnen: http://' . $host . '/';
+                if ($ip !== '' && $ip !== $host) {
+                    $caption .= '  (IP: ' . $ip . ')';
+                }
+                $rowItems[] = [
+                    'type' => 'Label',
+                    'caption' => $caption,
+                    'link' => true
+                ];
+            }
+            $prefix[] = [
+                'type' => 'RowLayout',
+                'items' => $rowItems
+            ];
         }
         // Der Hinweis direkt nach Host gehört ebenfalls nach oben.
         if ($otherElements !== [] && ($otherElements[0]['type'] ?? '') === 'Label') {
