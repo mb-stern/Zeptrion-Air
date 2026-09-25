@@ -15,10 +15,11 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyString('DeviceType', '');
         $this->RegisterPropertyString('SerialNumber', '');
         $this->RegisterPropertyInteger('Channels', 2);
-        $this->RegisterPropertyInteger('PollInterval', 30);
+        $this->RegisterPropertyInteger('PollInterval', 5);
+        $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
 
         for ($channel = 1; $channel <= 4; $channel++) {
-            $this->RegisterPropertyString('Channel' . $channel . 'Type', $channel <= 2 ? 'light' : 'unused');
+            $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
         }
@@ -32,8 +33,54 @@ class ZeptrionAir extends IPSModuleStrict
         $this->ApplyChannelVariables();
 
         if (trim($this->ReadPropertyString('Host')) === '') {
+            $this->SetTimerInterval('PollTimer', 0);
             $this->SetStatus(201);
             return;
+        }
+
+        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
+        $this->SetTimerInterval('PollTimer', $interval * 1000);
+        $this->SetStatus(102);
+
+        // Beim Übernehmen sofort einen ersten Status einlesen.
+        $this->Poll();
+    }
+
+    public function Poll(): void
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') {
+            return;
+        }
+
+        $data = $this->HttpXmlGet('/zrap/chscan');
+        if ($data === null) {
+            $this->SetStatus(202);
+            return;
+        }
+
+        $this->SendDebug('Poll', json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
+
+        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        for ($channel = 1; $channel <= $max; $channel++) {
+            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+            $state = $this->ExtractChannelState($data, $channel);
+            if ($state === null) {
+                continue;
+            }
+
+            if (in_array($type, ['light', 'dimmer'], true)) {
+                $ident = 'Ch' . $channel . 'Switch';
+                $variableID = @$this->GetIDForIdent($ident);
+                if ($variableID > 0) {
+                    $value = $this->StateToBool($state);
+                    if ($value !== null) {
+                        $this->SetValue($ident, $value);
+                    }
+                }
+            }
+            // Store/Markise liefert über chscan keine verlässliche absolute Position.
+            // Diese wird später separat über Fahrzeit/chnotify nachgeführt.
         }
 
         $this->SetStatus(102);
@@ -278,13 +325,100 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
-    private function RemoveVariableIfExists(string $ident): void
+    private function HttpXmlGet(string $path): ?array
     {
-        $variableID = @$this->GetIDForIdent($ident);
-        if ($variableID > 0 && IPS_VariableExists($variableID)) {
-            $this->SendDebug('Variablen', 'Entferne nicht mehr benötigte Variable ' . $ident . ' (ID ' . $variableID . ')', 0);
-            IPS_DeleteVariable($variableID);
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') {
+            return null;
         }
+
+        $url = 'http://' . $host . $path;
+        $curl = curl_init();
+        if ($curl === false) {
+            return null;
+        }
+
+        curl_setopt_array($curl, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => 1000,
+            CURLOPT_TIMEOUT_MS => 2500,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_HTTPHEADER => ['Connection: close']
+        ]);
+
+        $response = curl_exec($curl);
+        $error = curl_error($curl);
+        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+
+        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
+            $this->SendDebug('Poll Fehler', $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            return null;
+        }
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
+        if ($xml === false) {
+            libxml_clear_errors();
+            $this->SendDebug('Poll Fehler', 'Ungültiges XML von ' . $url, 0);
+            return null;
+        }
+
+        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $data = json_decode((string)$json, true);
+        return is_array($data) ? $data : null;
+    }
+
+    private function ExtractChannelState(array $data, int $channel): mixed
+    {
+        $key = 'ch' . $channel;
+        if (array_key_exists($key, $data)) {
+            return $data[$key];
+        }
+
+        foreach ($data as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $entryChannel = (string)($entry['ch'] ?? $entry['channel'] ?? $entry['id'] ?? '');
+            if ($entryChannel === (string)$channel || strtolower($entryChannel) === $key) {
+                return $entry;
+            }
+        }
+
+        return null;
+    }
+
+    private function StateToBool(mixed $state): ?bool
+    {
+        if (is_array($state)) {
+            foreach (['val', 'value', 'state'] as $key) {
+                if (array_key_exists($key, $state)) {
+                    return $this->StateToBool($state[$key]);
+                }
+            }
+            return null;
+        }
+
+        if (is_bool($state)) {
+            return $state;
+        }
+
+        $value = strtolower(trim((string)$state));
+        if (in_array($value, ['1', 'true', 'on'], true)) {
+            return true;
+        }
+        if (in_array($value, ['0', 'false', 'off'], true)) {
+            return false;
+        }
+
+        if (is_numeric($state)) {
+            return (float)$state > 0;
+        }
+
+        return null;
     }
 
     private function SetVariableName(string $ident, string $name): void
@@ -312,10 +446,6 @@ class ZeptrionAir extends IPSModuleStrict
 
             $active = $channel <= $max && $type !== 'unused';
 
-            // Alte Variable eines zuvor erkannten/konfigurierten Kanaltyps entfernen.
-            // Beispiel: Wurde der Kanal zuerst als Licht angelegt und später korrekt als
-            // Store erkannt, darf Ch1Switch nicht zusätzlich zu Ch1Command bestehen bleiben.
-            $wantedIdent = null;
             if ($active && in_array($type, ['light', 'dimmer'], true)) {
                 $wantedIdent = 'Ch' . $channel . 'Switch';
             } elseif ($active && $type === 'shutter') {
