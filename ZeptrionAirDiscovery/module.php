@@ -51,16 +51,14 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'name' => $host
                     ],
                     [
-                        // /zrap/chnotify ist HTTP-Long-Polling. Der HTTP Client
-                        // behandelt das reguläre Verbindungsende einer Antwort,
-                        // ohne daraus einen TCP-EOF-Fehler zu machen.
-                        'moduleID' => '{4CB91589-CE01-4700-906F-26320EFCF6C4}',
+                        // Diagnose: /zrap/chnotify über den asynchronen Client Socket testen.
+                        'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}',
                         'configuration' => [
-                            'URL' => 'http://' . $host . '/zrap/chnotify',
-                            'Interval' => 0,
-                            'Active' => true
+                            'Host' => $host,
+                            'Port' => 80,
+                            'Open' => true
                         ],
-                        'name' => 'HTTP Client ' . $host
+                        'name' => 'Client Socket ' . $host
                     ]
                 ]
             ];
