@@ -4,144 +4,133 @@ declare(strict_types=1);
 
 class ZeptrionAirIO extends IPSModuleStrict
 {
-    private mixed $multiHandle = null;
-    private mixed $curlHandle = null;
-    private bool $requestRunning = false;
+    private const RX_DATA_ID = '{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}';
 
     public function Create(): void
     {
         parent::Create();
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyBoolean('Active', true);
-        $this->RegisterTimer('PumpTimer', 0, 'ZEPAIO_Pump($_IPS[\'TARGET\']);');
+        $this->RegisterHook('zeptrionair/' . $this->InstanceID);
+        $this->SetBuffer('NotifyToken', '');
+        $this->SetBuffer('NotifyPending', '0');
     }
 
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
-        $this->StopRequest();
 
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '' || !$this->ReadPropertyBoolean('Active')) {
-            $this->SetTimerInterval('PumpTimer', 0);
+            $this->SetBuffer('NotifyToken', '');
+            $this->SetBuffer('NotifyPending', '0');
             $this->SetStatus($host === '' ? 201 : 104);
             return;
         }
 
-        // curl_multi Handles überleben in IP-Symcon nicht zwischen PHP-Aufrufen.
-        // Den fehlgeschlagenen Pump-Test deshalb sicher deaktivieren, damit keine
-        // Request-Schleife im 50-ms-Takt entsteht.
-        $this->SetTimerInterval('PumpTimer', 0);
-        $this->SendDebug('Lifecycle', 'chnotify Pump-Test deaktiviert', 0);
-        $this->SetStatus(104);
+        // Jeder ApplyChanges-Lauf bekommt eine neue Generation. Antworten eines
+        // zuvor gestarteten Prozesses werden dadurch verworfen und erzeugen keine
+        // zweite chnotify-Kette.
+        $token = bin2hex(random_bytes(8));
+        $this->SetBuffer('NotifyToken', $token);
+        $this->SetBuffer('NotifyPending', '0');
+        $this->SetStatus(102);
+
+        $this->StartNotifyProcess();
     }
 
-    public function Pump(): void
+    public function ProcessHookData(): void
     {
-        if (!$this->ReadPropertyBoolean('Active')) {
+        $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
+        if ($token === '' || !hash_equals($this->GetBuffer('NotifyToken'), $token)) {
+            $this->SendDebug('chnotify', 'Veraltete Callback-Generation verworfen', 0);
+            http_response_code(204);
             return;
         }
 
-        if (!$this->requestRunning || $this->multiHandle === null || $this->curlHandle === null) {
-            $this->SendDebug('chnotify', 'Handle nicht aktiv - starte Request neu', 0);
-            $this->StartRequest();
-            return;
+        $this->SetBuffer('NotifyPending', '0');
+        $body = file_get_contents('php://input');
+        if (!is_string($body)) {
+            $body = '';
         }
 
-        do {
-            $result = curl_multi_exec($this->multiHandle, $running);
-        } while ($result === CURLM_CALL_MULTI_PERFORM);
-
-        if ($result !== CURLM_OK) {
-            $this->SendDebug('curl_multi', 'Fehlercode ' . $result, 0);
-            $this->RestartRequest();
-            return;
+        if (trim($body) !== '') {
+            $this->SendDebug('chnotify RAW', $body, 0);
+            $this->SendDataToChildren(json_encode([
+                'DataID' => self::RX_DATA_ID,
+                'Buffer' => bin2hex($body)
+            ], JSON_UNESCAPED_SLASHES));
+        } else {
+            $this->SendDebug('chnotify', 'Long-Poll ohne Nutzdaten beendet', 0);
         }
 
-        while (($info = curl_multi_info_read($this->multiHandle)) !== false) {
-            if (($info['handle'] ?? null) !== $this->curlHandle) {
-                continue;
-            }
+        http_response_code(204);
 
-            $body = curl_multi_getcontent($this->curlHandle);
-            $httpCode = (int)curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
-            $error = curl_error($this->curlHandle);
-
-            $this->SendDebug(
-                'chnotify Return',
-                'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') .
-                ' / ' . strlen((string)$body) . ' Byte',
-                0
-            );
-
-            if ($error === '' && $httpCode >= 200 && $httpCode < 400 && trim((string)$body) !== '') {
-                $this->SendDebug('chnotify RAW', (string)$body, 0);
-                $this->SendDataToChildren(json_encode([
-                    'DataID' => '{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}',
-                    'Buffer' => bin2hex((string)$body)
-                ], JSON_UNESCAPED_SLASHES));
-            }
-
-            $this->RestartRequest();
-            return;
+        // Erst nach der abgeschlossenen Antwort die nächste Long-Poll-Anfrage
+        // asynchron starten. Der PHP-Aufruf selbst wartet nicht auf chnotify.
+        if ($this->ReadPropertyBoolean('Active')) {
+            $this->StartNotifyProcess();
         }
     }
 
-    private function StartRequest(): void
+    public function RestartNotify(): void
     {
+        $this->SetBuffer('NotifyPending', '0');
+        $this->StartNotifyProcess();
+    }
+
+    private function StartNotifyProcess(): void
+    {
+        if ($this->GetBuffer('NotifyPending') === '1') {
+            return;
+        }
+
         $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') {
+        $token = $this->GetBuffer('NotifyToken');
+        if ($host === '' || $token === '' || !$this->ReadPropertyBoolean('Active')) {
             return;
         }
 
-        $this->StopRequest();
-
-        $multi = curl_multi_init();
-        $curl = curl_init();
-        if ($multi === false || $curl === false) {
-            $this->SendDebug('chnotify', 'cURL konnte nicht initialisiert werden', 0);
+        // Dieser Machbarkeitstest ist absichtlich Linux/Raspberry-Pi-spezifisch.
+        // curl hält /chnotify außerhalb des Symcon-PHP-Workers offen. Die Antwort
+        // wird über einen ausschließlich lokalen Symcon-WebHook zurückgereicht.
+        if (PHP_OS_FAMILY !== 'Linux') {
+            $this->SendDebug('chnotify', 'Externer Long-Poll-Test benötigt Linux', 0);
             $this->SetStatus(202);
             return;
         }
 
-        curl_setopt_array($curl, [
-            CURLOPT_URL => 'http://' . $host . '/zrap/chnotify',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1500,
-            CURLOPT_TIMEOUT_MS => 35000,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_HTTPHEADER => ['Connection: close']
-        ]);
-
-        curl_multi_add_handle($multi, $curl);
-        $this->multiHandle = $multi;
-        $this->curlHandle = $curl;
-        $this->requestRunning = true;
-
-        curl_multi_exec($this->multiHandle, $running);
-        $this->SendDebug('chnotify', 'Long-Poll gestartet: http://' . $host . '/zrap/chnotify', 0);
-    }
-
-    private function RestartRequest(): void
-    {
-        $this->StopRequest();
-        $this->StartRequest();
-    }
-
-    private function StopRequest(): void
-    {
-        if ($this->multiHandle !== null && $this->curlHandle !== null) {
-            @curl_multi_remove_handle($this->multiHandle, $this->curlHandle);
-        }
-        if ($this->curlHandle !== null) {
-            @curl_close($this->curlHandle);
-        }
-        if ($this->multiHandle !== null) {
-            @curl_multi_close($this->multiHandle);
+        $curl = '/usr/bin/curl';
+        $shell = '/bin/sh';
+        if (!is_file($curl) || !is_executable($curl) || !is_file($shell) || !is_executable($shell)) {
+            $this->SendDebug('chnotify', '/usr/bin/curl oder /bin/sh nicht verfügbar', 0);
+            $this->SetStatus(202);
+            return;
         }
 
-        $this->curlHandle = null;
-        $this->multiHandle = null;
-        $this->requestRunning = false;
+        $source = 'http://' . $host . '/zrap/chnotify';
+        $callback = 'http://127.0.0.1:3777/hook/zeptrionair/' . $this->InstanceID .
+            '?token=' . rawurlencode($token);
+
+        // pipefail gibt es bei /bin/sh nicht überall; für den Test reicht die
+        // Pipeline. --max-time beendet auch einen hängenden Geräte-Request.
+        $command =
+            escapeshellarg($curl) . ' --silent --show-error --max-time 35 --connect-timeout 2 ' .
+            '--header ' . escapeshellarg('Connection: close') . ' ' . escapeshellarg($source) .
+            ' | ' .
+            escapeshellarg($curl) . ' --silent --show-error --max-time 5 --connect-timeout 2 ' .
+            '--request POST --header ' . escapeshellarg('Content-Type: application/xml') .
+            ' --data-binary @- ' . escapeshellarg($callback);
+
+        $this->SetBuffer('NotifyPending', '1');
+        $this->SendDebug('chnotify', 'Externer Long-Poll gestartet: ' . $source, 0);
+
+        try {
+            IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
+        } catch (Throwable $e) {
+            $this->SetBuffer('NotifyPending', '0');
+            $this->SetStatus(202);
+            $this->SendDebug('chnotify Startfehler', $e->getMessage(), 0);
+        }
     }
 }
