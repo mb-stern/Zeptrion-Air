@@ -14,30 +14,29 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
     public function GetConfigurationForm(): string
     {
-        $devices = $this->DiscoverDevices();
-        $existing = $this->GetExistingInstances();
-        $existingData = $this->GetExistingInstanceData();
+        // Configurator = aktuell entdeckte Geräte UNION bereits vorhandene Instanzen.
+        // Discovery liest bestehende Instanzen nur für die Anzeige/Zuordnung. Es schreibt
+        // niemals Properties oder Namen einer bestehenden Device-Instanz zurück.
+        $discovered = $this->DiscoverDevices();
+        $existing = $this->GetExistingInstanceData();
 
-        $values = [];
-        foreach ($devices as $device) {
+        $rows = [];
+
+        // 1) Aktuell per mDNS gefundene Geräte. Nur ein erfolgreiches /zrap/id mit
+        // sys=ZEPTRION berechtigt zur Erstellung einer neuen Instanz.
+        foreach ($discovered as $device) {
             $host = $device['host'];
-            $instanceID = $existing[$host] ?? 0;
+            $instance = $existing[$host] ?? null;
             $reachable = (bool)($device['reachable'] ?? false);
 
-            // mDNS sagt nur, dass ein Host angekündigt wurde. Erst /zrap/id bestätigt,
-            // dass das Gerät über seine API wirklich erreichbar ist. Bei einem bereits
-            // vorhandenen Gerät behalten wir bei einem temporären API-Ausfall die
-            // gespeicherten Instanzdaten bei, statt leere Discovery-Werte anzuzeigen.
-            if (!$reachable && $instanceID > 0 && isset($existingData[$host])) {
-                $stored = $existingData[$host];
-                $device['name'] = $stored['name'];
-                $device['type'] = $stored['type'];
-                $device['serial'] = $stored['serial'];
-                $device['channels'] = $stored['channels'];
-                $device['channelConfig'] = $stored['channelConfig'];
+            if ($instance !== null && !$reachable) {
+                // Gerät ist noch per mDNS sichtbar, die API antwortet aber nicht.
+                // Für eine vorhandene Instanz zeigen wir deren gespeicherte Daten an.
+                $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar');
+                continue;
             }
 
-            $values[] = [
+            $rows[$host] = [
                 'Host'         => $host,
                 'IP'           => $device['ip'],
                 'RSSI'         => $device['rssi'],
@@ -46,12 +45,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'SerialNumber' => $device['serial'],
                 'Software'     => $device['sw'],
                 'Channels'     => $device['channels'],
-                'ChannelInfo'  => $reachable ? $device['channelInfo'] : 'Nicht erreichbar – letzte gespeicherte Konfiguration wird beibehalten',
-                'instanceID'   => $instanceID,
-                // Eine neue Instanz darf erst erstellt werden, wenn /zrap/id das
-                // zeptrionAIR tatsächlich bestätigt hat. Ein reiner mDNS-Fund reicht
-                // dafür nicht aus; sonst entstehen unvollständige/namenlose Instanzen.
-                'create'       => $reachable ? [
+                'ChannelInfo'  => $reachable ? $device['channelInfo'] : 'Nicht erreichbar',
+                'instanceID'   => $instance['instanceID'] ?? 0,
+                'create'       => ($reachable && $instance === null) ? [
                     [
                         'moduleID'      => self::DEVICE_MODULE_ID,
                         'configuration' => [
@@ -60,14 +56,14 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'DeviceType'   => $device['type'],
                             'SerialNumber' => $device['serial'],
                             'Channels'     => $device['channels'],
-                            'Channel1Name'  => $device['channelConfig'][1]['name'] ?? 'Kanal 1',
-                            'Channel1Type'  => $device['channelConfig'][1]['type'] ?? 'unused',
-                            'Channel2Name'  => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
-                            'Channel2Type'  => $device['channelConfig'][2]['type'] ?? 'unused',
-                            'Channel3Name'  => $device['channelConfig'][3]['name'] ?? 'Kanal 3',
-                            'Channel3Type'  => $device['channelConfig'][3]['type'] ?? 'unused',
-                            'Channel4Name'  => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
-                            'Channel4Type'  => $device['channelConfig'][4]['type'] ?? 'unused',
+                            'Channel1Name' => $device['channelConfig'][1]['name'] ?? 'Kanal 1',
+                            'Channel1Type' => $device['channelConfig'][1]['type'] ?? 'unused',
+                            'Channel2Name' => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
+                            'Channel2Type' => $device['channelConfig'][2]['type'] ?? 'unused',
+                            'Channel3Name' => $device['channelConfig'][3]['name'] ?? 'Kanal 3',
+                            'Channel3Type' => $device['channelConfig'][3]['type'] ?? 'unused',
+                            'Channel4Name' => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
+                            'Channel4Type' => $device['channelConfig'][4]['type'] ?? 'unused',
                             'ShowOnline' => true,
                             'ShowRSSI' => true,
                             'ShowScenes' => false,
@@ -77,13 +73,22 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'ShowSoftwareInfo' => false,
                             'ShowChannelActualValues' => false
                         ],
-                        // Instanzname immer anhand des eindeutigen zapp-Hostnamens setzen.
                         'name' => $host
                     ]
                 ] : []
             ];
         }
 
+        // 2) Bereits vorhandene Instanzen, die aktuell überhaupt nicht entdeckt wurden,
+        // bleiben im Configurator sichtbar. Wird die Instanz gelöscht und das Gerät ist
+        // weiterhin nicht erreichbar, verschwindet die Zeile automatisch.
+        foreach ($existing as $host => $instance) {
+            if (!isset($rows[$host])) {
+                $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar / nicht entdeckt');
+            }
+        }
+
+        $values = array_values($rows);
         usort($values, static fn(array $a, array $b): int => strnatcasecmp($a['Name'] . $a['Host'], $b['Name'] . $b['Host']));
 
         return json_encode([
@@ -594,37 +599,49 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
             $channels = max(1, min(4, (int)IPS_GetProperty($instanceID, 'Channels')));
             $channelConfig = [];
-            for ($channel = 1; $channel <= 4; $channel++) {
-                $channelConfig[$channel] = [
-                    'name' => (string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Name'),
-                    'type' => (string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Type'),
-                    'scenes' => false
-                ];
+            $parts = [];
+            for ($channel = 1; $channel <= $channels; $channel++) {
+                $name = trim((string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Name'));
+                $type = (string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Type');
+                $channelConfig[$channel] = ['name' => $name, 'type' => $type];
+
+                $label = match ($type) {
+                    'light' => 'Licht / Schalter',
+                    'dimmer' => 'Dimmer / DALI',
+                    'shutter' => 'Store / Rollo',
+                    default => 'Leer / Smart-Taster'
+                };
+                $parts[] = 'K' . $channel . ': ' . ($name !== '' ? $name : 'Kanal ' . $channel) . ' – ' . $label;
             }
 
             $result[$host] = [
-                // Der Objektname ist für die Configurator-Zuordnung stabiler als ein
-                // fehlgeschlagener Discovery-Name. Falls er leer wäre, bleibt der Host
-                // als sichere sichtbare Bezeichnung erhalten.
+                'instanceID' => $instanceID,
                 'name' => trim(IPS_GetName($instanceID)) !== '' ? IPS_GetName($instanceID) : $host,
                 'type' => (string)IPS_GetProperty($instanceID, 'DeviceType'),
                 'serial' => (string)IPS_GetProperty($instanceID, 'SerialNumber'),
                 'channels' => $channels,
-                'channelConfig' => $channelConfig
+                'channelConfig' => $channelConfig,
+                'channelInfo' => implode(' | ', $parts)
             ];
         }
         return $result;
     }
 
-    private function GetExistingInstances(): array
+    private function BuildExistingInstanceRow(string $host, array $instance, string $state): array
     {
-        $result = [];
-        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $instanceID) {
-            $host = trim((string)IPS_GetProperty($instanceID, 'Host'));
-            if ($host !== '') {
-                $result[$host] = $instanceID;
-            }
-        }
-        return $result;
+        return [
+            'Host' => $host,
+            'IP' => '',
+            'RSSI' => '',
+            'Name' => $instance['name'],
+            'Type' => $instance['type'],
+            'SerialNumber' => $instance['serial'],
+            'Software' => '',
+            'Channels' => $instance['channels'],
+            'ChannelInfo' => $state . ' – ' . $instance['channelInfo'],
+            'instanceID' => $instance['instanceID'],
+            'create' => []
+        ];
     }
+}
 }
