@@ -74,7 +74,7 @@ class ZeptrionAir extends IPSModuleStrict
                 $variableID = @$this->GetIDForIdent($ident);
                 if ($variableID > 0) {
                     $value = $this->StateToBool($state);
-                    if ($value !== null) {
+                    if ($value !== null && GetValue($variableID) !== $value) {
                         $this->SetValue($ident, $value);
                     }
                 }
