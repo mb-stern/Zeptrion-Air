@@ -9,11 +9,11 @@ class ZeptrionAir extends IPSModuleStrict
     public function GetCompatibleParents(): string
     {
         return json_encode([
-            [
-                'type' => 1,
-                'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
+            'type' => 'require',
+            'moduleIDs' => [
+                '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
             ]
-        ]);
+        ], JSON_THROW_ON_ERROR);
     }
 
     public function Create(): void
