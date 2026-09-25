@@ -24,6 +24,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
             $values[] = [
                 'Host'         => $host,
+                'IP'           => $device['ip'],
+                'RSSI'         => $device['rssi'],
                 'Name'         => $device['name'],
                 'Type'         => $device['type'],
                 'SerialNumber' => $device['serial'],
@@ -49,15 +51,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         ],
                         // Instanzname immer anhand des eindeutigen zapp-Hostnamens setzen.
                         'name' => $host
-                    ],
-                    [
-                        // Test: Device direkt am nativen Symcon SSE Client.
-                        'moduleID' => '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}',
-                        'configuration' => [
-                            'URL' => 'http://' . $host . '/zrap/chnotify',
-                            'Headers' => '[]'
-                        ],
-                        'name' => 'Zeptrion Air SSE ' . $host
                     ]
                 ]
             ];
@@ -80,7 +73,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     ],
                     'columns' => [
                         ['caption' => 'Name',       'name' => 'Name',        'width' => '220px'],
-                        ['caption' => 'IP / Host',  'name' => 'Host',        'width' => '160px'],
+                        ['caption' => 'Host',       'name' => 'Host',        'width' => '145px'],
+                        ['caption' => 'IP-Adresse', 'name' => 'IP',          'width' => '125px'],
+                        ['caption' => 'RSSI',       'name' => 'RSSI',        'width' => '80px'],
                         ['caption' => 'Gerätetyp',  'name' => 'Type',        'width' => '140px'],
                         ['caption' => 'Seriennr.',  'name' => 'SerialNumber','width' => '130px'],
                         ['caption' => 'SW',         'name' => 'Software',    'width' => '90px'],
@@ -173,6 +168,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
             $found[$host] = [
                 'host'        => $host,
+                'ip'          => '',
+                'rssi'        => '',
                 'name'        => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
                 'type'        => $deviceType,
                 'serial'      => '',
@@ -195,6 +192,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         foreach ($devices as $host => $device) {
             $requests[$host . '|id'] = ['host' => $host, 'path' => '/zrap/id'];
             $requests[$host . '|chdes'] = ['host' => $host, 'path' => '/zrap/chdes'];
+            $requests[$host . '|rssi'] = ['host' => $host, 'path' => '/zrap/rssi'];
         }
 
         $responses = $this->HttpXmlGetMulti($requests);
@@ -220,6 +218,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
             $des = $responses[$host . '|chdes'] ?? null;
+            $rssi = $responses[$host . '|rssi'] ?? null;
+            $device['ip'] = $this->ResolveIPv4($host);
+            $device['rssi'] = $this->ExtractRssi($rssi);
             $this->ApplyApiData($device, $id, $des);
         }
         unset($device);
@@ -229,6 +230,39 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             sprintf('API-Daten für %d Geräte parallel geladen in %.2f s', count($devices), microtime(true) - $started),
             0
         );
+    }
+
+    private function ResolveIPv4(string $host): string
+    {
+        $ip = gethostbyname($host);
+        if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
+            return '';
+        }
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? $ip : '';
+    }
+
+    private function ExtractRssi(?array $data): string
+    {
+        if ($data === null) {
+            return '';
+        }
+        foreach (['rssi', 'val', 'value'] as $key) {
+            if (isset($data[$key]) && is_numeric($data[$key])) {
+                return (string)((int)$data[$key]) . ' dBm';
+            }
+        }
+        foreach ($data as $value) {
+            if (is_numeric($value)) {
+                return (string)((int)$value) . ' dBm';
+            }
+            if (is_array($value)) {
+                $nested = $this->ExtractRssi($value);
+                if ($nested !== '') {
+                    return $nested;
+                }
+            }
+        }
+        return '';
     }
 
     private function HttpXmlGetMulti(array $requests, int $connectTimeoutMs = 1500, int $timeoutMs = 3500): array
