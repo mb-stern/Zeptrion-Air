@@ -6,7 +6,9 @@
   "aliases": [
     "Feller zeptrionAIR I/O"
   ],
-  "parentRequirements": [],
+  "parentRequirements": [
+    "{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}"
+  ],
   "childRequirements": [
     "{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"
   ],
