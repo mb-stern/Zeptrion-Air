@@ -106,10 +106,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $this->SendDebug('Discovery', '_zapp._tcp erfolgreich - Legacy-Suche wird übersprungen', 0);
         }
 
-        foreach ($found as &$device) {
-            $this->EnrichFromApi($device);
-        }
-        unset($device);
+        $this->EnrichDevicesParallel($found);
 
         return array_values($found);
     }
@@ -145,8 +142,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $host = rtrim($name, '.');
             $this->SendDebug('mDNS ' . $name, 'Verwende Host direkt: ' . $host, 0);
 
-            $txt = $this->NormalizeTxt($detail['TXT'] ?? $detail['Text'] ?? $detail['TXTRecords'] ?? []);
-            $deviceType = (string)($txt['type'] ?? '');
+            // ZC_QueryServiceType liefert bei diesen Geräten keine TXT-Daten.
+            $txt = [];
+            $deviceType = '';
             $channels = $this->ChannelsFromType($deviceType);
 
             $found[$host] = [
@@ -160,6 +158,140 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'channelConfig' => []
             ];
         }
+    }
+
+    private function EnrichDevicesParallel(array &$devices): void
+    {
+        if ($devices === []) {
+            return;
+        }
+
+        $started = microtime(true);
+        $requests = [];
+        foreach ($devices as $host => $device) {
+            $requests[$host . '|id'] = ['host' => $host, 'path' => '/zrap/id'];
+            $requests[$host . '|chdes'] = ['host' => $host, 'path' => '/zrap/chdes'];
+        }
+
+        $responses = $this->HttpXmlGetMulti($requests);
+
+        foreach ($devices as $host => &$device) {
+            $id = $responses[$host . '|id'] ?? null;
+            $des = $responses[$host . '|chdes'] ?? null;
+            $this->ApplyApiData($device, $id, $des);
+        }
+        unset($device);
+
+        $this->SendDebug(
+            'Discovery',
+            sprintf('API-Daten für %d Geräte parallel geladen in %.2f s', count($devices), microtime(true) - $started),
+            0
+        );
+    }
+
+    private function HttpXmlGetMulti(array $requests): array
+    {
+        $multi = curl_multi_init();
+        $handles = [];
+
+        foreach ($requests as $key => $request) {
+            $url = 'http://' . $request['host'] . $request['path'];
+            $curl = curl_init();
+            curl_setopt_array($curl, [
+                CURLOPT_URL => $url,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT_MS => 1500,
+                CURLOPT_TIMEOUT_MS => 3500,
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_HTTPHEADER => ['Connection: close']
+            ]);
+            curl_multi_add_handle($multi, $curl);
+            $handles[$key] = ['handle' => $curl, 'url' => $url];
+        }
+
+        do {
+            $status = curl_multi_exec($multi, $running);
+            if ($running > 0) {
+                curl_multi_select($multi, 0.25);
+            }
+        } while ($running > 0 && $status === CURLM_OK);
+
+        $result = [];
+        foreach ($handles as $key => $entry) {
+            $curl = $entry['handle'];
+            $body = curl_multi_getcontent($curl);
+            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            $error = curl_error($curl);
+
+            if ($error !== '' || $httpCode < 200 || $httpCode >= 400 || !is_string($body) || trim($body) === '') {
+                $this->SendDebug(
+                    'HTTP Parallel Fehler',
+                    $entry['url'] . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''),
+                    0
+                );
+                $result[$key] = null;
+            } else {
+                $result[$key] = $this->ParseXml($body);
+            }
+
+            curl_multi_remove_handle($multi, $curl);
+            curl_close($curl);
+        }
+        curl_multi_close($multi);
+
+        return $result;
+    }
+
+    private function ApplyApiData(array &$device, ?array $id, ?array $des): void
+    {
+        if ($id !== null) {
+            $sys = strtoupper((string)($id['sys'] ?? ''));
+            if ($sys !== '' && $sys !== 'ZEPTRION') {
+                return;
+            }
+
+            $device['type'] = (string)($id['type'] ?? $device['type']);
+            $device['serial'] = (string)($id['sn'] ?? '');
+            $device['sw'] = (string)($id['sw'] ?? $device['sw']);
+            $device['name'] = trim((string)($id['oen'] ?? $id['name'] ?? $device['name']));
+            $device['channels'] = $this->ChannelsFromType($device['type'], $device['channels']);
+        }
+
+        if ($des === null) {
+            return;
+        }
+
+        $parts = [];
+        for ($channel = 1; $channel <= $device['channels']; $channel++) {
+            $key = 'ch' . $channel;
+            if (!isset($des[$key]) || !is_array($des[$key])) {
+                continue;
+            }
+
+            $ch = $des[$key];
+            $label = trim((string)($ch['name'] ?? ''));
+            $type = trim((string)($ch['type'] ?? ''));
+            $cat = trim((string)($ch['cat'] ?? ''));
+            $mapped = $this->MapChannelCategory($cat, $label);
+
+            $device['channelConfig'][$channel] = [
+                'name' => $label !== '' ? $label : 'Kanal ' . $channel,
+                'type' => $mapped['type'],
+                'scenes' => $mapped['scenes']
+            ];
+
+            $text = 'K' . $channel;
+            if ($label !== '') {
+                $text .= ': ' . $label;
+            }
+            if ($type !== '' || $cat !== '') {
+                $text .= ' [' . trim($type . '/' . $cat, '/') . ']';
+            }
+            $text .= ' – ' . $mapped['label'];
+            $parts[] = $text;
+        }
+
+        $device['channelInfo'] = implode(' | ', $parts);
     }
 
     private function EnrichFromApi(array &$device): void
@@ -268,6 +400,11 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
         $this->SendDebug('HTTP GET RAW', $url . ' => ' . $xml, 0);
 
+        return $this->ParseXml($xml);
+    }
+
+    private function ParseXml(string $xml): ?array
+    {
         libxml_use_internal_errors(true);
         $node = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NOCDATA);
         if ($node === false) {
