@@ -7,10 +7,11 @@
     "Feller zeptrionAIR"
   ],
   "parentRequirements": [
-    "{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"
+    "{B8F62D31-7D8A-4F5E-A3C1-91D2476E5B20}"
   ],
   "childRequirements": [],
   "implemented": [
+    "{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}",
     "{018EF6B5-AB94-40C6-AA53-46943E824ACF}"
   ],
   "prefix": "ZEPA",
