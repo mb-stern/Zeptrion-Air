@@ -17,6 +17,9 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
+        // Testtimer für /zrap/chnotify. Kurzer Timer, die API selbst wartet per Long-Poll
+        // auf eine Änderung bzw. bis zum serverseitigen Timeout.
+        $this->RegisterTimer('NotifyTestTimer', 0, 'ZEPA_TestChannelNotify($_IPS[\'TARGET\']);');
 
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -34,12 +37,14 @@ class ZeptrionAir extends IPSModuleStrict
 
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
+            $this->SetTimerInterval('NotifyTestTimer', 0);
             $this->SetStatus(201);
             return;
         }
 
         $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
         $this->SetTimerInterval('PollTimer', $interval * 1000);
+        $this->SetTimerInterval('NotifyTestTimer', 0);
         $this->SetStatus(102);
 
         // Beim Übernehmen sofort einen ersten Status einlesen.
@@ -84,6 +89,45 @@ class ZeptrionAir extends IPSModuleStrict
         }
 
         $this->SetStatus(102);
+    }
+
+    public function TestChannelNotify(): void
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') {
+            return;
+        }
+
+        $url = 'http://' . $host . '/zrap/chnotify';
+        $curl = curl_init();
+        if ($curl === false) {
+            return;
+        }
+
+        $this->SendDebug('chnotify Test', 'Warte auf ' . $url, 0);
+        curl_setopt_array($curl, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => 1000,
+            CURLOPT_TIMEOUT_MS => 35000,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_HTTPHEADER => ['Connection: close']
+        ]);
+
+        $started = microtime(true);
+        $response = curl_exec($curl);
+        $error = curl_error($curl);
+        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+        $elapsed = round(microtime(true) - $started, 3);
+
+        $this->SendDebug(
+            'chnotify RAW',
+            'HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' .
+            ($error !== '' ? 'Fehler: ' . $error . ' / ' : '') .
+            (string)$response,
+            0
+        );
     }
 
     public function RequestAction($Ident, $Value): void
