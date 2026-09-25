@@ -122,13 +122,42 @@ class ZeptrionAir extends IPSModuleStrict
         curl_close($curl);
         $elapsed = round(microtime(true) - $started, 3);
 
-        // Nach dem blockierenden Aufruf keine InstanceInterface-Funktionen mehr
-        // verwenden. So bleibt der Test auch bei Modulreload/Instanzwechsel sauber.
-        IPS_LogMessage(
-            'ZeptrionAir chnotify',
-            $host . ' / HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' .
-            ($error !== '' ? 'Fehler: ' . $error . ' / ' : '') . (string)$response
-        );
+        // Für den manuellen Test die Antwort direkt im Instanz-Debug anzeigen.
+        // TestChannelNotify wird nicht automatisch per Timer gestartet, daher gibt
+        // es hier keinen dauerhaft blockierenden Long-Poll.
+        $message =
+            'HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' .
+            ($error !== '' ? 'Fehler: ' . $error . ' / ' : '') . (string)$response;
+        $this->SendDebug('chnotify RAW', $message, 0);
+
+        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
+            return;
+        }
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
+        if ($xml === false) {
+            libxml_clear_errors();
+            $this->SendDebug('chnotify Parse', 'Ungültiges XML', 0);
+            return;
+        }
+
+        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $data = json_decode((string)$json, true);
+        if (!is_array($data)) {
+            return;
+        }
+
+        // Alle gelieferten Kanalwerte zusätzlich kompakt ausgeben. Damit sehen
+        // wir beim normalen Schalter und anschließend beim DALI-Dimmer sofort,
+        // ob nur 0/100 oder auch Zwischenwerte gemeldet werden.
+        foreach ($data as $channel => $state) {
+            $this->SendDebug(
+                'chnotify Wert',
+                (string)$channel . ' => ' . json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                0
+            );
+        }
     }
 
     public function RequestAction($Ident, $Value): void
