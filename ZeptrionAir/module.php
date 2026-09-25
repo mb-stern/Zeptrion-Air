@@ -120,13 +120,27 @@ class ZeptrionAir extends IPSModuleStrict
 
         // Offizielles Symcon-Datenpaket "Erweitert (HTTP Request)".
         // Die Antwort kommt asynchron über ReceiveData zurück.
-        $this->SendDataToParent(json_encode([
+        $started = microtime(true);
+        $result = $this->SendDataToParent(json_encode([
             'DataID' => '{D4C1D08F-CD3B-494B-BE18-B36EF73B8F43}',
             'RequestMethod' => 'GET',
             'RequestURL' => $url,
             'RequestData' => '',
             'Timeout' => 35000
         ], JSON_UNESCAPED_SLASHES));
+        $elapsed = round(microtime(true) - $started, 3);
+
+        $this->SendDebug(
+            'chnotify Return',
+            'nach ' . $elapsed . ' s / Typ=' . get_debug_type($result) .
+            ' / Wert=' . var_export($result, true),
+            0
+        );
+
+        // Diagnose: Falls der HTTP Client die Antwort synchron zurückgibt,
+        // Pending wieder freigeben. Noch keinen Folge-Long-Poll starten, damit
+        // der Test nicht sofort erneut einen PHP-Slot blockiert.
+        $this->SetBuffer('NotifyPending', '0');
     }
 
     public function ReceiveData(string $JSONString): string
