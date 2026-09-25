@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 class ZeptrionAirIO extends IPSModuleStrict
 {
+    private const SSE_MODULE_ID = '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}';
     private const RX_DATA_ID = '{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}';
 
     public function Create(): void
@@ -11,9 +12,7 @@ class ZeptrionAirIO extends IPSModuleStrict
         parent::Create();
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyBoolean('Active', true);
-        $this->RegisterHook('zeptrionair/' . $this->InstanceID);
-        $this->SetBuffer('NotifyToken', '');
-        $this->SetBuffer('NotifyPending', '0');
+        $this->RequireParent(self::SSE_MODULE_ID);
     }
 
     public function ApplyChanges(): void
@@ -22,76 +21,68 @@ class ZeptrionAirIO extends IPSModuleStrict
 
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '' || !$this->ReadPropertyBoolean('Active')) {
-            $this->SetBuffer('NotifyToken', '');
-            $this->SetBuffer('NotifyPending', '0');
             $this->SetStatus($host === '' ? 201 : 104);
             return;
         }
 
-        // Jeder ApplyChanges-Lauf bekommt eine neue Generation. Antworten eines
-        // zuvor gestarteten Prozesses werden dadurch verworfen und erzeugen keine
-        // zweite chnotify-Kette.
-        $token = bin2hex(random_bytes(8));
-        $this->SetBuffer('NotifyToken', $token);
-        $this->SetBuffer('NotifyPending', '0');
-        $this->SetStatus(102);
-
-        $this->StartNotifyProcess();
-    }
-
-    public function ProcessHookData(): void
-    {
-        $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
-        if ($token === '' || !hash_equals($this->GetBuffer('NotifyToken'), $token)) {
-            $this->SendDebug('chnotify', 'Veraltete Callback-Generation verworfen', 0);
-            http_response_code(204);
+        $parent = IPS_GetInstance($this->InstanceID)['ConnectionID'];
+        if (!is_int($parent) || $parent <= 0 || !IPS_InstanceExists($parent)) {
+            $this->SendDebug('SSE', 'Kein SSE Client verbunden', 0);
+            $this->SetStatus(202);
             return;
         }
 
-        $this->SetBuffer('NotifyPending', '0');
-        $body = file_get_contents('php://input');
-        if (!is_string($body)) {
-            $body = '';
+        $url = 'http://' . $host . '/zrap/chnotify';
+        IPS_SetProperty($parent, 'URL', $url);
+        IPS_SetProperty($parent, 'Headers', '[]');
+        IPS_ApplyChanges($parent);
+
+        $this->SendDebug('SSE', 'SSE Client konfiguriert: ' . $url, 0);
+        $this->SetStatus(102);
+    }
+
+    public function ReceiveData(string $JSONString): string
+    {
+        $this->SendDebug('SSE RAW', $JSONString, 0);
+
+        $packet = json_decode($JSONString, true);
+        if (!is_array($packet)) {
+            return '';
         }
 
-        if (trim($body) !== '') {
-            $this->SendDebug('chnotify RAW', $body, 0);
+        // Für den Machbarkeitstest zuerst die komplette SSE-Nachricht sichtbar
+        // machen. Falls chnotify vom SSE Client durchgereicht wird, suchen wir den
+        // XML-Inhalt sowohl in typischen Feldern als auch im kompletten Paket.
+        $candidates = [];
+        foreach (['Data', 'Buffer', 'data', 'Payload'] as $key) {
+            if (isset($packet[$key]) && is_string($packet[$key])) {
+                $candidates[] = $packet[$key];
+            }
+        }
+        $candidates[] = $JSONString;
+
+        foreach ($candidates as $candidate) {
+            $start = strpos($candidate, '<?xml');
+            if ($start === false) {
+                $start = strpos($candidate, '<chnotify');
+            }
+            if ($start === false) {
+                continue;
+            }
+            $xml = substr($candidate, $start);
+            $end = strpos($xml, '</chnotify>');
+            if ($end !== false) {
+                $xml = substr($xml, 0, $end + strlen('</chnotify>'));
+            }
+            $this->SendDebug('chnotify RAW', $xml, 0);
             $this->SendDataToChildren(json_encode([
                 'DataID' => self::RX_DATA_ID,
-                'Buffer' => bin2hex($body)
+                'Buffer' => bin2hex($xml)
             ], JSON_UNESCAPED_SLASHES));
-        } else {
-            $this->SendDebug('chnotify', 'Long-Poll ohne Nutzdaten beendet', 0);
+            break;
         }
-
-        http_response_code(204);
-
-        // Erst nach der abgeschlossenen Antwort die nächste Long-Poll-Anfrage
-        // asynchron starten. Der PHP-Aufruf selbst wartet nicht auf chnotify.
-        if ($this->ReadPropertyBoolean('Active')) {
-            $this->StartNotifyProcess();
-        }
+        return '';
     }
 
-    public function RestartNotify(): void
-    {
-        $this->SetBuffer('NotifyPending', '0');
-        $this->StartNotifyProcess();
-    }
-
-    private function StartNotifyProcess(): void
-    {
-        // Der externe IPS_Execute-/Shell-Versuch wurde entfernt. Ein dauerhafter
-        // /chnotify Long-Poll lässt sich mit reinem PHP-cURL zwar ausführen, würde
-        // aber für die Dauer des Requests einen PHP-Thread belegen. Genau das soll
-        // diese I/O-Instanz nicht im Hintergrund tun.
-        $this->SetBuffer('NotifyPending', '0');
-        $this->SendDebug(
-            'chnotify',
-            'Kein Listener gestartet: reines PHP-cURL ist synchron und würde einen PHP-Thread blockieren',
-            0
-        );
-        $this->SetStatus(104);
-    }
 
 }
