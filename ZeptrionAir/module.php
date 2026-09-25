@@ -46,11 +46,10 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
 
-        // PHP-Modultimer dürfen nicht dauerhaft durch den ~30 s Long-Poll
-        // /zrap/chnotify belegt werden. Deshalb bleibt der normale Statusabruf
-        // aktiv. chnotify kann über TestChannelNotify gezielt untersucht werden.
-        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
-        $this->SetTimerInterval('PollTimer', $interval * 1000);
+        // Kein zyklisches 5-Sekunden-Polling mehr. chscan wird nur einmal beim
+        // Start/Übernehmen gelesen. chnotify testen wir anschließend gezielt,
+        // bevor wir die dauerhafte Ereignisverarbeitung implementieren.
+        $this->SetTimerInterval('PollTimer', 0);
         $this->SetStatus(102);
 
         $this->Poll();
