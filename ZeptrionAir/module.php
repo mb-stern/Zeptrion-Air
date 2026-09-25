@@ -87,15 +87,17 @@ class ZeptrionAir extends IPSModuleStrict
             }
 
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-            foreach ($element['items'] ?? [] as &$item) {
-                $name = (string)($item['name'] ?? '');
-                if ($name === 'Channel' . $channel . 'DimmerConfig') {
-                    $item['visible'] = $type === 'dimmer';
-                } elseif ($name === 'Channel' . $channel . 'ShutterConfig') {
-                    $item['visible'] = $type === 'shutter';
+            if (isset($element['items']) && is_array($element['items'])) {
+                foreach ($element['items'] as &$item) {
+                    $name = (string)($item['name'] ?? '');
+                    if ($name === 'Channel' . $channel . 'DimmerConfig') {
+                        $item['visible'] = $type === 'dimmer';
+                    } elseif ($name === 'Channel' . $channel . 'ShutterConfig') {
+                        $item['visible'] = $type === 'shutter';
+                    }
                 }
+                unset($item);
             }
-            unset($item);
             $channelElements[] = $element;
         }
 
