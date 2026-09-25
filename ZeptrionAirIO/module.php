@@ -7,12 +7,18 @@ class ZeptrionAirIO extends IPSModuleStrict
     private const SSE_MODULE_ID = '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}';
     private const RX_DATA_ID = '{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}';
 
+    public function GetCompatibleParents(): string
+    {
+        return json_encode([
+            'moduleIDs' => [self::SSE_MODULE_ID]
+        ], JSON_THROW_ON_ERROR);
+    }
+
     public function Create(): void
     {
         parent::Create();
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyBoolean('Active', true);
-        $this->RequireParent(self::SSE_MODULE_ID);
     }
 
     public function ApplyChanges(): void
