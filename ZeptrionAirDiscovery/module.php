@@ -644,4 +644,3 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         ];
     }
 }
-}
