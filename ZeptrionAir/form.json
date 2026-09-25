@@ -1,0 +1,25 @@
+{
+  "elements": [
+    {
+      "type": "ValidationTextBox",
+      "name": "Host",
+      "caption": "IP-Adresse / Hostname"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "PollInterval",
+      "caption": "Abfrageintervall (Sekunden)",
+      "minimum": 1
+    }
+  ],
+  "actions": [
+    {
+      "type": "Label",
+      "caption": "Grundstruktur – zeptrionAIR-Kommunikation wird als nächster Schritt integriert."
+    }
+  ],
+  "status": [
+    { "code": 102, "icon": "active", "caption": "Aktiv" },
+    { "code": 201, "icon": "inactive", "caption": "IP-Adresse / Hostname fehlt" }
+  ]
+}
