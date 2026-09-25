@@ -74,7 +74,7 @@ class ZeptrionAir extends IPSModuleStrict
         // Einmaliger Anfangszustand; danach ausschließlich chnotify.
         $this->Poll();
 
-        // Client Socket kurz Zeit zum Verbinden geben. Danach startet der erste
+        // HTTP Client kurz Zeit zum Aktivieren geben. Danach startet der erste
         // HTTP-Long-Poll; weitere Requests werden direkt aus ReceiveData gestartet.
         $this->SetTimerInterval('NotifyStartTimer', 1000);
     }
@@ -85,7 +85,7 @@ class ZeptrionAir extends IPSModuleStrict
         return json_encode([
             'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : '',
             'Interval' => 0,
-            'Active' => false
+            'Active' => $host !== ''
         ], JSON_UNESCAPED_SLASHES);
     }
 
