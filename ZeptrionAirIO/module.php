@@ -23,20 +23,11 @@ class ZeptrionAirIO extends IPSModuleStrict
             return;
         }
 
-        $parent = IPS_GetInstance($this->InstanceID)['ConnectionID'];
-        if (!is_int($parent) || $parent <= 0 || !IPS_InstanceExists($parent)) {
-            $this->SendDebug('SSE', 'Kein SSE Client verbunden', 0);
-            $this->SetStatus(202);
-            return;
-        }
-
-        $url = 'http://' . $host . '/zrap/chnotify';
-        IPS_SetProperty($parent, 'URL', $url);
-        IPS_SetProperty($parent, 'Headers', '[]');
-        IPS_ApplyChanges($parent);
-
-        $this->SendDebug('SSE', 'SSE Client konfiguriert: ' . $url, 0);
-        $this->SetStatus(102);
+        // Dieses I/O hat absichtlich keinen I/O-Parent. Der vorherige SSE-Test
+        // kann hier nicht funktionieren, weil Symcon I/O-Instanzen nicht an
+        // andere Instanzen verbindet.
+        $this->SendDebug('chnotify', 'Kein Listener aktiv - SSE-Test zurückgebaut', 0);
+        $this->SetStatus(104);
     }
 
     public function ReceiveData(string $JSONString): string
