@@ -49,6 +49,19 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         ],
                         // Instanzname immer anhand des eindeutigen zapp-Hostnamens setzen.
                         'name' => $host
+                    ],
+                    [
+                        // Symcon ConfiguratorChainTest: Eine vollständige Erstellungs-
+                        // kette enthält Device -> I/O explizit. Der Socket wird dabei
+                        // geschlossen angelegt; die Kindkonfiguration gibt anschließend
+                        // Host/Port/Open vor.
+                        'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}',
+                        'configuration' => [
+                            'Host' => $host,
+                            'Port' => 80,
+                            'Open' => false
+                        ],
+                        'name' => 'Client Socket ' . $host
                     ]
                 ]
             ];
