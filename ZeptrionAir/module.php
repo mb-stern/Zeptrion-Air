@@ -124,10 +124,9 @@ class ZeptrionAir extends IPSModuleStrict
                 $addressCaption .= '  (IP: ' . $ip . ')';
             }
             array_splice($otherElements, 0, 0, [[
-                'type' => 'Button',
+                'type' => 'Label',
                 'caption' => $addressCaption,
-                'link' => true,
-                'onClick' => 'echo "http://' . addslashes($host) . '/";'
+                'link' => true
             ]]);
         }
 
