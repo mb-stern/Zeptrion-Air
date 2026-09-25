@@ -128,6 +128,16 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 $this->SendDebug('chnotify RAW', $body, 0);
                 $this->ProcessNotifyXml($body);
+
+                // /zrap/chnotify ist kein echtes SSE: Nach jeder XML-Antwort ist
+                // genau ein Long-Poll abgeschlossen. Für den Machbarkeitstest den
+                // nativen SSE Client sofort neu anwenden, damit er die nächste
+                // chnotify-Anfrage öffnet.
+                $parent = IPS_GetInstance($this->InstanceID)['ConnectionID'];
+                if (is_int($parent) && $parent > 0 && IPS_InstanceExists($parent)) {
+                    $this->SendDebug('chnotify Reconnect', 'SSE Client nach Ereignis neu starten', 0);
+                    IPS_ApplyChanges($parent);
+                }
                 break;
             }
         }
