@@ -51,17 +51,16 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'name' => $host
                     ],
                     [
-                        // Symcon ConfiguratorChainTest: Eine vollständige Erstellungs-
-                        // kette enthält Device -> I/O explizit. Der Socket wird dabei
-                        // geschlossen angelegt; die Kindkonfiguration gibt anschließend
-                        // Host/Port/Open vor.
-                        'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}',
+                        // /zrap/chnotify ist HTTP-Long-Polling. Der HTTP Client
+                        // behandelt das reguläre Verbindungsende einer Antwort,
+                        // ohne daraus einen TCP-EOF-Fehler zu machen.
+                        'moduleID' => '{4CB91589-CE01-4700-906F-26320EFCF6C4}',
                         'configuration' => [
-                            'Host' => $host,
-                            'Port' => 80,
-                            'Open' => false
+                            'URL' => 'http://' . $host . '/zrap/chnotify',
+                            'Interval' => 0,
+                            'Active' => false
                         ],
-                        'name' => 'Client Socket ' . $host
+                        'name' => 'HTTP Client ' . $host
                     ]
                 ]
             ];
