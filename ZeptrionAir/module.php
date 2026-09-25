@@ -258,7 +258,7 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function RequestAction($Ident, $Value): void
     {
-        if (!preg_match('/^Ch([1-4])(Switch|Command|Scene)$/', (string)$Ident, $m)) {
+        if (!preg_match('/^Ch([1-4])(Switch|Level|Position|Command|Scene)$/', (string)$Ident, $m)) {
             throw new Exception('Ungültiger Ident: ' . $Ident);
         }
 
@@ -267,6 +267,43 @@ class ZeptrionAir extends IPSModuleStrict
         $this->ValidateChannel($channel);
 
         switch ($action) {
+            case 'Level':
+                $target = max(0, min(100, (int)$Value));
+                $ident = 'Ch' . $channel . 'Level';
+                $id = @$this->GetIDForIdent($ident);
+                $current = $id > 0 ? (int)GetValue($id) : 0;
+                if ($target === $current) {
+                    return;
+                }
+                $time = $target > $current
+                    ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100)
+                    : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100);
+                $time = max(100, min(32000, $time));
+                $command = $target > $current ? 'dim_up_' . $time : 'dim_down_' . $time;
+                if ($this->SendCommand($channel, $command)) {
+                    $this->SetValueIfChanged($ident, $target);
+                }
+                return;
+
+            case 'Position':
+                // Rollo: 0 % = ganz offen, 100 % = ganz geschlossen.
+                $target = max(0, min(100, (int)$Value));
+                $ident = 'Ch' . $channel . 'Position';
+                $id = @$this->GetIDForIdent($ident);
+                $current = $id > 0 ? (int)GetValue($id) : 0;
+                if ($target === $current) {
+                    return;
+                }
+                $time = $target > $current
+                    ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100)
+                    : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
+                $time = max(100, min(32000, $time));
+                $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
+                if ($this->SendCommand($channel, $command)) {
+                    $this->SetValueIfChanged($ident, $target);
+                }
+                return;
+
             case 'Switch':
                 $command = (bool)$Value ? 'on' : 'off';
                 if ($this->SendCommand($channel, $command)) {
@@ -277,9 +314,9 @@ class ZeptrionAir extends IPSModuleStrict
             case 'Command':
                 $commands = [
                     0 => 'open',
-                    1 => 'move_open_350',
+                    1 => 'move_open_' . max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'))),
                     2 => 'stop',
-                    3 => 'move_close_350',
+                    3 => 'move_close_' . max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'))),
                     4 => 'close'
                 ];
                 $value = (int)$Value;
@@ -494,6 +531,18 @@ class ZeptrionAir extends IPSModuleStrict
 
     private function RegisterProfiles(): void
     {
+        if (!IPS_VariableProfileExists('ZEPA.Dimmer')) {
+            IPS_CreateVariableProfile('ZEPA.Dimmer', VARIABLETYPE_INTEGER);
+        }
+        IPS_SetVariableProfileValues('ZEPA.Dimmer', 0, 100, 1);
+        IPS_SetVariableProfileText('ZEPA.Dimmer', '', ' %');
+
+        if (!IPS_VariableProfileExists('ZEPA.ShutterPosition')) {
+            IPS_CreateVariableProfile('ZEPA.ShutterPosition', VARIABLETYPE_INTEGER);
+        }
+        IPS_SetVariableProfileValues('ZEPA.ShutterPosition', 0, 100, 1);
+        IPS_SetVariableProfileText('ZEPA.ShutterPosition', '', ' %');
+
         if (!IPS_VariableProfileExists('ZEPA.ShutterCommand')) {
             IPS_CreateVariableProfile('ZEPA.ShutterCommand', VARIABLETYPE_INTEGER);
             IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 0, 'Auf', '', -1);
@@ -691,7 +740,7 @@ class ZeptrionAir extends IPSModuleStrict
                 );
             }
 
-            if (in_array($type, ['light', 'dimmer'], true)) {
+            if ($type === 'light') {
                 $ident = 'Ch' . $channel . 'Switch';
                 $variableID = @$this->GetIDForIdent($ident);
                 if ($variableID > 0) {
@@ -700,6 +749,16 @@ class ZeptrionAir extends IPSModuleStrict
                         $this->SetValue($ident, $value);
                     }
                 }
+            } elseif ($type === 'dimmer' && $rawValue !== null) {
+                $rawPercent = max(0, min(100, (int)round($rawValue)));
+                $this->SendDebug(
+                    'Dimmer Rohwert',
+                    'ch' . $channel . ' / ' . $source . ' / val=' . $rawPercent,
+                    0
+                );
+                // Vorerst direkt übernehmen. Im Debug sehen wir damit, ob das
+                // Gerät echte Zwischenwerte oder nur 0/100 meldet.
+                $this->SetValueIfChanged('Ch' . $channel . 'Level', $rawPercent);
             }
             // Store/Markise wird später separat über chnotify/Fahrzeit ausgewertet.
         }
@@ -859,18 +918,42 @@ class ZeptrionAir extends IPSModuleStrict
 
             $active = $channel <= $max && $type !== 'unused';
 
-            if ($active && in_array($type, ['light', 'dimmer'], true)) {
+            if ($active && $type === 'light') {
                 $ident = 'Ch' . $channel . 'Switch';
                 $this->RegisterVariableBoolean($ident, $name, '~Switch', $channel * 10);
-                // RegisterVariable* ändert den Namen einer bereits vorhandenen Variable nicht.
-                // Der aus /zrap/chdes gelesene Kanalname soll aber auch nachträglich übernommen werden.
+                $this->SetVariableName($ident, $name);
+                $this->EnableAction($ident);
+            } elseif ($active && $type === 'dimmer') {
+                $ident = 'Ch' . $channel . 'Level';
+                $this->RegisterVariableInteger($ident, $name, 'ZEPA.Dimmer', $channel * 10);
                 $this->SetVariableName($ident, $name);
                 $this->EnableAction($ident);
             } elseif ($active && $type === 'shutter') {
+                $positionIdent = 'Ch' . $channel . 'Position';
+                $this->RegisterVariableInteger($positionIdent, $name . ' Position', 'ZEPA.ShutterPosition', $channel * 10);
+                $this->SetVariableName($positionIdent, $name . ' Position');
+                $this->EnableAction($positionIdent);
+
                 $ident = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($ident, $name, 'ZEPA.ShutterCommand', $channel * 10);
-                $this->SetVariableName($ident, $name);
+                $this->RegisterVariableInteger($ident, $name . ' Bedienung', 'ZEPA.ShutterCommand', $channel * 10 + 1);
+                $this->SetVariableName($ident, $name . ' Bedienung');
                 $this->EnableAction($ident);
+            }
+
+            // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
+            foreach ([
+                'Switch' => $active && $type === 'light',
+                'Level' => $active && $type === 'dimmer',
+                'Position' => $active && $type === 'shutter',
+                'Command' => $active && $type === 'shutter'
+            ] as $suffix => $needed) {
+                if ($needed) {
+                    continue;
+                }
+                $oldIdent = 'Ch' . $channel . $suffix;
+                if (@$this->GetIDForIdent($oldIdent) > 0) {
+                    $this->UnregisterVariable($oldIdent);
+                }
             }
 
             $showSceneVariable = false;
