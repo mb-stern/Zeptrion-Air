@@ -374,7 +374,7 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function RequestAction($Ident, $Value): void
     {
-        if (!preg_match('/^Ch([1-4])(Switch|Level|Position|Command|Scene)$/', (string)$Ident, $m)) {
+        if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Command|Scene)$/', (string)$Ident, $m)) {
             throw new Exception('Ungültiger Ident: ' . $Ident);
         }
 
@@ -383,34 +383,75 @@ class ZeptrionAir extends IPSModuleStrict
         $this->ValidateChannel($channel);
 
         switch ($action) {
+            case 'DimmerSwitch':
+                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
+                $levelIdent = 'Ch' . $channel . 'Level';
+
+                if (!(bool)$Value) {
+                    // Ausschalten verändert die zuletzt gewählte Dimmstufe nicht.
+                    if ($this->SendCommand($channel, 'off')) {
+                        $this->SetValueIfChanged($switchIdent, false);
+                    }
+                    return;
+                }
+
+                // Beim Einschalten bewusst von AUS/0 hochdimmen, damit die Lampe
+                // nicht kurz mit voller Helligkeit aufblitzt. Die Helligkeits-
+                // variable enthält weiterhin die zuletzt gewählte Dimmstufe.
+                $levelID = @$this->GetIDForIdent($levelIdent);
+                $target = $levelID > 0 ? (int)GetValue($levelID) : 0;
+                if ($target <= 0) {
+                    // Für eine noch nie gesetzte Dimmstufe einen kleinen,
+                    // sicheren Startwert verwenden.
+                    $target = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
+                    $this->SetValueIfChanged($levelIdent, $target);
+                }
+                $time = (int)round($target * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
+                $time = max(100, min(32000, $time));
+                if ($this->SendCommand($channel, 'dim_up_' . $time)) {
+                    $this->SetValueIfChanged($switchIdent, true);
+                }
+                return;
+
             case 'Level':
-                // Dimmer: 0 % = aus, 100 % = volle Helligkeit.
+                // Helligkeit 0..100 %. Die zuletzt gewählte Dimmstufe bleibt
+                // auch im ausgeschalteten Zustand erhalten.
                 $target = max(0, min(100, (int)$Value));
                 $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
                 $target = max(0, min(100, (int)round($target / $step) * $step));
                 $ident = 'Ch' . $channel . 'Level';
+                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
                 $id = @$this->GetIDForIdent($ident);
                 $current = $id > 0 ? (int)GetValue($id) : 0;
+
+                if ($target === 0) {
+                    // 0 % ist eine bewusste Helligkeitswahl: Lampe ausschalten.
+                    // Der nächste Wert >0 wird dann zur neuen gespeicherten Stufe.
+                    if ($this->SendCommand($channel, 'off')) {
+                        $this->SetValueIfChanged($ident, 0);
+                        $this->SetValueIfChanged($switchIdent, false);
+                    }
+                    return;
+                }
+
+                $switchID = @$this->GetIDForIdent($switchIdent);
+                $isOn = $switchID > 0 ? (bool)GetValue($switchID) : false;
+
+                if (!$isOn) {
+                    // Ausgeschaltete Lampe immer von 0 auf den neuen Sollwert
+                    // hochdimmen; niemals zuerst "on" senden.
+                    $time = (int)round($target * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
+                    $time = max(100, min(32000, $time));
+                    if ($this->SendCommand($channel, 'dim_up_' . $time)) {
+                        $this->SetValueIfChanged($ident, $target);
+                        $this->SetValueIfChanged($switchIdent, true);
+                    }
+                    return;
+                }
+
                 if ($target === $current) {
                     return;
                 }
-
-                // Die Endlagen werden als echte Schaltbefehle gesendet. Damit
-                // bedeutet 0 % zuverlässig AUS und 100 % zuverlässig EIN/volle
-                // Helligkeit. Zwischenwerte werden weiterhin zeitbasiert gedimmt.
-                if ($target === 0) {
-                    if ($this->SendCommand($channel, 'off')) {
-                        $this->SetValueIfChanged($ident, 0);
-                    }
-                    return;
-                }
-                if ($target === 100) {
-                    if ($this->SendCommand($channel, 'on')) {
-                        $this->SetValueIfChanged($ident, 100);
-                    }
-                    return;
-                }
-
                 $time = $target > $current
                     ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100)
                     : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100);
@@ -418,6 +459,7 @@ class ZeptrionAir extends IPSModuleStrict
                 $command = $target > $current ? 'dim_up_' . $time : 'dim_down_' . $time;
                 if ($this->SendCommand($channel, $command)) {
                     $this->SetValueIfChanged($ident, $target);
+                    $this->SetValueIfChanged($switchIdent, true);
                 }
                 return;
 
@@ -894,12 +936,13 @@ class ZeptrionAir extends IPSModuleStrict
                     0
                 );
 
-                // Der zeptrionAIR-Dimmer liefert in chscan nur den Schaltzustand:
-                // 0 = aus, 100 = ein. 100 darf deshalb den von uns anhand der
-                // Dimmzeit berechneten Prozentwert nicht überschreiben.
-                // 0 ist dagegen ein sicherer Referenzpunkt.
+                // chscan liefert beim Dimmer nur den Schaltzustand.
+                // Deshalb aktualisieren wir ausschließlich Ein/Aus. Die zuletzt
+                // gewählte Dimmstufe bleibt auch bei 0=Aus unverändert erhalten.
                 if ($rawPercent === 0) {
-                    $this->SetValueIfChanged('Ch' . $channel . 'Level', 0);
+                    $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', false);
+                } elseif ($rawPercent === 100) {
+                    $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', true);
                 }
             }
             // Store/Markise wird später separat über chnotify/Fahrzeit ausgewertet.
@@ -1066,9 +1109,14 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->SetVariableName($ident, $name);
                 $this->EnableAction($ident);
             } elseif ($active && $type === 'dimmer') {
+                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
+                $this->RegisterVariableBoolean($switchIdent, $name, '~Switch', $channel * 10);
+                $this->SetVariableName($switchIdent, $name);
+                $this->EnableAction($switchIdent);
+
                 $ident = 'Ch' . $channel . 'Level';
-                $this->RegisterVariableInteger($ident, $name, 'ZEPA.Dimmer', $channel * 10);
-                $this->SetVariableName($ident, $name);
+                $this->RegisterVariableInteger($ident, $name . ' Helligkeit', 'ZEPA.Dimmer', $channel * 10 + 1);
+                $this->SetVariableName($ident, $name . ' Helligkeit');
                 $this->EnableAction($ident);
             } elseif ($active && $type === 'shutter') {
                 $positionIdent = 'Ch' . $channel . 'Position';
@@ -1085,6 +1133,7 @@ class ZeptrionAir extends IPSModuleStrict
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
             foreach ([
                 'Switch' => $active && $type === 'light',
+                'DimmerSwitch' => $active && $type === 'dimmer',
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && $type === 'shutter',
                 'Command' => $active && $type === 'shutter'
