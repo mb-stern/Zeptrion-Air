@@ -755,12 +755,18 @@ class ZeptrionAir extends IPSModuleStrict
                 $rawPercent = max(0, min(100, (int)round($rawValue)));
                 $this->SendDebug(
                     'Dimmer Rohwert',
-                    'ch' . $channel . ' / ' . $source . ' / val=' . $rawPercent,
+                    'ch' . $channel . ' / ' . $source . ' / val=' . $rawPercent .
+                    ' (0=Aus, 100=Ein; kein Dimmwert)',
                     0
                 );
-                // Vorerst direkt übernehmen. Im Debug sehen wir damit, ob das
-                // Gerät echte Zwischenwerte oder nur 0/100 meldet.
-                $this->SetValueIfChanged('Ch' . $channel . 'Level', $rawPercent);
+
+                // Der zeptrionAIR-Dimmer liefert in chscan nur den Schaltzustand:
+                // 0 = aus, 100 = ein. 100 darf deshalb den von uns anhand der
+                // Dimmzeit berechneten Prozentwert nicht überschreiben.
+                // 0 ist dagegen ein sicherer Referenzpunkt.
+                if ($rawPercent === 0) {
+                    $this->SetValueIfChanged('Ch' . $channel . 'Level', 0);
+                }
             }
             // Store/Markise wird später separat über chnotify/Fahrzeit ausgewertet.
         }
