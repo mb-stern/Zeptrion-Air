@@ -8,8 +8,10 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function GetCompatibleParents(): string
     {
+        // IPSModuleStrict: Die kompatiblen I/O-Parents werden ausschließlich
+        // über moduleIDs angegeben. Symcon erstellt daraus die vollständige
+        // Parent-Kette und bevorzugt bei nur einem Eintrag den Client Socket.
         return json_encode([
-            'type' => 'connect',
             'moduleIDs' => [
                 '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
             ]
