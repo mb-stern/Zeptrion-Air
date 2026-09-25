@@ -81,68 +81,17 @@ class ZeptrionAirIO extends IPSModuleStrict
 
     private function StartNotifyProcess(): void
     {
-        if ($this->GetBuffer('NotifyPending') === '1') {
-            return;
-        }
-
-        $host = trim($this->ReadPropertyString('Host'));
-        $token = $this->GetBuffer('NotifyToken');
-        if ($host === '' || $token === '' || !$this->ReadPropertyBoolean('Active')) {
-            return;
-        }
-
-        // IP-Symcon führt Modul-PHP in einer eigenen Laufzeit aus. PHP_OS_FAMILY
-        // beschreibt deshalb nicht zuverlässig das Betriebssystem des Symcon-Hosts.
-        // Für IPS_Execute ist die Kernel-Plattform maßgebend.
-        $platform = strtolower((string)IPS_GetKernelPlatform());
-        $isWindows = str_contains($platform, 'win');
-        $curl = $isWindows ? 'C:\\Windows\\System32\\curl.exe' : '/usr/bin/curl';
-        $shell = $isWindows ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh';
-
-        // Keine PHP-Dateisystemprüfung auf Systemprogramme: je nach Symcon-
-        // Sandbox/open_basedir kann is_file()/is_executable() hier false liefern,
-        // obwohl IPS_Execute das Programm starten darf.
-        $source = 'http://' . $host . '/zrap/chnotify';
-        $callback = 'http://127.0.0.1:3777/hook/zeptrionair/' . $this->InstanceID .
-            '?token=' . rawurlencode($token);
-
-        // pipefail gibt es bei /bin/sh nicht überall; für den Test reicht die
-        // Pipeline. --max-time beendet auch einen hängenden Geräte-Request.
-        $command =
-            escapeshellarg($curl) . ' --silent --show-error --max-time 35 --connect-timeout 2 ' .
-            '--header ' . escapeshellarg('Connection: close') . ' ' . escapeshellarg($source) .
-            ' | ' .
-            escapeshellarg($curl) . ' --silent --show-error --max-time 5 --connect-timeout 2 ' .
-            '--request POST --header ' . escapeshellarg('Content-Type: application/xml') .
-            ' --data-binary @- ' . escapeshellarg($callback);
-
-        $this->SetBuffer('NotifyPending', '1');
+        // Der externe IPS_Execute-/Shell-Versuch wurde entfernt. Ein dauerhafter
+        // /chnotify Long-Poll lässt sich mit reinem PHP-cURL zwar ausführen, würde
+        // aber für die Dauer des Requests einen PHP-Thread belegen. Genau das soll
+        // diese I/O-Instanz nicht im Hintergrund tun.
+        $this->SetBuffer('NotifyPending', '0');
         $this->SendDebug(
             'chnotify',
-            'Start: ' . $source . ' / Plattform=' . IPS_GetKernelPlatform() . ' / Shell=' . $shell . ' / curl=' . $curl,
+            'Kein Listener gestartet: reines PHP-cURL ist synchron und würde einen PHP-Thread blockieren',
             0
         );
-
-        try {
-            if ($isWindows) {
-                // Unter Windows die beiden curl-Aufrufe über cmd.exe verketten.
-                // Die bereits gequoteten Argumente sind auch für die hier verwendeten
-                // URLs/Optionen ohne Sonderzeichen ausreichend.
-                $windowsCommand =
-                    '"' . $curl . '" --silent --show-error --max-time 35 --connect-timeout 2 ' .
-                    '--header "Connection: close" "' . $source . '" | ' .
-                    '"' . $curl . '" --silent --show-error --max-time 5 --connect-timeout 2 ' .
-                    '--request POST --header "Content-Type: application/xml" --data-binary @- "' . $callback . '"';
-                $result = IPS_Execute($shell, '/C "' . $windowsCommand . '"', false, false);
-            } else {
-                $result = IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
-            }
-            $this->SendDebug('chnotify Start', 'IPS_Execute => ' . var_export($result, true), 0);
-            $this->SetStatus(102);
-        } catch (Throwable $e) {
-            $this->SetBuffer('NotifyPending', '0');
-            $this->SetStatus(202);
-            $this->SendDebug('chnotify Startfehler', $e->getMessage(), 0);
-        }
+        $this->SetStatus(104);
     }
+
 }
