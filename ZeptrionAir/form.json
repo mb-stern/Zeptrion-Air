@@ -437,12 +437,12 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Diagnose: Der Test wartet maximal 35 Sekunden auf die nächste Meldung von /zrap/chnotify. Nach dem Start den physischen Taster betätigen; die Antwort erscheint im Instanz-Debug."
+      "caption": "Gerätewartung: Neustart startet nur das zeptrionAIR WLAN-Gerät neu. Die Konfiguration und WLAN-Einstellungen bleiben erhalten."
     },
     {
       "type": "Button",
-      "caption": "chnotify – nächste Tasterbetätigung testen",
-      "onClick": "ZEPA_TestChannelNotify($id);"
+      "caption": "zeptrionAIR neu starten",
+      "onClick": "echo ZEPA_RebootDevice($id);"
     },
     {
       "type": "Label",
