@@ -82,10 +82,14 @@ class ZeptrionAir extends IPSModuleStrict
     public function GetConfigurationForParent(): string
     {
         $host = trim($this->ReadPropertyString('Host'));
+
+        // Nur die Ziel-URL gehört dauerhaft dem Zeptrion-Kind.
+        // Active/Interval werden ausschließlich beim Erstellen des HTTP Clients
+        // gesetzt. Würden sie hier zurückgegeben, behandelt Symcon sie als vom
+        // Kind erzwungene Parent-Konfiguration und fordert nach Updates erneut
+        // "Änderungen übernehmen".
         return json_encode([
-            'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : '',
-            'Interval' => 0,
-            'Active' => $host !== ''
+            'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : ''
         ], JSON_UNESCAPED_SLASHES);
     }
 
