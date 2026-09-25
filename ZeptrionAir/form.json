@@ -6,6 +6,38 @@
       "caption": "IP-Adresse / Hostname"
     },
     {
+      "type": "Label",
+      "caption": "Die Kanäle entsprechen direkt den zeptrionAIR-Endpunkten /zrap/chctrl/ch1 ... ch4."
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Kanal 1",
+      "items": [
+        {"type":"ValidationTextBox","name":"Channel1Name","caption":"Name"},
+        {"type":"Select","name":"Channel1Type","caption":"Art","options":[
+          {"caption":"Nicht verwendet","value":"unused"},
+          {"caption":"Licht","value":"light"},
+          {"caption":"Dimmer / DALI","value":"dimmer"},
+          {"caption":"Store / Rollo","value":"shutter"}
+        ]},
+        {"type":"CheckBox","name":"Channel1Scenes","caption":"Szenen 1-4 bereitstellen"}
+      ]
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Kanal 2",
+      "items": [
+        {"type":"ValidationTextBox","name":"Channel2Name","caption":"Name"},
+        {"type":"Select","name":"Channel2Type","caption":"Art","options":[
+          {"caption":"Nicht verwendet","value":"unused"},
+          {"caption":"Licht","value":"light"},
+          {"caption":"Dimmer / DALI","value":"dimmer"},
+          {"caption":"Store / Rollo","value":"shutter"}
+        ]},
+        {"type":"CheckBox","name":"Channel2Scenes","caption":"Szenen 1-4 bereitstellen"}
+      ]
+    },
+    {
       "type": "NumberSpinner",
       "name": "PollInterval",
       "caption": "Abfrageintervall (Sekunden)",
@@ -15,11 +47,12 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Grundstruktur – zeptrionAIR-Kommunikation wird als nächster Schritt integriert."
+      "caption": "Steuerung integriert: Licht Ein/Aus, Dimmen, Store Auf/Ab/Stopp/Lamellenimpuls und Szenen 1-4. Statusrückmeldung und Positionsberechnung folgen separat."
     }
   ],
   "status": [
-    { "code": 102, "icon": "active", "caption": "Aktiv" },
-    { "code": 201, "icon": "inactive", "caption": "IP-Adresse / Hostname fehlt" }
+    {"code":102,"icon":"active","caption":"Aktiv"},
+    {"code":201,"icon":"inactive","caption":"IP-Adresse / Hostname fehlt"},
+    {"code":202,"icon":"error","caption":"Kommunikationsfehler"}
   ]
 }
