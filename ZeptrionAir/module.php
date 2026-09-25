@@ -16,6 +16,14 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyString('SerialNumber', '');
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
+        // Sichtbarkeit aller erzeugten Variablen ist pro Geräteinstanz konfigurierbar.
+        $this->RegisterPropertyBoolean('ShowOnline', true);
+        $this->RegisterPropertyBoolean('ShowIPAddress', false);
+        $this->RegisterPropertyBoolean('ShowDeviceTypeInfo', false);
+        $this->RegisterPropertyBoolean('ShowSerialNumberInfo', false);
+        $this->RegisterPropertyBoolean('ShowSoftwareInfo', false);
+        $this->RegisterPropertyBoolean('ShowRSSI', true);
+        $this->RegisterPropertyBoolean('ShowChannelActualValues', true);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
         // Migrationsbereinigung: Dieser Timer existierte kurzzeitig in einer
@@ -44,6 +52,7 @@ class ZeptrionAir extends IPSModuleStrict
 
         $this->RegisterProfiles();
         $this->ApplyChannelVariables();
+        $this->ApplyInfoVariables();
 
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
@@ -174,30 +183,35 @@ class ZeptrionAir extends IPSModuleStrict
             $ip = '';
         }
 
-        $this->RegisterVariableBoolean('Online', 'Erreichbar', '~Switch', 1000);
-        $this->RegisterVariableString('IPAddress', 'IP-Adresse', '', 1010);
-        $this->RegisterVariableString('DeviceTypeInfo', 'Gerätetyp', '', 1020);
-        $this->RegisterVariableString('SerialNumberInfo', 'Seriennummer', '', 1030);
-        $this->RegisterVariableString('SoftwareInfo', 'Software / Firmware', '', 1040);
-        $this->RegisterVariableInteger('RSSI', 'WLAN RSSI', '', 1050);
-
         $id = $this->HttpXmlGet('/zrap/id');
         $rssi = $this->HttpXmlGet('/zrap/rssi');
 
         $online = $id !== null || $rssi !== null;
-        $this->SetValueIfChanged('Online', $online);
-        $this->SetValueIfChanged('IPAddress', $ip);
+        if ($this->ReadPropertyBoolean('ShowOnline')) {
+            $this->SetValueIfChanged('Online', $online);
+        }
+        if ($this->ReadPropertyBoolean('ShowIPAddress')) {
+            $this->SetValueIfChanged('IPAddress', $ip);
+        }
 
         if ($id !== null) {
-            $this->SetValueIfChanged('DeviceTypeInfo', (string)($id['type'] ?? $this->ReadPropertyString('DeviceType')));
-            $this->SetValueIfChanged('SerialNumberInfo', (string)($id['sn'] ?? $this->ReadPropertyString('SerialNumber')));
-            $this->SetValueIfChanged('SoftwareInfo', (string)($id['sw'] ?? ''));
+            if ($this->ReadPropertyBoolean('ShowDeviceTypeInfo')) {
+                $this->SetValueIfChanged('DeviceTypeInfo', (string)($id['type'] ?? $this->ReadPropertyString('DeviceType')));
+            }
+            if ($this->ReadPropertyBoolean('ShowSerialNumberInfo')) {
+                $this->SetValueIfChanged('SerialNumberInfo', (string)($id['sn'] ?? $this->ReadPropertyString('SerialNumber')));
+            }
+            if ($this->ReadPropertyBoolean('ShowSoftwareInfo')) {
+                $this->SetValueIfChanged('SoftwareInfo', (string)($id['sw'] ?? ''));
+            }
         }
 
         if ($rssi !== null) {
             $value = $this->FindNumericValue($rssi, ['rssi', 'val', 'value']);
             if ($value !== null) {
-                $this->SetValueIfChanged('RSSI', (int)round($value));
+                if ($this->ReadPropertyBoolean('ShowRSSI')) {
+                    $this->SetValueIfChanged('RSSI', (int)round($value));
+                }
             }
         }
     }
@@ -589,9 +603,8 @@ class ZeptrionAir extends IPSModuleStrict
 
             // Rohwert aus /zrap/chscan für jeden vorhandenen Kanal als Istwert.
             $rawValue = $this->FindNumericValue($state, ['val', 'value', 'state']);
-            if ($rawValue !== null) {
+            if ($rawValue !== null && $this->ReadPropertyBoolean('ShowChannelActualValues')) {
                 $rawIdent = 'Ch' . $channel . 'ActualValue';
-                $this->RegisterVariableFloat($rawIdent, 'Kanal ' . $channel . ' Istwert', '', $channel * 10 + 8);
                 $this->SetValueIfChanged($rawIdent, $rawValue);
             }
 
@@ -708,6 +721,51 @@ class ZeptrionAir extends IPSModuleStrict
         $variableID = @$this->GetIDForIdent($ident);
         if ($variableID > 0 && IPS_GetName($variableID) !== $name) {
             IPS_SetName($variableID, $name);
+        }
+    }
+
+    private function ApplyInfoVariables(): void
+    {
+        $variables = [
+            ['ShowOnline', 'Online', VARIABLETYPE_BOOLEAN, 'Erreichbar', '~Switch', 1000],
+            ['ShowIPAddress', 'IPAddress', VARIABLETYPE_STRING, 'IP-Adresse', '', 1010],
+            ['ShowDeviceTypeInfo', 'DeviceTypeInfo', VARIABLETYPE_STRING, 'Gerätetyp', '', 1020],
+            ['ShowSerialNumberInfo', 'SerialNumberInfo', VARIABLETYPE_STRING, 'Seriennummer', '', 1030],
+            ['ShowSoftwareInfo', 'SoftwareInfo', VARIABLETYPE_STRING, 'Software / Firmware', '', 1040],
+            ['ShowRSSI', 'RSSI', VARIABLETYPE_INTEGER, 'WLAN RSSI', '', 1050]
+        ];
+
+        foreach ($variables as [$property, $ident, $type, $name, $profile, $position]) {
+            if (!$this->ReadPropertyBoolean($property)) {
+                $id = @$this->GetIDForIdent($ident);
+                if ($id > 0) {
+                    $this->UnregisterVariable($ident);
+                }
+                continue;
+            }
+            if ($type === VARIABLETYPE_BOOLEAN) {
+                $this->RegisterVariableBoolean($ident, $name, $profile, $position);
+            } elseif ($type === VARIABLETYPE_INTEGER) {
+                $this->RegisterVariableInteger($ident, $name, $profile, $position);
+            } else {
+                $this->RegisterVariableString($ident, $name, $profile, $position);
+            }
+        }
+
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $ident = 'Ch' . $channel . 'ActualValue';
+            $enabled = $this->ReadPropertyBoolean('ShowChannelActualValues')
+                && $channel <= max(1, min(4, $this->ReadPropertyInteger('Channels')))
+                && strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) !== 'unused';
+            if ($enabled) {
+                $name = trim($this->ReadPropertyString('Channel' . $channel . 'Name'));
+                $this->RegisterVariableFloat($ident, ($name !== '' ? $name : 'Kanal ' . $channel) . ' Istwert', '', $channel * 10 + 8);
+            } else {
+                $id = @$this->GetIDForIdent($ident);
+                if ($id > 0) {
+                    $this->UnregisterVariable($ident);
+                }
+            }
         }
     }
 
