@@ -49,23 +49,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         ],
                         // Instanzname immer anhand des eindeutigen zapp-Hostnamens setzen.
                         'name' => $host
-                    ],
-                    [
-                        // Configurator-create ist von Kind nach Parent aufgebaut:
-                        // Zeptrion Air -> Client Socket. Die umgekehrte Reihenfolge
-                        // würde versuchen, die I/O-Instanz an das Gerät zu hängen.
-                        'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}',
-                        // Während der Configurator die Kette aufbaut, den Socket
-                        // noch nicht öffnen. Sonst verbindet er sich bereits, bevor die
-                        // Zeptrion-Instanz ihren ersten HTTP-Request senden kann; der
-                        // zeptrion-Webserver beendet diese Leerverbindung mit EOF.
-                        // Nach Erstellung liefert GetConfigurationForParent() Open=true.
-                        'configuration' => [
-                            'Host' => $host,
-                            'Port' => 80,
-                            'Open' => false
-                        ],
-                        'name' => 'Client Socket ' . $host
                     ]
                 ]
             ];
