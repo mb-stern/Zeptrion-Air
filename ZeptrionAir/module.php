@@ -1124,7 +1124,18 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($switchIdent);
 
                 $ident = 'Ch' . $channel . 'Level';
-                $this->RegisterVariableInteger($ident, $name . ' Helligkeit', 'ZEPA.Dimmer.' . $this->InstanceID . '.' . $channel, $channel * 10 + 1);
+                // Native Symcon-Darstellung statt Legacy-%-Profil: Bei einem
+                // Legacy-Profil mit Suffix "%" skaliert Symcon Min..Max immer
+                // auf 0..100 %. Dadurch wurden 10..100 als 0,11,22,...100
+                // angezeigt. Der absolute Slider zeigt die echten Werte.
+                $this->RegisterVariableInteger($ident, $name . ' Helligkeit', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
+                    'MIN' => 10,
+                    'MAX' => 100,
+                    'STEP_SIZE' => 10,
+                    'PERCENTAGE' => false,
+                    'SUFFIX' => ' %'
+                ], $channel * 10 + 1);
                 $this->SetVariableName($ident, $name . ' Helligkeit');
                 $this->EnableAction($ident);
 
