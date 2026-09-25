@@ -102,12 +102,10 @@ class ZeptrionAirIO extends IPSModuleStrict
 
         $curl = '/usr/bin/curl';
         $shell = '/bin/sh';
-        if (!is_file($curl) || !is_executable($curl) || !is_file($shell) || !is_executable($shell)) {
-            $this->SendDebug('chnotify', '/usr/bin/curl oder /bin/sh nicht verfügbar', 0);
-            $this->SetStatus(202);
-            return;
-        }
 
+        // Keine PHP-Dateisystemprüfung auf Systemprogramme: je nach Symcon-
+        // Sandbox/open_basedir kann is_file()/is_executable() hier false liefern,
+        // obwohl IPS_Execute das Programm starten darf.
         $source = 'http://' . $host . '/zrap/chnotify';
         $callback = 'http://127.0.0.1:3777/hook/zeptrionair/' . $this->InstanceID .
             '?token=' . rawurlencode($token);
@@ -123,10 +121,16 @@ class ZeptrionAirIO extends IPSModuleStrict
             ' --data-binary @- ' . escapeshellarg($callback);
 
         $this->SetBuffer('NotifyPending', '1');
-        $this->SendDebug('chnotify', 'Externer Long-Poll gestartet: ' . $source, 0);
+        $this->SendDebug(
+            'chnotify',
+            'Start: ' . $source . ' / Plattform=' . IPS_GetKernelPlatform() . ' / Shell=' . $shell . ' / curl=' . $curl,
+            0
+        );
 
         try {
-            IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
+            $result = IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
+            $this->SendDebug('chnotify Start', 'IPS_Execute => ' . var_export($result, true), 0);
+            $this->SetStatus(102);
         } catch (Throwable $e) {
             $this->SetBuffer('NotifyPending', '0');
             $this->SetStatus(202);
