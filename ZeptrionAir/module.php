@@ -53,7 +53,17 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function Poll(): void
     {
-        $host = trim($this->ReadPropertyString('Host'));
+        // Alte PollTimer-Ereignisse können nach einem Modulupdate noch einmal aus
+        // dem TimerPool eintreffen. In diesem Fall nichts mehr ausführen.
+        if (!$this->HasActiveParent() && !IPS_InstanceExists($this->InstanceID)) {
+            return;
+        }
+
+        $hostValue = $this->ReadPropertyString('Host');
+        if (!is_string($hostValue)) {
+            return;
+        }
+        $host = trim($hostValue);
         if ($host === '') {
             return;
         }
@@ -72,7 +82,11 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function ChannelNotify(): void
     {
-        $host = trim($this->ReadPropertyString('Host'));
+        $hostValue = $this->ReadPropertyString('Host');
+        if (!is_string($hostValue)) {
+            return;
+        }
+        $host = trim($hostValue);
         if ($host === '') {
             return;
         }
