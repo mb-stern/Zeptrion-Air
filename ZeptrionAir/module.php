@@ -6,18 +6,6 @@ class ZeptrionAir extends IPSModuleStrict
 {
     private const CHANNEL_TYPES = ['unused', 'light', 'dimmer', 'shutter'];
 
-    public function GetCompatibleParents(): string
-    {
-        // IPSModuleStrict: Die kompatiblen I/O-Parents werden ausschließlich
-        // über moduleIDs angegeben. Symcon erstellt daraus die vollständige
-        // Parent-Kette und bevorzugt bei nur einem Eintrag den Client Socket.
-        return json_encode([
-            'moduleIDs' => [
-                '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}'
-            ]
-        ], JSON_THROW_ON_ERROR);
-    }
-
     public function Create(): void
     {
         parent::Create();
@@ -29,6 +17,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
         // Migrationsbereinigung: Dieser Timer existierte kurzzeitig in einer
         // Entwicklungsversion. Registrieren mit 0 deaktiviert einen eventuell
         // noch in bestehenden Instanzen gespeicherten NotifyTimer zuverlässig.
@@ -49,8 +38,7 @@ class ZeptrionAir extends IPSModuleStrict
         parent::ApplyChanges();
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
 
-        // Auch bei bereits vorhandenen Instanzen einen alten NotifyTimer sofort
-        // stilllegen. Damit blockiert ein neuer Long-Poll kein Modulupdate mehr.
+        // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('NotifyTimer', 0);
         $this->SetTimerInterval('NotifyStartTimer', 0);
 
@@ -59,99 +47,24 @@ class ZeptrionAir extends IPSModuleStrict
 
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
+            $this->SetTimerInterval('InfoTimer', 0);
             $this->SetTimerInterval('NotifyStartTimer', 0);
             $this->SetStatus(201);
             return;
         }
 
-        // Kein zyklisches 5-Sekunden-Polling mehr. chscan wird nur einmal beim
-        // Start/Übernehmen gelesen. chnotify testen wir anschließend gezielt,
-        // bevor wir die dauerhafte Ereignisverarbeitung implementieren.
-        $this->SetTimerInterval('PollTimer', 0);
-        $this->SetBuffer('NotifyRx', '');
-        $this->SetBuffer('NotifyPending', '0');
+        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
+        $this->SetTimerInterval('PollTimer', $interval * 1000);
+        $this->SetTimerInterval('InfoTimer', 60000);
         $this->SetStatus(102);
 
-        // Einmaliger Anfangszustand; danach ausschließlich chnotify.
+        // Anfangszustand und Geräteinformationen sofort einlesen.
         $this->Poll();
-
-        // chnotify läuft vollständig im eigenen I/O; im Device kein Long-Poll-Timer.
-        $this->SetTimerInterval('NotifyStartTimer', 0);
-    }
-
-    public function GetConfigurationForParent(): string
-    {
-        $host = trim($this->ReadPropertyString('Host'));
-        return json_encode([
-            'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : '',
-            'Headers' => '[]'
-        ], JSON_UNESCAPED_SLASHES);
-    }
-
-    public function StartChannelNotify(): void
-    {
-        // chnotify wird vom eigenen Zeptrion Air I/O verwaltet.
-        $this->SetTimerInterval('NotifyStartTimer', 0);
-    }
-
-    public function ReceiveData(string $JSONString): string
-    {
-        // Machbarkeitstest: zuerst exakt protokollieren, was der native SSE
-        // Client aus /zrap/chnotify an das Device liefert.
-        $this->SendDebug('SSE RAW', $JSONString, 0);
-
-        $packet = json_decode($JSONString, true);
-        if (!is_array($packet)) {
-            return '';
-        }
-
-        foreach (['Data', 'Buffer', 'data', 'Payload'] as $key) {
-            if (!isset($packet[$key]) || !is_string($packet[$key])) {
-                continue;
-            }
-            $body = $packet[$key];
-            if ($key === 'Buffer' && ctype_xdigit($body) && strlen($body) % 2 === 0) {
-                $decoded = hex2bin($body);
-                if ($decoded !== false) {
-                    $body = $decoded;
-                }
-            }
-            $start = strpos($body, '<chnotify');
-            if ($start === false) {
-                $start = strpos($body, '<?xml');
-            }
-            if ($start !== false) {
-                $body = substr($body, $start);
-                $end = strpos($body, '</chnotify>');
-                if ($end !== false) {
-                    $body = substr($body, 0, $end + strlen('</chnotify>'));
-                }
-                $this->SendDebug('chnotify RAW', $body, 0);
-                $this->ProcessNotifyXml($body);
-
-                // /zrap/chnotify ist kein echtes SSE: Nach jeder XML-Antwort ist
-                // genau ein Long-Poll abgeschlossen. Für den Machbarkeitstest den
-                // nativen SSE Client sofort neu anwenden, damit er die nächste
-                // chnotify-Anfrage öffnet.
-                $parent = IPS_GetInstance($this->InstanceID)['ConnectionID'];
-                if (is_int($parent) && $parent > 0 && IPS_InstanceExists($parent)) {
-                    $this->SendDebug('chnotify Reconnect', 'SSE Client nach Ereignis neu starten', 0);
-                    IPS_ApplyChanges($parent);
-                }
-                break;
-            }
-        }
-        return '';
+        $this->RefreshDeviceInfo();
     }
 
     public function Poll(): void
     {
-        // Alte PollTimer-Ereignisse können nach einem Modulupdate noch einmal aus
-        // dem TimerPool eintreffen. In diesem Fall nichts mehr ausführen.
-        if (!$this->HasActiveParent() && !IPS_InstanceExists($this->InstanceID)) {
-            return;
-        }
-
         $hostValue = $this->ReadPropertyString('Host');
         if (!is_string($hostValue)) {
             return;
@@ -246,6 +159,46 @@ class ZeptrionAir extends IPSModuleStrict
                 (string)$channel . ' => ' . json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 0
             );
+        }
+    }
+
+    public function RefreshDeviceInfo(): void
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') {
+            return;
+        }
+
+        $ip = gethostbyname($host);
+        if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
+            $ip = '';
+        }
+
+        $this->RegisterVariableBoolean('Online', 'Erreichbar', '~Switch', 1000);
+        $this->RegisterVariableString('IPAddress', 'IP-Adresse', '', 1010);
+        $this->RegisterVariableString('DeviceTypeInfo', 'Gerätetyp', '', 1020);
+        $this->RegisterVariableString('SerialNumberInfo', 'Seriennummer', '', 1030);
+        $this->RegisterVariableString('SoftwareInfo', 'Software / Firmware', '', 1040);
+        $this->RegisterVariableInteger('RSSI', 'WLAN RSSI', '', 1050);
+
+        $id = $this->HttpXmlGet('/zrap/id');
+        $rssi = $this->HttpXmlGet('/zrap/rssi');
+
+        $online = $id !== null || $rssi !== null;
+        $this->SetValue('Online', $online);
+        $this->SetValue('IPAddress', $ip);
+
+        if ($id !== null) {
+            $this->SetValue('DeviceTypeInfo', (string)($id['type'] ?? $this->ReadPropertyString('DeviceType')));
+            $this->SetValue('SerialNumberInfo', (string)($id['sn'] ?? $this->ReadPropertyString('SerialNumber')));
+            $this->SetValue('SoftwareInfo', (string)($id['sw'] ?? ''));
+        }
+
+        if ($rssi !== null) {
+            $value = $this->FindNumericValue($rssi, ['rssi', 'val', 'value']);
+            if ($value !== null) {
+                $this->SetValue('RSSI', (int)round($value));
+            }
         }
     }
 
@@ -634,6 +587,14 @@ class ZeptrionAir extends IPSModuleStrict
 
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
 
+            // Rohwert aus /zrap/chscan für jeden vorhandenen Kanal als Istwert.
+            $rawValue = $this->FindNumericValue($state, ['val', 'value', 'state']);
+            if ($rawValue !== null) {
+                $rawIdent = 'Ch' . $channel . 'ActualValue';
+                $this->RegisterVariableFloat($rawIdent, 'Kanal ' . $channel . ' Istwert', '', $channel * 10 + 8);
+                $this->SetValue($rawIdent, $rawValue);
+            }
+
             // Für den DALI-Test den gelieferten Rohwert separat sichtbar machen.
             if ($type === 'dimmer') {
                 $this->SendDebug(
@@ -706,6 +667,28 @@ class ZeptrionAir extends IPSModuleStrict
             return (float)$state > 0;
         }
 
+        return null;
+    }
+
+    private function FindNumericValue(mixed $data, array $preferredKeys): ?float
+    {
+        if (is_numeric($data)) {
+            return (float)$data;
+        }
+        if (!is_array($data)) {
+            return null;
+        }
+        foreach ($preferredKeys as $key) {
+            if (array_key_exists($key, $data) && is_numeric($data[$key])) {
+                return (float)$data[$key];
+            }
+        }
+        foreach ($data as $value) {
+            $found = $this->FindNumericValue($value, $preferredKeys);
+            if ($found !== null) {
+                return $found;
+            }
+        }
         return null;
     }
 
