@@ -13,7 +13,7 @@ class ZeptrionAir extends IPSModuleStrict
         // Parent-Kette und bevorzugt bei nur einem Eintrag den Client Socket.
         return json_encode([
             'moduleIDs' => [
-                '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
+                '{4CB91589-CE01-4700-906F-26320EFCF6C4}'
             ]
         ], JSON_THROW_ON_ERROR);
     }
@@ -83,9 +83,9 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $host = trim($this->ReadPropertyString('Host'));
         return json_encode([
-            'Host' => $host,
-            'Port' => 80,
-            'Open' => $host !== ''
+            'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : '',
+            'Interval' => 0,
+            'Active' => false
         ], JSON_UNESCAPED_SLASHES);
     }
 
@@ -99,48 +99,42 @@ class ZeptrionAir extends IPSModuleStrict
 
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '' || !$this->HasActiveParent()) {
-            // Parent ist eventuell gerade erst im Aufbau. Später erneut versuchen.
             $this->SetTimerInterval('NotifyStartTimer', 2000);
             return;
         }
 
-        $request =
-            "GET /zrap/chnotify HTTP/1.1\r\n" .
-            'Host: ' . $host . "\r\n" .
-            "Accept: */*\r\n" .
-            "Connection: keep-alive\r\n\r\n";
-
-        $this->SendDebug('chnotify', 'Long-Poll gestartet', 0);
+        $url = 'http://' . $host . '/zrap/chnotify';
+        $this->SendDebug('chnotify', 'HTTP-Long-Poll gestartet: ' . $url, 0);
         $this->SetBuffer('NotifyPending', '1');
+
+        // Offizielles Symcon-Datenpaket "Erweitert (HTTP Request)".
+        // Die Antwort kommt asynchron über ReceiveData zurück.
         $this->SendDataToParent(json_encode([
-            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
-            'Buffer' => $request
+            'DataID' => '{D4C1D08F-CD3B-494B-BE18-B36EF73B8F43}',
+            'RequestMethod' => 'GET',
+            'RequestURL' => $url,
+            'RequestData' => '',
+            'Timeout' => 35000
         ], JSON_UNESCAPED_SLASHES));
     }
 
     public function ReceiveData(string $JSONString): string
     {
         $packet = json_decode($JSONString, true);
-        if (!is_array($packet) || !isset($packet['Buffer'])) {
+        if (!is_array($packet) || !array_key_exists('Buffer', $packet)) {
             return '';
         }
 
-        $rx = $this->GetBuffer('NotifyRx') . (string)$packet['Buffer'];
-        $this->SetBuffer('NotifyRx', $rx);
+        $this->SetBuffer('NotifyPending', '0');
+        $body = trim((string)$packet['Buffer']);
+        $this->SendDebug('chnotify RAW', $body, 0);
 
-        while (($response = $this->ExtractHttpResponse($rx)) !== null) {
-            $rx = $response['remaining'];
-            $this->SetBuffer('NotifyRx', $rx);
-            $this->SetBuffer('NotifyPending', '0');
-
-            $body = trim($response['body']);
-            $this->SendDebug('chnotify RAW', $body, 0);
+        if ($body !== '') {
             $this->ProcessNotifyXml($body);
-
-            // Antwort beendet den Long-Poll. Direkt den nächsten Request senden.
-            $this->StartChannelNotify();
         }
 
+        // Jede HTTP-Antwort beendet genau einen Long-Poll. Danach sofort neu starten.
+        $this->SetTimerInterval('NotifyStartTimer', 100);
         return '';
     }
 
