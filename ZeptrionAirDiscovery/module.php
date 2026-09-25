@@ -400,18 +400,10 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
     private function MapChannelByName(string $name): array
     {
-        $name = strtolower(trim($name));
-        if ($name === '' || str_contains($name, 'nicht belegt')) {
-            return ['type' => 'unused', 'label' => 'Nicht belegt', 'scenes' => false];
-        }
-        if (str_contains($name, 'szene') || str_contains($name, 'scene')) {
-            // /zrap/chdes kennzeichnet Smart-Tasten nicht eindeutig. Die bekannten
-            // /zapi/smartbt-Endpunkte sind Programmierfunktionen (prgm/prgn/prgs) und
-            // werden zur Discovery absichtlich NICHT aufgerufen, da sie das Gerät bzw.
-            // die Tasten in den Programmiermodus versetzen können.
-            return ['type' => 'unused', 'label' => 'Möglicher Szenentaster', 'scenes' => false];
-        }
-        return ['type' => 'unused', 'label' => 'Nicht erkannt', 'scenes' => false];
+        // /zrap/chdes kennzeichnet Smart-Taster und leere Kanäle nicht eindeutig.
+        // Deshalb werden alle Kanäle ohne erkannte Verbraucher-Kategorie neutral
+        // als "Leer / Smart-Taster" angezeigt – unabhängig vom vergebenen Namen.
+        return ['type' => 'unused', 'label' => 'Leer / Smart-Taster', 'scenes' => false];
     }
 
     private function HttpXmlGet(string $host, string $path): ?array
