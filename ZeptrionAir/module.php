@@ -726,8 +726,9 @@ class ZeptrionAir extends IPSModuleStrict
             if (!IPS_VariableProfileExists($profile)) {
                 IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
             }
-            $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-            IPS_SetVariableProfileValues($profile, $step, 100, $step);
+            // Helligkeit fest von 10 bis 100 % in echten 10-%-Schritten.
+            // Ein/Aus ist separat und 0 % gehört deshalb nicht in dieses Profil.
+            IPS_SetVariableProfileValues($profile, 10, 100, 10);
             IPS_SetVariableProfileText($profile, '', ' %');
         }
 
