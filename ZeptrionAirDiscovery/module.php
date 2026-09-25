@@ -59,16 +59,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'Active' => true
                         ],
                         'name' => 'Zeptrion Air IO ' . $host
-                    ],
-                    [
-                        // IPSModuleStrict benötigt im Configurator die vollständige
-                        // Erstellungs-Kette bis zum I/O-Parent.
-                        'moduleID' => '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}',
-                        'configuration' => [
-                            'URL' => 'http://' . $host . '/zrap/chnotify',
-                            'Headers' => '[]'
-                        ],
-                        'name' => 'Zeptrion Air SSE ' . $host
                     ]
                 ]
             ];
