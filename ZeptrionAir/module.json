@@ -3,10 +3,16 @@
   "name": "Zeptrion Air",
   "type": 3,
   "vendor": "Feller",
-  "aliases": ["Feller zeptrionAIR"],
-  "parentRequirements": [],
+  "aliases": [
+    "Feller zeptrionAIR"
+  ],
+  "parentRequirements": [
+    "{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}"
+  ],
   "childRequirements": [],
-  "implemented": [],
+  "implemented": [
+    "{018EF6B5-AB94-40C6-AA53-46943E824ACF}"
+  ],
   "prefix": "ZEPA",
   "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAir"
 }
