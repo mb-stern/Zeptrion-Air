@@ -10,6 +10,10 @@ class ZeptrionAir extends IPSModuleStrict
     {
         parent::Create();
 
+        // Ein eigener asynchroner TCP-Client pro zeptrionAIR-WLAN-Modul.
+        // Beide Kanäle des Geräts teilen sich diese eine Verbindung.
+        $this->RequireParent('{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}');
+
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -21,6 +25,9 @@ class ZeptrionAir extends IPSModuleStrict
         // Entwicklungsversion. Registrieren mit 0 deaktiviert einen eventuell
         // noch in bestehenden Instanzen gespeicherten NotifyTimer zuverlässig.
         $this->RegisterTimer('NotifyTimer', 0, '');
+        $this->RegisterTimer('NotifyStartTimer', 0, 'ZEPA_StartChannelNotify($_IPS[\'TARGET\']);');
+        $this->SetBuffer('NotifyRx', '');
+        $this->SetBuffer('NotifyPending', '0');
 
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -36,12 +43,14 @@ class ZeptrionAir extends IPSModuleStrict
         // Auch bei bereits vorhandenen Instanzen einen alten NotifyTimer sofort
         // stilllegen. Damit blockiert ein neuer Long-Poll kein Modulupdate mehr.
         $this->SetTimerInterval('NotifyTimer', 0);
+        $this->SetTimerInterval('NotifyStartTimer', 0);
 
         $this->RegisterProfiles();
         $this->ApplyChannelVariables();
 
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
+            $this->SetTimerInterval('NotifyStartTimer', 0);
             $this->SetStatus(201);
             return;
         }
@@ -50,9 +59,81 @@ class ZeptrionAir extends IPSModuleStrict
         // Start/Übernehmen gelesen. chnotify testen wir anschließend gezielt,
         // bevor wir die dauerhafte Ereignisverarbeitung implementieren.
         $this->SetTimerInterval('PollTimer', 0);
+        $this->SetBuffer('NotifyRx', '');
+        $this->SetBuffer('NotifyPending', '0');
         $this->SetStatus(102);
 
+        // Einmaliger Anfangszustand; danach ausschließlich chnotify.
         $this->Poll();
+
+        // Client Socket kurz Zeit zum Verbinden geben. Danach startet der erste
+        // HTTP-Long-Poll; weitere Requests werden direkt aus ReceiveData gestartet.
+        $this->SetTimerInterval('NotifyStartTimer', 1000);
+    }
+
+    public function GetConfigurationForParent(): string
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        return json_encode([
+            'Host' => $host,
+            'Port' => 80,
+            'Open' => $host !== ''
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    public function StartChannelNotify(): void
+    {
+        $this->SetTimerInterval('NotifyStartTimer', 0);
+
+        if ($this->GetBuffer('NotifyPending') === '1') {
+            return;
+        }
+
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '' || !$this->HasActiveParent()) {
+            // Parent ist eventuell gerade erst im Aufbau. Später erneut versuchen.
+            $this->SetTimerInterval('NotifyStartTimer', 2000);
+            return;
+        }
+
+        $request =
+            "GET /zrap/chnotify HTTP/1.1\r\n" .
+            'Host: ' . $host . "\r\n" .
+            "Accept: */*\r\n" .
+            "Connection: keep-alive\r\n\r\n";
+
+        $this->SendDebug('chnotify', 'Long-Poll gestartet', 0);
+        $this->SetBuffer('NotifyPending', '1');
+        $this->SendDataToParent(json_encode([
+            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
+            'Buffer' => $request
+        ], JSON_UNESCAPED_SLASHES));
+    }
+
+    public function ReceiveData(string $JSONString): string
+    {
+        $packet = json_decode($JSONString, true);
+        if (!is_array($packet) || !isset($packet['Buffer'])) {
+            return '';
+        }
+
+        $rx = $this->GetBuffer('NotifyRx') . (string)$packet['Buffer'];
+        $this->SetBuffer('NotifyRx', $rx);
+
+        while (($response = $this->ExtractHttpResponse($rx)) !== null) {
+            $rx = $response['remaining'];
+            $this->SetBuffer('NotifyRx', $rx);
+            $this->SetBuffer('NotifyPending', '0');
+
+            $body = trim($response['body']);
+            $this->SendDebug('chnotify RAW', $body, 0);
+            $this->ProcessNotifyXml($body);
+
+            // Antwort beendet den Long-Poll. Direkt den nächsten Request senden.
+            $this->StartChannelNotify();
+        }
+
+        return '';
     }
 
     public function Poll(): void
@@ -397,6 +478,96 @@ class ZeptrionAir extends IPSModuleStrict
                 IPS_SetVariableProfileAssociation('ZEPA.Scene', $scene, 'Szene ' . $scene, '', -1);
             }
         }
+    }
+
+    private function ExtractHttpResponse(string $buffer): ?array
+    {
+        $headerEnd = strpos($buffer, "\r\n\r\n");
+        if ($headerEnd === false) {
+            return null;
+        }
+
+        $header = substr($buffer, 0, $headerEnd);
+        $bodyStart = $headerEnd + 4;
+
+        if (preg_match('/\\r\\nContent-Length:\\s*(\\d+)/i', "\r\n" . $header, $m)) {
+            $length = (int)$m[1];
+            if (strlen($buffer) < $bodyStart + $length) {
+                return null;
+            }
+            return [
+                'body' => substr($buffer, $bodyStart, $length),
+                'remaining' => substr($buffer, $bodyStart + $length)
+            ];
+        }
+
+        // zeptrionAIR liefert normalerweise Content-Length. Chunked wird für den
+        // Test ebenfalls unterstützt.
+        if (stripos($header, 'Transfer-Encoding: chunked') !== false) {
+            $chunked = substr($buffer, $bodyStart);
+            $decoded = '';
+            $offset = 0;
+            while (true) {
+                $lineEnd = strpos($chunked, "\r\n", $offset);
+                if ($lineEnd === false) {
+                    return null;
+                }
+                $sizeHex = trim(substr($chunked, $offset, $lineEnd - $offset));
+                if ($sizeHex === '' || !ctype_xdigit($sizeHex)) {
+                    return null;
+                }
+                $size = hexdec($sizeHex);
+                $offset = $lineEnd + 2;
+                if ($size === 0) {
+                    if (strlen($chunked) < $offset + 2) {
+                        return null;
+                    }
+                    $offset += 2;
+                    return [
+                        'body' => $decoded,
+                        'remaining' => substr($chunked, $offset)
+                    ];
+                }
+                if (strlen($chunked) < $offset + $size + 2) {
+                    return null;
+                }
+                $decoded .= substr($chunked, $offset, $size);
+                $offset += $size + 2;
+            }
+        }
+
+        return null;
+    }
+
+    private function ProcessNotifyXml(string $response): void
+    {
+        if ($response === '') {
+            return;
+        }
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($response, 'SimpleXMLElement', LIBXML_NOCDATA);
+        if ($xml === false) {
+            libxml_clear_errors();
+            $this->SendDebug('chnotify Parse', 'Ungültiges XML: ' . $response, 0);
+            return;
+        }
+
+        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $data = json_decode((string)$json, true);
+        if (!is_array($data)) {
+            return;
+        }
+
+        foreach ($data as $channel => $state) {
+            $this->SendDebug(
+                'chnotify Wert',
+                (string)$channel . ' => ' . json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                0
+            );
+        }
+
+        $this->ApplyChannelStates($data, 'chnotify');
     }
 
     private function HttpXmlGet(string $path): ?array
