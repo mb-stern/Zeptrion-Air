@@ -390,7 +390,7 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function RequestAction($Ident, $Value): void
     {
-        if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Command|Scene)$/', (string)$Ident, $m)) {
+        if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Lamella|Command|Scene)$/', (string)$Ident, $m)) {
             throw new Exception('Ungültiger Ident: ' . $Ident);
         }
 
@@ -488,6 +488,28 @@ class ZeptrionAir extends IPSModuleStrict
                 $command = (bool)$Value ? 'on' : 'off';
                 if ($this->SendCommand($channel, $command)) {
                     $this->SetValue($Ident, (bool)$Value);
+                }
+                return;
+
+            case 'Lamella':
+                // zeptrionAIR liefert keine absolute Lamellenposition. Die
+                // native Symcon-Lamellensteuerung wird deshalb als Richtung
+                // ausgewertet: höherer Sollwert = Lamellen auf, niedrigerer
+                // Sollwert = Lamellen zu. Pro Bedienung wird exakt die
+                // konfigurierte Lamellenzeit gefahren (Standard 350 ms).
+                $target = max(0, min(100, (int)$Value));
+                $ident = 'Ch' . $channel . 'Lamella';
+                $id = @$this->GetIDForIdent($ident);
+                $current = $id > 0 ? (int)GetValue($id) : 50;
+                if ($target === $current) {
+                    return;
+                }
+                $lamellaTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
+                $command = $target > $current
+                    ? 'move_open_' . $lamellaTime
+                    : 'move_close_' . $lamellaTime;
+                if ($this->SendCommand($channel, $command)) {
+                    $this->SetValueIfChanged($ident, $target);
                 }
                 return;
 
@@ -1114,6 +1136,18 @@ class ZeptrionAir extends IPSModuleStrict
                 ], $channel * 10);
                 $this->SetVariableName($positionIdent, $name . ' Position');
                 $this->EnableAction($positionIdent);
+
+                $lamellaIdent = 'Ch' . $channel . 'Lamella';
+                $this->RegisterVariableInteger($lamellaIdent, $name . ' Lamellen', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
+                    'USAGE_TYPE' => 1,
+                    'OPEN_OUTSIDE_VALUE' => 100,
+                    'CLOSE_INSIDE_VALUE' => 0,
+                    'MAX_ROTATION_INSIDE' => -55,
+                    'MAX_ROTATION_OUTSIDE' => 55
+                ], $channel * 10 + 1);
+                $this->SetVariableName($lamellaIdent, $name . ' Lamellen');
+                $this->EnableAction($lamellaIdent);
             }
 
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
@@ -1122,6 +1156,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'DimmerSwitch' => $active && $type === 'dimmer',
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && $type === 'shutter',
+                'Lamella' => $active && $type === 'shutter',
                 'Command' => false
             ] as $suffix => $needed) {
                 if ($needed) {
