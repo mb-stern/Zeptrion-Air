@@ -718,11 +718,18 @@ class ZeptrionAir extends IPSModuleStrict
 
     private function RegisterProfiles(): void
     {
-        if (!IPS_VariableProfileExists('ZEPA.Dimmer')) {
-            IPS_CreateVariableProfile('ZEPA.Dimmer', VARIABLETYPE_INTEGER);
+        // Dimmerprofile pro Instanz/Kanal, damit Minimum und Schrittweite der
+        // jeweiligen Kanalkonfiguration entsprechen. 0 % ist nicht auswählbar;
+        // Ein/Aus wird ausschließlich über ChXDimmerSwitch bedient.
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $profile = 'ZEPA.Dimmer.' . $this->InstanceID . '.' . $channel;
+            if (!IPS_VariableProfileExists($profile)) {
+                IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
+            }
+            $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
+            IPS_SetVariableProfileValues($profile, $step, 100, $step);
+            IPS_SetVariableProfileText($profile, '', ' %');
         }
-        IPS_SetVariableProfileValues('ZEPA.Dimmer', 0, 100, 1);
-        IPS_SetVariableProfileText('ZEPA.Dimmer', '', ' %');
 
         // Für Store/Rollo verwenden wir die Symcon-Standardprofile:
         // ~Shutter: Position 0 % offen bis 100 % geschlossen.
@@ -1116,7 +1123,7 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($switchIdent);
 
                 $ident = 'Ch' . $channel . 'Level';
-                $this->RegisterVariableInteger($ident, $name . ' Helligkeit', 'ZEPA.Dimmer', $channel * 10 + 1);
+                $this->RegisterVariableInteger($ident, $name . ' Helligkeit', 'ZEPA.Dimmer.' . $this->InstanceID . '.' . $channel, $channel * 10 + 1);
                 $this->SetVariableName($ident, $name . ' Helligkeit');
                 $this->EnableAction($ident);
             } elseif ($active && $type === 'shutter') {
