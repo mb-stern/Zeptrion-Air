@@ -165,7 +165,6 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetTimerInterval('NotifyStartTimer', 0);
         $this->SetTimerInterval('SceneResetTimer', 0);
 
-        $this->RegisterProfiles();
         $this->ApplyChannelVariables();
         $this->ApplyInfoVariables();
 
@@ -716,54 +715,6 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
-    private function RegisterProfiles(): void
-    {
-        // Dimmerprofile pro Instanz/Kanal, damit Minimum und Schrittweite der
-        // jeweiligen Kanalkonfiguration entsprechen. 0 % ist nicht auswählbar;
-        // Ein/Aus wird ausschließlich über ChXDimmerSwitch bedient.
-        for ($channel = 1; $channel <= 4; $channel++) {
-            $profile = 'ZEPA.Dimmer.' . $this->InstanceID . '.' . $channel;
-            if (!IPS_VariableProfileExists($profile)) {
-                IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
-            }
-            // Helligkeit fest von 10 bis 100 % in echten 10-%-Schritten.
-            // Ein/Aus ist separat und 0 % gehört deshalb nicht in dieses Profil.
-            IPS_SetVariableProfileValues($profile, 10, 100, 10);
-            IPS_SetVariableProfileText($profile, '', ' %');
-        }
-
-        // Für Store/Rollo verwenden wir die Symcon-Standardprofile:
-        // ~Shutter: Position 0 % offen bis 100 % geschlossen.
-        // ~ShutterMoveStep: Auf / Schritt auf / Stopp / Schritt zu / Ab.
-        // Dadurch erkennt die Visualisierung die Rollo-/Lamellenbedienung nativ.
-
-        // Szenennamen sind pro Geräteinstanz/Kanal unterschiedlich.
-        // Daher werden die Profile instanz- und kanalspezifisch angelegt.
-        for ($channel = 1; $channel <= 4; $channel++) {
-            $profile = 'ZEPA.Scene.' . $this->InstanceID . '.' . $channel;
-            if (!IPS_VariableProfileExists($profile)) {
-                IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
-            }
-            // Nur tatsächlich vorhandene Zuordnungen entfernen. Bei einer neuen
-            // Instanz ist das Profil leer; ein Löschversuch auf nicht vorhandene
-            // Werte erzeugt in Symcon eine Warnung und bricht die Erstellung ab.
-            $profileData = IPS_GetVariableProfile($profile);
-            foreach ($profileData['Associations'] ?? [] as $association) {
-                IPS_SetVariableProfileAssociation($profile, (int)$association['Value'], '', '', -1);
-            }
-            for ($scene = 1; $scene <= 4; $scene++) {
-                if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
-                    continue;
-                }
-                $sceneName = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
-                if ($sceneName === '') {
-                    $sceneName = 'Szene ' . $scene;
-                }
-                IPS_SetVariableProfileAssociation($profile, $scene, $sceneName, '', -1);
-            }
-        }
-    }
-
     private function ExtractHttpResponse(string $buffer): ?array
     {
         $headerEnd = strpos($buffer, "\r\n\r\n");
@@ -1053,15 +1004,15 @@ class ZeptrionAir extends IPSModuleStrict
     private function ApplyInfoVariables(): void
     {
         $variables = [
-            ['ShowOnline', 'Online', VARIABLETYPE_BOOLEAN, 'Erreichbar', '~Switch', 1000],
-            ['ShowIPAddress', 'IPAddress', VARIABLETYPE_STRING, 'IP-Adresse', '', 1010],
-            ['ShowDeviceTypeInfo', 'DeviceTypeInfo', VARIABLETYPE_STRING, 'Gerätetyp', '', 1020],
-            ['ShowSerialNumberInfo', 'SerialNumberInfo', VARIABLETYPE_STRING, 'Seriennummer', '', 1030],
-            ['ShowSoftwareInfo', 'SoftwareInfo', VARIABLETYPE_STRING, 'Software / Firmware', '', 1040],
-            ['ShowRSSI', 'RSSI', VARIABLETYPE_INTEGER, 'WLAN RSSI', '', 1050]
+            ['ShowOnline', 'Online', VARIABLETYPE_BOOLEAN, 'Erreichbar', ['PRESENTATION' => VARIABLE_PRESENTATION_SWITCH], 1000],
+            ['ShowIPAddress', 'IPAddress', VARIABLETYPE_STRING, 'IP-Adresse', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1010],
+            ['ShowDeviceTypeInfo', 'DeviceTypeInfo', VARIABLETYPE_STRING, 'Gerätetyp', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1020],
+            ['ShowSerialNumberInfo', 'SerialNumberInfo', VARIABLETYPE_STRING, 'Seriennummer', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1030],
+            ['ShowSoftwareInfo', 'SoftwareInfo', VARIABLETYPE_STRING, 'Software / Firmware', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1040],
+            ['ShowRSSI', 'RSSI', VARIABLETYPE_INTEGER, 'WLAN RSSI', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION, 'SUFFIX' => ' dBm'], 1050]
         ];
 
-        foreach ($variables as [$property, $ident, $type, $name, $profile, $position]) {
+        foreach ($variables as [$property, $ident, $type, $name, $presentation, $position]) {
             if (!$this->ReadPropertyBoolean($property)) {
                 $id = @$this->GetIDForIdent($ident);
                 if ($id > 0) {
@@ -1070,11 +1021,11 @@ class ZeptrionAir extends IPSModuleStrict
                 continue;
             }
             if ($type === VARIABLETYPE_BOOLEAN) {
-                $this->RegisterVariableBoolean($ident, $name, $profile, $position);
+                $this->RegisterVariableBoolean($ident, $name, $presentation, $position);
             } elseif ($type === VARIABLETYPE_INTEGER) {
-                $this->RegisterVariableInteger($ident, $name, $profile, $position);
+                $this->RegisterVariableInteger($ident, $name, $presentation, $position);
             } else {
-                $this->RegisterVariableString($ident, $name, $profile, $position);
+                $this->RegisterVariableString($ident, $name, $presentation, $position);
             }
         }
 
@@ -1085,7 +1036,7 @@ class ZeptrionAir extends IPSModuleStrict
                 && strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) !== 'unused';
             if ($enabled) {
                 $name = trim($this->ReadPropertyString('Channel' . $channel . 'Name'));
-                $this->RegisterVariableFloat($ident, ($name !== '' ? $name : 'Kanal ' . $channel) . ' Istwert', '', $channel * 10 + 8);
+                $this->RegisterVariableFloat($ident, ($name !== '' ? $name : 'Kanal ' . $channel) . ' Istwert', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], $channel * 10 + 8);
             } else {
                 $id = @$this->GetIDForIdent($ident);
                 if ($id > 0) {
@@ -1114,12 +1065,12 @@ class ZeptrionAir extends IPSModuleStrict
 
             if ($active && $type === 'light') {
                 $ident = 'Ch' . $channel . 'Switch';
-                $this->RegisterVariableBoolean($ident, $name, '~Switch', $channel * 10);
+                $this->RegisterVariableBoolean($ident, $name, ['PRESENTATION' => VARIABLE_PRESENTATION_SWITCH], $channel * 10);
                 $this->SetVariableName($ident, $name);
                 $this->EnableAction($ident);
             } elseif ($active && $type === 'dimmer') {
                 $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
-                $this->RegisterVariableBoolean($switchIdent, $name, '~Switch', $channel * 10);
+                $this->RegisterVariableBoolean($switchIdent, $name, ['PRESENTATION' => VARIABLE_PRESENTATION_SWITCH], $channel * 10);
                 $this->SetVariableName($switchIdent, $name);
                 $this->EnableAction($switchIdent);
 
@@ -1151,12 +1102,28 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             } elseif ($active && $type === 'shutter') {
                 $positionIdent = 'Ch' . $channel . 'Position';
-                $this->RegisterVariableInteger($positionIdent, $name . ' Position', '~Shutter', $channel * 10);
+                $this->RegisterVariableInteger($positionIdent, $name . ' Position', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
+                    'USAGE_TYPE' => 0,
+                    'OPEN_OUTSIDE_VALUE' => 0,
+                    'CLOSE_INSIDE_VALUE' => 100
+                ], $channel * 10);
                 $this->SetVariableName($positionIdent, $name . ' Position');
                 $this->EnableAction($positionIdent);
 
                 $ident = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($ident, $name . ' Bedienung', '~ShutterMoveStep', $channel * 10 + 1);
+                $this->RegisterVariableInteger($ident, $name . ' Bedienung', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode([
+                        ['Value' => 0, 'Caption' => 'Auf'],
+                        ['Value' => 1, 'Caption' => 'Schritt auf'],
+                        ['Value' => 2, 'Caption' => 'Stopp'],
+                        ['Value' => 3, 'Caption' => 'Schritt zu'],
+                        ['Value' => 4, 'Caption' => 'Ab']
+                    ], JSON_UNESCAPED_UNICODE)
+                ], $channel * 10 + 1);
                 $this->SetVariableName($ident, $name . ' Bedienung');
                 $this->EnableAction($ident);
             }
@@ -1189,7 +1156,23 @@ class ZeptrionAir extends IPSModuleStrict
             $sceneIdent = 'Ch' . $channel . 'Scene';
             if ($active && $showSceneVariable) {
                 $sceneName = $name . ' Szenen';
-                $this->RegisterVariableInteger($sceneIdent, $sceneName, 'ZEPA.Scene.' . $this->InstanceID . '.' . $channel, $channel * 10 + 5);
+                $sceneOptions = [];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                        continue;
+                    }
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $sceneOptions[] = [
+                        'Value' => $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene
+                    ];
+                }
+                $this->RegisterVariableInteger($sceneIdent, $sceneName, [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode($sceneOptions, JSON_UNESCAPED_UNICODE)
+                ], $channel * 10 + 5);
                 $this->SetVariableName($sceneIdent, $sceneName);
                 $this->EnableAction($sceneIdent);
             } else {
