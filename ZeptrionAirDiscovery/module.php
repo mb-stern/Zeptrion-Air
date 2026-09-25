@@ -51,14 +51,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'name' => $host
                     ],
                     [
-                        // Diagnose: /zrap/chnotify über den asynchronen Client Socket testen.
-                        'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}',
+                        // Eigenes I/O hält /zrap/chnotify asynchron über curl_multi offen.
+                        'moduleID' => '{A2F4D0D6-5C36-4A95-8B71-6C5D4A6A9E21}',
                         'configuration' => [
                             'Host' => $host,
-                            'Port' => 80,
-                            'Open' => true
+                            'Active' => true
                         ],
-                        'name' => 'Client Socket ' . $host
+                        'name' => 'Zeptrion Air IO ' . $host
                     ]
                 ]
             ];
