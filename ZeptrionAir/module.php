@@ -6,13 +6,19 @@ class ZeptrionAir extends IPSModuleStrict
 {
     private const CHANNEL_TYPES = ['unused', 'light', 'dimmer', 'shutter'];
 
+    public function GetCompatibleParents(): string
+    {
+        return json_encode([
+            [
+                'type' => 1,
+                'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
+            ]
+        ]);
+    }
+
     public function Create(): void
     {
         parent::Create();
-
-        // Ein eigener asynchroner TCP-Client pro zeptrionAIR-WLAN-Modul.
-        // Beide Kanäle des Geräts teilen sich diese eine Verbindung.
-        $this->RequireParent('{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}');
 
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
