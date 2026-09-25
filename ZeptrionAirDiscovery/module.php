@@ -46,8 +46,14 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'Software'     => $device['sw'],
                 'Channels'     => $device['channels'],
                 'ChannelInfo'  => $reachable ? $device['channelInfo'] : 'Nicht erreichbar',
-                'instanceID'   => $instance['instanceID'] ?? 0,
-                'create'       => ($reachable && $instance === null) ? [
+                'instanceID'   => $instance['instanceID'] ?? 0
+            ];
+
+            // In einem Symcon-Configurator darf "create" nicht als leeres Array
+            // vorhanden sein. Die Eigenschaft wird deshalb ausschließlich für
+            // tatsächlich erstellbare, erreichbare und noch nicht angelegte Geräte gesetzt.
+            if ($reachable && $instance === null) {
+                $rows[$host]['create'] = [
                     [
                         'moduleID'      => self::DEVICE_MODULE_ID,
                         'configuration' => [
@@ -75,8 +81,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         ],
                         'name' => $host
                     ]
-                ] : []
-            ];
+                ];
+            }
         }
 
         // 2) Bereits vorhandene Instanzen, die aktuell überhaupt nicht entdeckt wurden,
@@ -639,8 +645,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             'Software' => '',
             'Channels' => $instance['channels'],
             'ChannelInfo' => $state . ' – ' . $instance['channelInfo'],
-            'instanceID' => $instance['instanceID'],
-            'create' => []
+            'instanceID' => $instance['instanceID']
         ];
     }
 }
