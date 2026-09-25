@@ -23,9 +23,11 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyBoolean('ShowSerialNumberInfo', false);
         $this->RegisterPropertyBoolean('ShowSoftwareInfo', false);
         $this->RegisterPropertyBoolean('ShowRSSI', true);
-        $this->RegisterPropertyBoolean('ShowChannelActualValues', true);
+        $this->RegisterPropertyBoolean('ShowChannelActualValues', false);
+        $this->RegisterPropertyBoolean('ShowScenes', true);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('SceneResetTimer', 0, 'ZEPA_ResetSceneVariables($_IPS[\'TARGET\']);');
         // Migrationsbereinigung: Dieser Timer existierte kurzzeitig in einer
         // Entwicklungsversion. Registrieren mit 0 deaktiviert einen eventuell
         // noch in bestehenden Instanzen gespeicherten NotifyTimer zuverlässig.
@@ -253,11 +255,16 @@ class ZeptrionAir extends IPSModuleStrict
 
             case 'Scene':
                 $scene = (int)$Value;
+                if ($scene === 0) {
+                    $this->SetValueIfChanged((string)$Ident, 0);
+                    return;
+                }
                 if ($scene < 1 || $scene > 4) {
                     throw new InvalidArgumentException('Szene muss zwischen 1 und 4 liegen');
                 }
                 if ($this->RecallScene($channel, $scene)) {
-                    $this->SetValue($Ident, $scene);
+                    $this->SetValueIfChanged((string)$Ident, $scene);
+                    $this->SetTimerInterval('SceneResetTimer', 1000);
                 }
                 return;
         }
@@ -378,6 +385,18 @@ class ZeptrionAir extends IPSModuleStrict
         return $this->SceneCommand($Channel, 'recall', $Scene);
     }
 
+    public function ResetSceneVariables(): void
+    {
+        $this->SetTimerInterval('SceneResetTimer', 0);
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $ident = 'Ch' . $channel . 'Scene';
+            $id = @$this->GetIDForIdent($ident);
+            if ($id > 0) {
+                $this->SetValueIfChanged($ident, 0);
+            }
+        }
+    }
+
     public function StoreScene(int $Channel, int $Scene): bool
     {
         return $this->SceneCommand($Channel, 'store', $Scene);
@@ -449,9 +468,10 @@ class ZeptrionAir extends IPSModuleStrict
 
         if (!IPS_VariableProfileExists('ZEPA.Scene')) {
             IPS_CreateVariableProfile('ZEPA.Scene', VARIABLETYPE_INTEGER);
-            for ($scene = 1; $scene <= 4; $scene++) {
-                IPS_SetVariableProfileAssociation('ZEPA.Scene', $scene, 'Szene ' . $scene, '', -1);
-            }
+        }
+        IPS_SetVariableProfileAssociation('ZEPA.Scene', 0, 'Bereit', '', -1);
+        for ($scene = 1; $scene <= 4; $scene++) {
+            IPS_SetVariableProfileAssociation('ZEPA.Scene', $scene, 'Recall ' . $scene, '', -1);
         }
     }
 
@@ -800,7 +820,7 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($ident);
             }
 
-            if ($active && $this->ReadPropertyBoolean('Channel' . $channel . 'Scenes')) {
+            if ($active && $this->ReadPropertyBoolean('ShowScenes')) {
                 $ident = 'Ch' . $channel . 'Scene';
                 $sceneName = $name . ' Szenen';
                 $this->RegisterVariableInteger($ident, $sceneName, 'ZEPA.Scene', $channel * 10 + 5);
