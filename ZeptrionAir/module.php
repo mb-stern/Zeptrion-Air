@@ -414,38 +414,23 @@ class ZeptrionAir extends IPSModuleStrict
                 return;
 
             case 'Level':
-                // Helligkeit 0..100 %. Die zuletzt gewählte Dimmstufe bleibt
-                // auch im ausgeschalteten Zustand erhalten.
+                // Die Helligkeitsvariable bestimmt nur die Dimmstufe. Ein/Aus
+                // wird ausschließlich über ChXDimmerSwitch bedient.
                 $target = max(0, min(100, (int)$Value));
                 $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-                $target = max(0, min(100, (int)round($target / $step) * $step));
+                $target = max($step, min(100, (int)round($target / $step) * $step));
                 $ident = 'Ch' . $channel . 'Level';
                 $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
                 $id = @$this->GetIDForIdent($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-
-                if ($target === 0) {
-                    // 0 % ist eine bewusste Helligkeitswahl: Lampe ausschalten.
-                    // Der nächste Wert >0 wird dann zur neuen gespeicherten Stufe.
-                    if ($this->SendCommand($channel, 'off')) {
-                        $this->SetValueIfChanged($ident, 0);
-                        $this->SetValueIfChanged($switchIdent, false);
-                    }
-                    return;
-                }
+                $current = $id > 0 ? (int)GetValue($id) : $step;
 
                 $switchID = @$this->GetIDForIdent($switchIdent);
                 $isOn = $switchID > 0 ? (bool)GetValue($switchID) : false;
 
                 if (!$isOn) {
-                    // Ausgeschaltete Lampe immer von 0 auf den neuen Sollwert
-                    // hochdimmen; niemals zuerst "on" senden.
-                    $time = (int)round($target * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
-                    $time = max(100, min(32000, $time));
-                    if ($this->SendCommand($channel, 'dim_up_' . $time)) {
-                        $this->SetValueIfChanged($ident, $target);
-                        $this->SetValueIfChanged($switchIdent, true);
-                    }
+                    // Im ausgeschalteten Zustand nur die gewünschte Dimmstufe
+                    // speichern. Die Lampe bleibt aus.
+                    $this->SetValueIfChanged($ident, $target);
                     return;
                 }
 
@@ -459,7 +444,6 @@ class ZeptrionAir extends IPSModuleStrict
                 $command = $target > $current ? 'dim_up_' . $time : 'dim_down_' . $time;
                 if ($this->SendCommand($channel, $command)) {
                     $this->SetValueIfChanged($ident, $target);
-                    $this->SetValueIfChanged($switchIdent, true);
                 }
                 return;
 
