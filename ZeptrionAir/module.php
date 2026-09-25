@@ -59,11 +59,33 @@ class ZeptrionAir extends IPSModuleStrict
             return '{}';
         }
 
-        foreach ($form['elements'] ?? [] as &$element) {
-            if (($element['type'] ?? '') !== 'ExpansionPanel' || !preg_match('/^Kanal ([1-4])$/', (string)($element['caption'] ?? ''), $match)) {
+        // form.json enthält die Grundstruktur für Kanal 1/2. Bei 4-Kanal-Geräten
+        // werden Kanal 3/4 daraus erzeugt. Nicht vorhandene Kanäle erscheinen
+        // überhaupt nicht in der Konfiguration.
+        $channelTemplates = [];
+        $otherElements = [];
+        foreach ($form['elements'] ?? [] as $element) {
+            if (($element['type'] ?? '') === 'ExpansionPanel'
+                && preg_match('/^Kanal ([1-4])$/', (string)($element['caption'] ?? ''), $match)) {
+                $channelTemplates[(int)$match[1]] = $element;
+            } else {
+                $otherElements[] = $element;
+            }
+        }
+
+        $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        $baseTemplate = $channelTemplates[2] ?? ($channelTemplates[1] ?? null);
+        $channelElements = [];
+
+        for ($channel = 1; $channel <= $maxChannels; $channel++) {
+            if (isset($channelTemplates[$channel])) {
+                $element = $channelTemplates[$channel];
+            } elseif ($baseTemplate !== null) {
+                $element = $this->CloneChannelFormElement($baseTemplate, 2, $channel);
+            } else {
                 continue;
             }
-            $channel = (int)$match[1];
+
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             foreach ($element['items'] ?? [] as &$item) {
                 $name = (string)($item['name'] ?? '');
@@ -74,10 +96,44 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             }
             unset($item);
+            $channelElements[] = $element;
         }
-        unset($element);
+
+        // Kanäle zuerst, danach die allgemeinen Geräte-/Variableneinstellungen.
+        $prefix = [];
+        while ($otherElements !== [] && in_array(($otherElements[0]['name'] ?? ''), ['Host'], true)) {
+            $prefix[] = array_shift($otherElements);
+        }
+        // Der Hinweis direkt nach Host gehört ebenfalls nach oben.
+        if ($otherElements !== [] && ($otherElements[0]['type'] ?? '') === 'Label') {
+            $prefix[] = array_shift($otherElements);
+        }
+        $form['elements'] = array_merge($prefix, $channelElements, $otherElements);
 
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    private function CloneChannelFormElement(array $value, int $fromChannel, int $toChannel): array
+    {
+        $replace = static function ($item) use (&$replace, $fromChannel, $toChannel) {
+            if (is_array($item)) {
+                foreach ($item as $key => $child) {
+                    $item[$key] = $replace($child);
+                }
+                return $item;
+            }
+            if (!is_string($item)) {
+                return $item;
+            }
+
+            $item = str_replace('Channel' . $fromChannel, 'Channel' . $toChannel, $item);
+            $item = str_replace('Kanal ' . $fromChannel, 'Kanal ' . $toChannel, $item);
+            // Szenen-Buttons enthalten den Kanal als Funktionsargument.
+            $item = str_replace(', ' . $fromChannel . ', ', ', ' . $toChannel . ', ', $item);
+            return $item;
+        };
+
+        return $replace($value);
     }
 
     public function ApplyChanges(): void
@@ -327,6 +383,8 @@ class ZeptrionAir extends IPSModuleStrict
         switch ($action) {
             case 'Level':
                 $target = max(0, min(100, (int)$Value));
+                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
+                $target = max(0, min(100, (int)round($target / $step) * $step));
                 $ident = 'Ch' . $channel . 'Level';
                 $id = @$this->GetIDForIdent($ident);
                 $current = $id > 0 ? (int)GetValue($id) : 0;
@@ -346,6 +404,8 @@ class ZeptrionAir extends IPSModuleStrict
             case 'Position':
                 // Rollo: 0 % = ganz offen, 100 % = ganz geschlossen.
                 $target = max(0, min(100, (int)$Value));
+                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
+                $target = max(0, min(100, (int)round($target / $step) * $step));
                 $ident = 'Ch' . $channel . 'Position';
                 $id = @$this->GetIDForIdent($ident);
                 $current = $id > 0 ? (int)GetValue($id) : 0;
@@ -383,6 +443,12 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->SendCommand($channel, $commands[$value])) {
                     $this->SetValue($Ident, $value);
+                    // Nur die Endlagen sind ohne Positionsrückmeldung sicher bekannt.
+                    if ($value === 0) {
+                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
+                    } elseif ($value === 4) {
+                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
+                    }
                 }
                 return;
 
@@ -595,20 +661,10 @@ class ZeptrionAir extends IPSModuleStrict
         IPS_SetVariableProfileValues('ZEPA.Dimmer', 0, 100, 1);
         IPS_SetVariableProfileText('ZEPA.Dimmer', '', ' %');
 
-        if (!IPS_VariableProfileExists('ZEPA.ShutterPosition')) {
-            IPS_CreateVariableProfile('ZEPA.ShutterPosition', VARIABLETYPE_INTEGER);
-        }
-        IPS_SetVariableProfileValues('ZEPA.ShutterPosition', 0, 100, 1);
-        IPS_SetVariableProfileText('ZEPA.ShutterPosition', '', ' %');
-
-        if (!IPS_VariableProfileExists('ZEPA.ShutterCommand')) {
-            IPS_CreateVariableProfile('ZEPA.ShutterCommand', VARIABLETYPE_INTEGER);
-            IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 0, 'Auf', '', -1);
-            IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 1, 'Lamelle auf', '', -1);
-            IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 2, 'Stopp', '', -1);
-            IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 3, 'Lamelle zu', '', -1);
-            IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 4, 'Ab', '', -1);
-        }
+        // Für Store/Rollo verwenden wir die Symcon-Standardprofile:
+        // ~Shutter: Position 0 % offen bis 100 % geschlossen.
+        // ~ShutterMoveStep: Auf / Schritt auf / Stopp / Schritt zu / Ab.
+        // Dadurch erkennt die Visualisierung die Rollo-/Lamellenbedienung nativ.
 
         // Szenennamen sind pro Geräteinstanz/Kanal unterschiedlich.
         // Daher werden die Profile instanz- und kanalspezifisch angelegt.
@@ -996,12 +1052,12 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($ident);
             } elseif ($active && $type === 'shutter') {
                 $positionIdent = 'Ch' . $channel . 'Position';
-                $this->RegisterVariableInteger($positionIdent, $name . ' Position', 'ZEPA.ShutterPosition', $channel * 10);
+                $this->RegisterVariableInteger($positionIdent, $name . ' Position', '~Shutter', $channel * 10);
                 $this->SetVariableName($positionIdent, $name . ' Position');
                 $this->EnableAction($positionIdent);
 
                 $ident = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($ident, $name . ' Bedienung', 'ZEPA.ShutterCommand', $channel * 10 + 1);
+                $this->RegisterVariableInteger($ident, $name . ' Bedienung', '~ShutterMoveStep', $channel * 10 + 1);
                 $this->SetVariableName($ident, $name . ' Bedienung');
                 $this->EnableAction($ident);
             }
