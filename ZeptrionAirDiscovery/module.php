@@ -78,7 +78,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'direction' => 'ascending'
                     ],
                     'columns' => [
-                        ['caption' => 'Name',       'name' => 'Name',        'width' => '220px'],
+                        ['caption' => 'Name',       'name' => 'Name',        'width' => '70px'],
                         ['caption' => 'Host',       'name' => 'Host',        'width' => '145px'],
                         ['caption' => 'IP-Adresse', 'name' => 'IP',          'width' => '125px'],
                         ['caption' => 'RSSI',       'name' => 'RSSI',        'width' => '80px'],
