@@ -291,6 +291,19 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $label = trim((string)($ch['name'] ?? ''));
             $type = trim((string)($ch['type'] ?? ''));
             $cat = trim((string)($ch['cat'] ?? ''));
+
+            // Kategorie -1 ist über /zrap/chdes nicht eindeutig. Für den Vergleich
+            // zwischen tatsächlich leerem Kanal und Smart-/Szenentaster geben wir
+            // deshalb den vollständigen Kanal-Datensatz aus, ohne etwas am Gerät zu ändern.
+            if ($cat === '-1') {
+                $this->SendDebug(
+                    'Kanal -1 RAW',
+                    $device['host'] . ' / K' . $channel . ' => ' .
+                    json_encode($ch, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                    0
+                );
+            }
+
             $mapped = $this->MapChannelCategory($cat, $label);
 
             $device['channelConfig'][$channel] = [
