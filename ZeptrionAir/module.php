@@ -111,23 +111,26 @@ class ZeptrionAir extends IPSModuleStrict
             $channelElements[] = $element;
         }
 
-        // Geräteadresse oben zusätzlich als direkt anklickbaren Link anzeigen.
-        // Bei einem Hostnamen wird – soweit auflösbar – auch die aktuelle IP gezeigt.
+        // Hostfeld kompakt: Hostname/IP und direkter Geräte-Link in einer Zeile.
         $host = trim($this->ReadPropertyString('Host'));
         if ($host !== '') {
             $ip = gethostbyname($host);
             if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
                 $ip = '';
             }
-            $addressCaption = 'Gerät öffnen: http://' . $host . '/';
-            if ($ip !== '' && $ip !== $host) {
-                $addressCaption .= '  (IP: ' . $ip . ')';
+            foreach ($otherElements as &$element) {
+                if (($element['name'] ?? '') !== 'Host') {
+                    continue;
+                }
+                $caption = 'IP-Adresse / Hostname';
+                if ($ip !== '' && $ip !== $host) {
+                    $caption .= '  ·  IP: ' . $ip;
+                }
+                $caption .= '  ·  http://' . $host . '/';
+                $element['caption'] = $caption;
+                break;
             }
-            array_splice($otherElements, 0, 0, [[
-                'type' => 'Label',
-                'caption' => $addressCaption,
-                'link' => true
-            ]]);
+            unset($element);
         }
 
         // Kanäle zuerst, danach die allgemeinen Geräte-/Variableneinstellungen.
