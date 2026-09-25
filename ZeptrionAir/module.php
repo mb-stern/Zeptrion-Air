@@ -16,10 +16,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyString('SerialNumber', '');
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
-        // PollTimer bleibt nur für manuelle/kompatible Statusabfragen registriert.
-        // Laufende Statusänderungen kommen über /zrap/chnotify.
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
-        $this->RegisterTimer('NotifyTimer', 0, 'ZEPA_ChannelNotify($_IPS[\'TARGET\']);');
 
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -37,15 +34,15 @@ class ZeptrionAir extends IPSModuleStrict
 
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
-            $this->SetTimerInterval('NotifyTimer', 0);
             $this->SetStatus(201);
             return;
         }
 
-        // Kein zyklisches chscan-Polling mehr. Ein chscan wird nur beim Start
-        // für den definierten Ausgangszustand gelesen; danach übernimmt chnotify.
-        $this->SetTimerInterval('PollTimer', 0);
-        $this->SetTimerInterval('NotifyTimer', 1000);
+        // PHP-Modultimer dürfen nicht dauerhaft durch den ~30 s Long-Poll
+        // /zrap/chnotify belegt werden. Deshalb bleibt der normale Statusabruf
+        // aktiv. chnotify kann über TestChannelNotify gezielt untersucht werden.
+        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
+        $this->SetTimerInterval('PollTimer', $interval * 1000);
         $this->SetStatus(102);
 
         $this->Poll();
@@ -80,8 +77,12 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetStatus(102);
     }
 
-    public function ChannelNotify(): void
+    public function TestChannelNotify(): void
     {
+        // Bewusst nur manueller Diagnoseaufruf: /zrap/chnotify blockiert bis zu
+        // rund 30 Sekunden. Ein zyklischer Modultimer würde dabei PHP-Slots
+        // belegen und kann beim Neuladen/Löschen der Instanz seine
+        // InstanceInterface verlieren.
         $hostValue = $this->ReadPropertyString('Host');
         if (!is_string($hostValue)) {
             return;
@@ -97,6 +98,7 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
 
+        $this->SendDebug('chnotify Test', 'Warte auf ' . $url, 0);
         curl_setopt_array($curl, [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
@@ -113,35 +115,13 @@ class ZeptrionAir extends IPSModuleStrict
         curl_close($curl);
         $elapsed = round(microtime(true) - $started, 3);
 
-        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
-            $this->SendDebug(
-                'chnotify Fehler',
-                'HTTP ' . $httpCode . ' / ' . $elapsed . ' s' . ($error !== '' ? ' / ' . $error : ''),
-                0
-            );
-            return;
-        }
-
-        // RAW bleibt vorerst absichtlich im Debug. Damit können wir als Nächstes
-        // prüfen, ob DALI-Dimmer hier neben 0/100 auch Zwischenwerte liefern.
-        $this->SendDebug('chnotify RAW', 'HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' . (string)$response, 0);
-
-        libxml_use_internal_errors(true);
-        $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
-        if ($xml === false) {
-            libxml_clear_errors();
-            $this->SendDebug('chnotify Fehler', 'Ungültiges XML von ' . $url, 0);
-            return;
-        }
-
-        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $data = json_decode((string)$json, true);
-        if (!is_array($data)) {
-            return;
-        }
-
-        $this->ApplyChannelStates($data, 'chnotify');
-        $this->SetStatus(102);
+        // Nach dem blockierenden Aufruf keine InstanceInterface-Funktionen mehr
+        // verwenden. So bleibt der Test auch bei Modulreload/Instanzwechsel sauber.
+        IPS_LogMessage(
+            'ZeptrionAir chnotify',
+            $host . ' / HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' .
+            ($error !== '' ? 'Fehler: ' . $error . ' / ' : '') . (string)$response
+        );
     }
 
     public function RequestAction($Ident, $Value): void
