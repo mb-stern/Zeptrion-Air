@@ -48,37 +48,45 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'instanceID'   => $instance['instanceID'] ?? 0
             ];
 
-            // In einem Symcon-Configurator darf "create" nicht als leeres Array
-            // vorhanden sein. Die Eigenschaft wird deshalb ausschließlich für
-            // tatsächlich erstellbare, erreichbare und noch nicht angelegte Geräte gesetzt.
             if ($reachable && $instance === null) {
+                // Noch nicht angelegt: vollständige Startkonfiguration für die
+                // neu zu erstellende Geräteinstanz.
                 $rows[$host]['create'] = [
-                    [
-                        'moduleID'      => self::DEVICE_MODULE_ID,
-                        'configuration' => [
-                            'Host'         => $host,
-                            'DeviceName'   => $device['name'],
-                            'DeviceType'   => $device['type'],
-                            'SerialNumber' => $device['serial'],
-                            'Channels'     => $device['channels'],
-                            'Channel1Name' => $device['channelConfig'][1]['name'] ?? 'Kanal 1',
-                            'Channel1Type' => $device['channelConfig'][1]['type'] ?? 'unused',
-                            'Channel2Name' => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
-                            'Channel2Type' => $device['channelConfig'][2]['type'] ?? 'unused',
-                            'Channel3Name' => $device['channelConfig'][3]['name'] ?? 'Kanal 3',
-                            'Channel3Type' => $device['channelConfig'][3]['type'] ?? 'unused',
-                            'Channel4Name' => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
-                            'Channel4Type' => $device['channelConfig'][4]['type'] ?? 'unused',
-                            'ShowOnline' => true,
-                            'ShowRSSI' => true,
-                            'ShowScenes' => false,
-                            'ShowIPAddress' => false,
-                            'ShowDeviceTypeInfo' => false,
-                            'ShowSerialNumberInfo' => false,
-                            'ShowSoftwareInfo' => false,
-                            'ShowChannelActualValues' => false
-                        ],
-                        'name' => $host
+                    'moduleID'      => self::DEVICE_MODULE_ID,
+                    'configuration' => [
+                        'Host'         => $host,
+                        'DeviceName'   => $device['name'],
+                        'DeviceType'   => $device['type'],
+                        'SerialNumber' => $device['serial'],
+                        'Channels'     => $device['channels'],
+                        'Channel1Name' => $device['channelConfig'][1]['name'] ?? 'Kanal 1',
+                        'Channel1Type' => $device['channelConfig'][1]['type'] ?? 'unused',
+                        'Channel2Name' => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
+                        'Channel2Type' => $device['channelConfig'][2]['type'] ?? 'unused',
+                        'Channel3Name' => $device['channelConfig'][3]['name'] ?? 'Kanal 3',
+                        'Channel3Type' => $device['channelConfig'][3]['type'] ?? 'unused',
+                        'Channel4Name' => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
+                        'Channel4Type' => $device['channelConfig'][4]['type'] ?? 'unused',
+                        'ShowOnline' => true,
+                        'ShowRSSI' => true,
+                        'ShowScenes' => false,
+                        'ShowIPAddress' => false,
+                        'ShowDeviceTypeInfo' => false,
+                        'ShowSerialNumberInfo' => false,
+                        'ShowSoftwareInfo' => false,
+                        'ShowChannelActualValues' => false
+                    ],
+                    'name' => $host
+                ];
+            } elseif ($reachable && $instance !== null) {
+                // Vorhandene + aktuell erreichbare Instanz: "create" dient dem
+                // Configurator nur zum Abgleich. Nur Host prüfen, damit bewusst
+                // vom Benutzer geänderte Kanal-/Zeitwerte NICHT als abweichend
+                // markiert und vor allem niemals überschrieben werden.
+                $rows[$host]['create'] = [
+                    'moduleID'      => self::DEVICE_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host
                     ]
                 ];
             }
