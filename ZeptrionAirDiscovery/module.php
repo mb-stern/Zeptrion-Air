@@ -52,7 +52,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'Channel4Type'  => $device['channelConfig'][4]['type'] ?? 'unused',
                             'ShowOnline' => true,
                             'ShowRSSI' => true,
-                            'ShowScenes' => true,
+                            'ShowScenes' => false,
                             'ShowIPAddress' => false,
                             'ShowDeviceTypeInfo' => false,
                             'ShowSerialNumberInfo' => false,
