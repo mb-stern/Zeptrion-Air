@@ -384,20 +384,25 @@ class ZeptrionAir extends IPSModuleStrict
 
         switch ($action) {
             case 'Level':
+                // Symcon-Dimmerdarstellung hier wie vom zeptrionAIR benötigt:
+                // 0 % = volle Helligkeit, 100 % = aus.
                 $target = max(0, min(100, (int)$Value));
                 $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
                 $target = max(0, min(100, (int)round($target / $step) * $step));
                 $ident = 'Ch' . $channel . 'Level';
                 $id = @$this->GetIDForIdent($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
+                $current = $id > 0 ? (int)GetValue($id) : 100;
                 if ($target === $current) {
                     return;
                 }
-                $time = $target > $current
-                    ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100)
-                    : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100);
+
+                // Kleinerer Prozentwert = heller => dim_up.
+                // Größerer Prozentwert = dunkler => dim_down.
+                $time = $target < $current
+                    ? (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100)
+                    : (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100);
                 $time = max(100, min(32000, $time));
-                $command = $target > $current ? 'dim_up_' . $time : 'dim_down_' . $time;
+                $command = $target < $current ? 'dim_up_' . $time : 'dim_down_' . $time;
                 if ($this->SendCommand($channel, $command)) {
                     $this->SetValueIfChanged($ident, $target);
                 }
@@ -872,16 +877,18 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->SendDebug(
                     'Dimmer Rohwert',
                     'ch' . $channel . ' / ' . $source . ' / val=' . $rawPercent .
-                    ' (0=Aus, 100=Ein; kein Dimmwert)',
+                    ' (0=Aus, 100=Ein; kein Dimmwert; Anzeige 100%=Aus)',
                     0
                 );
 
                 // Der zeptrionAIR-Dimmer liefert in chscan nur den Schaltzustand:
-                // 0 = aus, 100 = ein. 100 darf deshalb den von uns anhand der
-                // Dimmzeit berechneten Prozentwert nicht überschreiben.
-                // 0 ist dagegen ein sicherer Referenzpunkt.
+                // 0 = aus, 100 = ein. Die Bedienvariable ist invertiert:
+                // 100 % = aus, 0 % = volle Helligkeit. Damit ist chscan=0
+                // unser sicherer Referenzpunkt und setzt die Anzeige auf 100 %.
+                // chscan=100 bedeutet nur "ein" und darf den berechneten Wert
+                // deshalb nicht überschreiben.
                 if ($rawPercent === 0) {
-                    $this->SetValueIfChanged('Ch' . $channel . 'Level', 0);
+                    $this->SetValueIfChanged('Ch' . $channel . 'Level', 100);
                 }
             }
             // Store/Markise wird später separat über chnotify/Fahrzeit ausgewertet.
