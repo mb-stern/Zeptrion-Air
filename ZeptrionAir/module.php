@@ -1102,35 +1102,18 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             } elseif ($active && $type === 'shutter') {
                 $positionIdent = 'Ch' . $channel . 'Position';
-                // Die Positionsvariable fährt nur absolute Positionen.
-                // Lamellenschritte gehören bewusst zur separaten Bedienvariable,
-                // weil zeptrionAIR dafür kurze move_open/move_close-Befehle nutzt.
+                // Die native Rollladen-Darstellung ist genau die gewünschte
+                // Kachel: Hauptregler = Position, Pfeile = ganz Auf/Zu und
+                // Lamellen-Tasten = kurzer Schritt Auf/Zu. Alle Aktionen laufen
+                // deshalb über dieselbe Positionsvariable.
                 $this->RegisterVariableInteger($positionIdent, $name . ' Position', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
-                    'MIN' => 0,
-                    'MAX' => 100,
-                    'STEP_SIZE' => max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent'))),
-                    'PERCENTAGE' => false,
-                    'SUFFIX' => ' %'
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
+                    'USAGE_TYPE' => 0,
+                    'OPEN_OUTSIDE_VALUE' => 0,
+                    'CLOSE_INSIDE_VALUE' => 100
                 ], $channel * 10);
                 $this->SetVariableName($positionIdent, $name . ' Position');
                 $this->EnableAction($positionIdent);
-
-                $ident = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($ident, $name . ' Bedienung', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
-                    'LAYOUT' => 1,
-                    'DISPLAY' => 0,
-                    'OPTIONS' => json_encode([
-                        ['Value' => 0, 'Caption' => 'Auf'],
-                        ['Value' => 1, 'Caption' => 'Schritt auf'],
-                        ['Value' => 2, 'Caption' => 'Stopp'],
-                        ['Value' => 3, 'Caption' => 'Schritt zu'],
-                        ['Value' => 4, 'Caption' => 'Zu']
-                    ], JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 1);
-                $this->SetVariableName($ident, $name . ' Bedienung');
-                $this->EnableAction($ident);
             }
 
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
@@ -1139,7 +1122,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'DimmerSwitch' => $active && $type === 'dimmer',
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && $type === 'shutter',
-                'Command' => $active && $type === 'shutter'
+                'Command' => false
             ] as $suffix => $needed) {
                 if ($needed) {
                     continue;
