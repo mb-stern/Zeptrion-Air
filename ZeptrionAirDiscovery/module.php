@@ -67,6 +67,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'Channel3Type' => $device['channelConfig'][3]['type'] ?? 'unused',
                         'Channel4Name' => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
                         'Channel4Type' => $device['channelConfig'][4]['type'] ?? 'unused',
+                        // Der Configurator übergibt die Startwerte explizit. So
+                        // beginnen neu angelegte Dimmer/Rollos sicher mit 5000 ms,
+                        // unabhängig davon, welche alten Defaults eine frühere
+                        // Modulversion beim Erstellen der Instanz gespeichert hat.
+                        'Channel1UpTimeMs' => 5000,
+                        'Channel1DownTimeMs' => 5000,
+                        'Channel2UpTimeMs' => 5000,
+                        'Channel2DownTimeMs' => 5000,
+                        'Channel3UpTimeMs' => 5000,
+                        'Channel3DownTimeMs' => 5000,
+                        'Channel4UpTimeMs' => 5000,
+                        'Channel4DownTimeMs' => 5000,
                         'ShowOnline' => true,
                         'ShowRSSI' => true,
                         'ShowScenes' => false,
