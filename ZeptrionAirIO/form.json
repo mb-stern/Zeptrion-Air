@@ -14,12 +14,7 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Der Long-Poll läuft außerhalb des PHP-Workers. Im Debug muss beim Schalten 'chnotify RAW' erscheinen."
-    },
-    {
-      "type": "Button",
-      "caption": "chnotify neu starten",
-      "onClick": "ZEPAIO_RestartNotify($id);"
+      "caption": "chnotify ist derzeit deaktiviert. Der native SSE-Client-Test ist für diese I/O-Instanz nicht verwendbar."
     }
   ],
   "status": [
