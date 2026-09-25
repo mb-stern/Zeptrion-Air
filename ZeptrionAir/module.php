@@ -1102,11 +1102,16 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             } elseif ($active && $type === 'shutter') {
                 $positionIdent = 'Ch' . $channel . 'Position';
+                // Die Positionsvariable fährt nur absolute Positionen.
+                // Lamellenschritte gehören bewusst zur separaten Bedienvariable,
+                // weil zeptrionAIR dafür kurze move_open/move_close-Befehle nutzt.
                 $this->RegisterVariableInteger($positionIdent, $name . ' Position', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
-                    'USAGE_TYPE' => 0,
-                    'OPEN_OUTSIDE_VALUE' => 0,
-                    'CLOSE_INSIDE_VALUE' => 100
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
+                    'MIN' => 0,
+                    'MAX' => 100,
+                    'STEP_SIZE' => max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent'))),
+                    'PERCENTAGE' => false,
+                    'SUFFIX' => ' %'
                 ], $channel * 10);
                 $this->SetVariableName($positionIdent, $name . ' Position');
                 $this->EnableAction($positionIdent);
@@ -1121,7 +1126,7 @@ class ZeptrionAir extends IPSModuleStrict
                         ['Value' => 1, 'Caption' => 'Schritt auf'],
                         ['Value' => 2, 'Caption' => 'Stopp'],
                         ['Value' => 3, 'Caption' => 'Schritt zu'],
-                        ['Value' => 4, 'Caption' => 'Ab']
+                        ['Value' => 4, 'Caption' => 'Zu']
                     ], JSON_UNESCAPED_UNICODE)
                 ], $channel * 10 + 1);
                 $this->SetVariableName($ident, $name . ' Bedienung');
