@@ -17,8 +17,8 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
-        // Testtimer für /zrap/chnotify. Kurzer Timer, die API selbst wartet per Long-Poll
-        // auf eine Änderung bzw. bis zum serverseitigen Timeout.
+        // chnotify-Test automatisch ausführen, damit die RAW-Antwort direkt im
+        // Instanz-Debug sichtbar wird. Der Aufruf selbst ist ein Long-Poll.
         $this->RegisterTimer('NotifyTestTimer', 0, 'ZEPA_TestChannelNotify($_IPS[\'TARGET\']);');
 
         for ($channel = 1; $channel <= 4; $channel++) {
@@ -44,7 +44,9 @@ class ZeptrionAir extends IPSModuleStrict
 
         $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
         $this->SetTimerInterval('PollTimer', $interval * 1000);
-        $this->SetTimerInterval('NotifyTestTimer', 0);
+        // Nur zum Test: chnotify automatisch starten. Nach jeder Rückkehr wird
+        // nach einer kurzen Pause erneut gewartet.
+        $this->SetTimerInterval('NotifyTestTimer', 1000);
         $this->SetStatus(102);
 
         // Beim Übernehmen sofort einen ersten Status einlesen.
