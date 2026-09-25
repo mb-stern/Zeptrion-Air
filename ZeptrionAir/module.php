@@ -1126,6 +1126,17 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->RegisterVariableInteger($ident, $name . ' Helligkeit', 'ZEPA.Dimmer.' . $this->InstanceID . '.' . $channel, $channel * 10 + 1);
                 $this->SetVariableName($ident, $name . ' Helligkeit');
                 $this->EnableAction($ident);
+
+                // ChXLevel ist ausschließlich unser eigener Soll-/Merkwert.
+                // Die 0/100 aus chscan werden nur für ChXDimmerSwitch verwendet
+                // und dürfen die Helligkeit nie verändern. Eine neu angelegte
+                // Integer-Variable startet in Symcon mit 0; diesen ungültigen
+                // Startwert einmalig auf die konfigurierte Mindeststufe anheben.
+                $levelID = @$this->GetIDForIdent($ident);
+                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
+                if ($levelID > 0 && (int)GetValue($levelID) < $step) {
+                    $this->SetValueIfChanged($ident, $step);
+                }
             } elseif ($active && $type === 'shutter') {
                 $positionIdent = 'Ch' . $channel . 'Position';
                 $this->RegisterVariableInteger($positionIdent, $name . ' Position', '~Shutter', $channel * 10);
