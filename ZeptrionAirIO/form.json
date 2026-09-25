@@ -11,12 +11,7 @@
       "caption": "chnotify aktiv"
     }
   ],
-  "actions": [
-    {
-      "type": "Label",
-      "caption": "chnotify ist derzeit deaktiviert. Der native SSE-Client-Test ist für diese I/O-Instanz nicht verwendbar."
-    }
-  ],
+  "actions": [],
   "status": [
     {
       "code": 102,
