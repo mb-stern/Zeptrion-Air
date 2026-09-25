@@ -1,0 +1,8 @@
+{
+  "actions": [
+    {
+      "type": "Label",
+      "caption": "Die Suche verwendet die von Feller dokumentierte mDNS/DNS-SD-Erkennung (_zapp._tcp). Bei älterer Firmware wird zusätzlich _http._tcp mit zapp-Hostname geprüft."
+    }
+  ]
+}
