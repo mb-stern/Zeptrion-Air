@@ -47,7 +47,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'Channel1Scenes'=> $device['channelConfig'][1]['scenes'] ?? false,
                             'Channel2Name'  => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
                             'Channel2Type'  => $device['channelConfig'][2]['type'] ?? 'unused',
-                            'Channel2Scenes'=> $device['channelConfig'][2]['scenes'] ?? false
+                            'Channel2Scenes'=> $device['channelConfig'][2]['scenes'] ?? false,
+                            'Channel3Name'  => $device['channelConfig'][3]['name'] ?? 'Kanal 3',
+                            'Channel3Type'  => $device['channelConfig'][3]['type'] ?? 'unused',
+                            'Channel3Scenes'=> $device['channelConfig'][3]['scenes'] ?? false,
+                            'Channel4Name'  => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
+                            'Channel4Type'  => $device['channelConfig'][4]['type'] ?? 'unused',
+                            'Channel4Scenes'=> $device['channelConfig'][4]['scenes'] ?? false
                         ],
                         // Instanzname immer anhand des eindeutigen zapp-Hostnamens setzen.
                         'name' => $host
