@@ -9,6 +9,10 @@ class ZeptrionAir extends IPSModuleStrict
         parent::Create();
 
         $this->RegisterPropertyString('Host', '');
+        $this->RegisterPropertyString('DeviceName', '');
+        $this->RegisterPropertyString('DeviceType', '');
+        $this->RegisterPropertyString('SerialNumber', '');
+        $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 30);
     }
 
