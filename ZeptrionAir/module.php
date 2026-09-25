@@ -559,10 +559,12 @@ class ZeptrionAir extends IPSModuleStrict
             if (!IPS_VariableProfileExists($profile)) {
                 IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
             }
-            // Vorhandene Zuordnungen entfernen, damit abgewählte Szenen auch
-            // wirklich aus der Steuervariable verschwinden.
-            for ($scene = 0; $scene <= 4; $scene++) {
-                IPS_SetVariableProfileAssociation($profile, $scene, '', '', -1);
+            // Nur tatsächlich vorhandene Zuordnungen entfernen. Bei einer neuen
+            // Instanz ist das Profil leer; ein Löschversuch auf nicht vorhandene
+            // Werte erzeugt in Symcon eine Warnung und bricht die Erstellung ab.
+            $profileData = IPS_GetVariableProfile($profile);
+            foreach ($profileData['Associations'] ?? [] as $association) {
+                IPS_SetVariableProfileAssociation($profile, (int)$association['Value'], '', '', -1);
             }
             for ($scene = 1; $scene <= 4; $scene++) {
                 if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
