@@ -40,6 +40,9 @@ class ZeptrionAir extends IPSModuleStrict
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
+            for ($scene = 1; $scene <= 4; $scene++) {
+                $this->RegisterPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name', 'Szene ' . $scene);
+            }
         }
     }
 
@@ -466,12 +469,21 @@ class ZeptrionAir extends IPSModuleStrict
             IPS_SetVariableProfileAssociation('ZEPA.ShutterCommand', 4, 'Ab', '', -1);
         }
 
-        if (!IPS_VariableProfileExists('ZEPA.Scene')) {
-            IPS_CreateVariableProfile('ZEPA.Scene', VARIABLETYPE_INTEGER);
-        }
-        IPS_SetVariableProfileAssociation('ZEPA.Scene', 0, 'Bereit', '', -1);
-        for ($scene = 1; $scene <= 4; $scene++) {
-            IPS_SetVariableProfileAssociation('ZEPA.Scene', $scene, 'Recall ' . $scene, '', -1);
+        // Szenennamen sind pro Geräteinstanz/Kanal unterschiedlich.
+        // Daher werden die Profile instanz- und kanalspezifisch angelegt.
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $profile = 'ZEPA.Scene.' . $this->InstanceID . '.' . $channel;
+            if (!IPS_VariableProfileExists($profile)) {
+                IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
+            }
+            IPS_SetVariableProfileAssociation($profile, 0, 'Bereit', '', -1);
+            for ($scene = 1; $scene <= 4; $scene++) {
+                $sceneName = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                if ($sceneName === '') {
+                    $sceneName = 'Szene ' . $scene;
+                }
+                IPS_SetVariableProfileAssociation($profile, $scene, $sceneName, '', -1);
+            }
         }
     }
 
@@ -823,7 +835,7 @@ class ZeptrionAir extends IPSModuleStrict
             if ($active && $this->ReadPropertyBoolean('ShowScenes')) {
                 $ident = 'Ch' . $channel . 'Scene';
                 $sceneName = $name . ' Szenen';
-                $this->RegisterVariableInteger($ident, $sceneName, 'ZEPA.Scene', $channel * 10 + 5);
+                $this->RegisterVariableInteger($ident, $sceneName, 'ZEPA.Scene.' . $this->InstanceID . '.' . $channel, $channel * 10 + 5);
                 $this->SetVariableName($ident, $sceneName);
                 $this->EnableAction($ident);
             }
