@@ -91,17 +91,13 @@ class ZeptrionAirIO extends IPSModuleStrict
             return;
         }
 
-        // Dieser Machbarkeitstest ist absichtlich Linux/Raspberry-Pi-spezifisch.
-        // curl hält /chnotify außerhalb des Symcon-PHP-Workers offen. Die Antwort
-        // wird über einen ausschließlich lokalen Symcon-WebHook zurückgereicht.
-        if (PHP_OS_FAMILY !== 'Linux') {
-            $this->SendDebug('chnotify', 'Externer Long-Poll-Test benötigt Linux', 0);
-            $this->SetStatus(202);
-            return;
-        }
-
-        $curl = '/usr/bin/curl';
-        $shell = '/bin/sh';
+        // IP-Symcon führt Modul-PHP in einer eigenen Laufzeit aus. PHP_OS_FAMILY
+        // beschreibt deshalb nicht zuverlässig das Betriebssystem des Symcon-Hosts.
+        // Für IPS_Execute ist die Kernel-Plattform maßgebend.
+        $platform = strtolower((string)IPS_GetKernelPlatform());
+        $isWindows = str_contains($platform, 'win');
+        $curl = $isWindows ? 'curl.exe' : '/usr/bin/curl';
+        $shell = $isWindows ? 'cmd.exe' : '/bin/sh';
 
         // Keine PHP-Dateisystemprüfung auf Systemprogramme: je nach Symcon-
         // Sandbox/open_basedir kann is_file()/is_executable() hier false liefern,
@@ -128,6 +124,10 @@ class ZeptrionAirIO extends IPSModuleStrict
         );
 
         try {
+            if ($isWindows) {
+                // Aktuell nur Diagnose; dein Symcon-Host ist Linux/Raspberry Pi.
+                throw new RuntimeException('Windows-Startpfad für chnotify noch nicht implementiert');
+            }
             $result = IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
             $this->SendDebug('chnotify Start', 'IPS_Execute => ' . var_export($result, true), 0);
             $this->SetStatus(102);
