@@ -211,6 +211,64 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
+    public function RebootDevice(): string
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') {
+            return 'Neustart nicht möglich: Kein Host konfiguriert.';
+        }
+
+        // Laut zrap-API startet cmd=reboot nur das WLAN-Gerät neu und behält
+        // dessen Konfiguration. Factory-/Network-Reset werden hier bewusst
+        // NICHT angeboten.
+        $url = 'http://' . $host . '/zrap/sys';
+        $curl = curl_init();
+        if ($curl === false) {
+            return 'Neustart nicht möglich: cURL konnte nicht initialisiert werden.';
+        }
+
+        curl_setopt_array($curl, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => 1000,
+            CURLOPT_TIMEOUT_MS => 3000,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => http_build_query(['cmd' => 'reboot']),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded']
+        ]);
+
+        $response = curl_exec($curl);
+        $error = curl_error($curl);
+        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+
+        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) {
+            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            return 'Neustart konnte nicht ausgelöst werden. Das Gerät antwortet nicht auf die API.';
+        }
+
+        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $httpCode, 0);
+
+        // Ein erfolgreicher POST bestätigt zunächst nur die Annahme des Befehls.
+        // Für eine echte Erfolgsmeldung warten wir, bis /zrap/id nach dem Neustart
+        // wieder erreichbar ist.
+        usleep(1500000);
+        for ($attempt = 1; $attempt <= 12; $attempt++) {
+            $id = $this->HttpXmlGet('/zrap/id');
+            if ($id !== null) {
+                $this->SetStatus(102);
+                $this->Poll();
+                $this->RefreshDeviceInfo();
+                $this->SendDebug('Geräte-Neustart', 'Gerät wieder erreichbar', 0);
+                return 'Neustart erfolgreich: Das zeptrionAIR-Gerät ist wieder erreichbar.';
+            }
+            usleep(1000000);
+        }
+
+        return 'Neustart wurde ausgelöst, aber das Gerät war nach ca. 14 Sekunden noch nicht wieder erreichbar.';
+    }
+
     public function RefreshDeviceInfo(): void
     {
         $host = trim($this->ReadPropertyString('Host'));
