@@ -28,10 +28,12 @@ class ZeptrionAirIO extends IPSModuleStrict
             return;
         }
 
-        $this->SendDebug('Lifecycle', 'I/O startet für ' . $host, 0);
-        $this->StartRequest();
-        $this->SetTimerInterval('PumpTimer', 50);
-        $this->SetStatus(102);
+        // curl_multi Handles überleben in IP-Symcon nicht zwischen PHP-Aufrufen.
+        // Den fehlgeschlagenen Pump-Test deshalb sicher deaktivieren, damit keine
+        // Request-Schleife im 50-ms-Takt entsteht.
+        $this->SetTimerInterval('PumpTimer', 0);
+        $this->SendDebug('Lifecycle', 'chnotify Pump-Test deaktiviert', 0);
+        $this->SetStatus(104);
     }
 
     public function Pump(): void
