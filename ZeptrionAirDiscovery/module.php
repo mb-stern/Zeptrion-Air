@@ -128,6 +128,12 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 continue;
             }
 
+            // Für die zeptrionAIR-API reicht der per mDNS gelieferte zapp-Hostname.
+            // Die Geräte sind in der Praxis genau unter diesem Namen per HTTP erreichbar
+            // (z.B. http://zapp-19370101/zrap/chctrl/ch1). Dadurch sind wir nicht davon
+            // abhängig, dass ZC_QueryService() zusätzlich eine IPv4-Adresse zurückliefert.
+            $host = $name;
+
             try {
                 $detail = ZC_QueryService(
                     $zcID,
@@ -136,22 +142,23 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     (string)($service['Domain'] ?? 'local.')
                 );
             } catch (Throwable $e) {
+                $detail = [];
                 $this->SendDebug('mDNS resolve ' . $name, $e->getMessage(), 0);
-                continue;
             }
 
             $this->SendDebug('mDNS resolve ' . $name . ' RAW', json_encode($detail, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
 
-            $host = $this->ExtractIPv4($detail);
-            if ($host === '') {
-                $host = rtrim((string)($detail['Host'] ?? $detail['Hostname'] ?? ''), '.');
-            }
-            if ($host === '') {
-                $this->SendDebug('mDNS ' . $name, 'Keine IPv4/kein Host aus Service-Antwort ermittelt', 0);
-                continue;
+            $resolved = $this->ExtractIPv4($detail);
+            if ($resolved !== '') {
+                $host = $resolved;
+            } else {
+                $resolvedHost = rtrim((string)($detail['Host'] ?? $detail['Hostname'] ?? ''), '.');
+                if ($resolvedHost !== '') {
+                    $host = $resolvedHost;
+                }
             }
 
-            $this->SendDebug('mDNS ' . $name, 'Aufgelöst auf: ' . $host, 0);
+            $this->SendDebug('mDNS ' . $name, 'Verwende Host: ' . $host, 0);
 
             $txt = $this->NormalizeTxt($detail['TXT'] ?? $detail['Text'] ?? $detail['TXTRecords'] ?? []);
             $deviceType = (string)($txt['type'] ?? '');
