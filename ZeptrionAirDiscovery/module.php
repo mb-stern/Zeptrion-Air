@@ -33,6 +33,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'instanceID'   => $instanceID,
                 'create'       => [
                     [
+                        // Die Erstellungs-Kette muss bei IPSModuleStrict den benötigten
+                        // Parent explizit enthalten. Die Konsole erstellt zuerst den
+                        // Client Socket und hängt anschließend die Geräteinstanz daran.
+                        'moduleID' => '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}',
+                        'configuration' => [
+                            'Host' => $host,
+                            'Port' => 80,
+                            'Open' => true
+                        ],
+                        'name' => 'Client Socket ' . $host
+                    ],
+                    [
                         'moduleID'      => self::DEVICE_MODULE_ID,
                         'configuration' => [
                             'Host'         => $host,
