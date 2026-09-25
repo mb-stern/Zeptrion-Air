@@ -13,7 +13,7 @@ class ZeptrionAir extends IPSModuleStrict
         // Parent-Kette und bevorzugt bei nur einem Eintrag den Client Socket.
         return json_encode([
             'moduleIDs' => [
-                '{A2F4D0D6-5C36-4A95-8B71-6C5D4A6A9E21}'
+                '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}'
             ]
         ], JSON_THROW_ON_ERROR);
     }
@@ -81,9 +81,10 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function GetConfigurationForParent(): string
     {
+        $host = trim($this->ReadPropertyString('Host'));
         return json_encode([
-            'Host' => trim($this->ReadPropertyString('Host')),
-            'Active' => true
+            'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : '',
+            'Headers' => '[]'
         ], JSON_UNESCAPED_SLASHES);
     }
 
@@ -95,18 +96,41 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function ReceiveData(string $JSONString): string
     {
+        // Machbarkeitstest: zuerst exakt protokollieren, was der native SSE
+        // Client aus /zrap/chnotify an das Device liefert.
+        $this->SendDebug('SSE RAW', $JSONString, 0);
+
         $packet = json_decode($JSONString, true);
-        if (!is_array($packet) || !isset($packet['Buffer'])) {
+        if (!is_array($packet)) {
             return '';
         }
 
-        $body = hex2bin((string)$packet['Buffer']);
-        if ($body === false || trim($body) === '') {
-            return '';
+        foreach (['Data', 'Buffer', 'data', 'Payload'] as $key) {
+            if (!isset($packet[$key]) || !is_string($packet[$key])) {
+                continue;
+            }
+            $body = $packet[$key];
+            if ($key === 'Buffer' && ctype_xdigit($body) && strlen($body) % 2 === 0) {
+                $decoded = hex2bin($body);
+                if ($decoded !== false) {
+                    $body = $decoded;
+                }
+            }
+            $start = strpos($body, '<chnotify');
+            if ($start === false) {
+                $start = strpos($body, '<?xml');
+            }
+            if ($start !== false) {
+                $body = substr($body, $start);
+                $end = strpos($body, '</chnotify>');
+                if ($end !== false) {
+                    $body = substr($body, 0, $end + strlen('</chnotify>'));
+                }
+                $this->SendDebug('chnotify RAW', $body, 0);
+                $this->ProcessNotifyXml($body);
+                break;
+            }
         }
-
-        $this->SendDebug('chnotify RAW', $body, 0);
-        $this->ProcessNotifyXml($body);
         return '';
     }
 
