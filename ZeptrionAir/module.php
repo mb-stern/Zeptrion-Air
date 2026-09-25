@@ -13,7 +13,7 @@ class ZeptrionAir extends IPSModuleStrict
         // Parent-Kette und bevorzugt bei nur einem Eintrag den Client Socket.
         return json_encode([
             'moduleIDs' => [
-                '{4CB91589-CE01-4700-906F-26320EFCF6C4}'
+                '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
             ]
         ], JSON_THROW_ON_ERROR);
     }
@@ -83,64 +83,41 @@ class ZeptrionAir extends IPSModuleStrict
     public function GetConfigurationForParent(): string
     {
         $host = trim($this->ReadPropertyString('Host'));
-
-        // Nur die Ziel-URL gehört dauerhaft dem Zeptrion-Kind.
-        // Active/Interval werden ausschließlich beim Erstellen des HTTP Clients
-        // gesetzt. Würden sie hier zurückgegeben, behandelt Symcon sie als vom
-        // Kind erzwungene Parent-Konfiguration und fordert nach Updates erneut
-        // "Änderungen übernehmen".
         return json_encode([
-            'URL' => $host !== '' ? 'http://' . $host . '/zrap/chnotify' : ''
+            'Host' => $host,
+            'Port' => 80,
+            'Open' => true
         ], JSON_UNESCAPED_SLASHES);
     }
 
     public function StartChannelNotify(): void
     {
         $this->SetTimerInterval('NotifyStartTimer', 0);
+        $host = trim($this->ReadPropertyString('Host'));
+
         $this->SendDebug(
             'chnotify Start',
-            'Aufruf / Parent aktiv=' . ($this->HasActiveParent() ? 'ja' : 'nein') .
-            ' / Pending=' . $this->GetBuffer('NotifyPending'),
+            'Client Socket / Parent aktiv=' . ($this->HasActiveParent() ? 'ja' : 'nein'),
             0
         );
 
-        if ($this->GetBuffer('NotifyPending') === '1') {
-            return;
-        }
-
-        $host = trim($this->ReadPropertyString('Host'));
         if ($host === '' || !$this->HasActiveParent()) {
-            $this->SetTimerInterval('NotifyStartTimer', 2000);
             return;
         }
 
-        $url = 'http://' . $host . '/zrap/chnotify';
-        $this->SendDebug('chnotify', 'HTTP-Long-Poll gestartet: ' . $url, 0);
+        $this->SetBuffer('NotifyRx', '');
         $this->SetBuffer('NotifyPending', '1');
 
-        // Offizielles Symcon-Datenpaket "Erweitert (HTTP Request)".
-        // Die Antwort kommt asynchron über ReceiveData zurück.
-        $started = microtime(true);
-        $result = $this->SendDataToParent(json_encode([
-            'DataID' => '{D4C1D08F-CD3B-494B-BE18-B36EF73B8F43}',
-            'RequestMethod' => 'GET',
-            'RequestURL' => $url,
-            'RequestData' => '',
-            'Timeout' => 35000
+        $request = "GET /zrap/chnotify HTTP/1.1\r\n"
+            . "Host: " . $host . "\r\n"
+            . "Connection: close\r\n"
+            . "Accept: */*\r\n\r\n";
+
+        $this->SendDebug('chnotify TX', str_replace("\r\n", ' | ', trim($request)), 0);
+        $this->SendDataToParent(json_encode([
+            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
+            'Buffer' => $request
         ], JSON_UNESCAPED_SLASHES));
-        $elapsed = round(microtime(true) - $started, 3);
-
-        $this->SendDebug(
-            'chnotify Return',
-            'nach ' . $elapsed . ' s / Typ=' . get_debug_type($result) .
-            ' / Wert=' . var_export($result, true),
-            0
-        );
-
-        // Diagnose: Falls der HTTP Client die Antwort synchron zurückgibt,
-        // Pending wieder freigeben. Noch keinen Folge-Long-Poll starten, damit
-        // der Test nicht sofort erneut einen PHP-Slot blockiert.
-        $this->SetBuffer('NotifyPending', '0');
     }
 
     public function ReceiveData(string $JSONString): string
@@ -150,16 +127,26 @@ class ZeptrionAir extends IPSModuleStrict
             return '';
         }
 
+        $chunk = (string)$packet['Buffer'];
+        $rx = $this->GetBuffer('NotifyRx') . $chunk;
+        $this->SetBuffer('NotifyRx', $rx);
+        $this->SendDebug('Socket RX', strlen($chunk) . ' Byte / gesamt ' . strlen($rx), 0);
+
+        $response = $this->ExtractHttpResponse($rx);
+        if ($response === null) {
+            return '';
+        }
+
+        $body = trim((string)$response['body']);
         $this->SetBuffer('NotifyPending', '0');
-        $body = trim((string)$packet['Buffer']);
+        $this->SetBuffer('NotifyRx', (string)$response['remaining']);
         $this->SendDebug('chnotify RAW', $body, 0);
 
         if ($body !== '') {
             $this->ProcessNotifyXml($body);
         }
 
-        // Jede HTTP-Antwort beendet genau einen Long-Poll. Danach sofort neu starten.
-        $this->SetTimerInterval('NotifyStartTimer', 100);
+        // Diagnose: noch kein automatischer Folge-Request.
         return '';
     }
 
