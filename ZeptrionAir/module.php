@@ -13,7 +13,7 @@ class ZeptrionAir extends IPSModuleStrict
         // Parent-Kette und bevorzugt bei nur einem Eintrag den Client Socket.
         return json_encode([
             'moduleIDs' => [
-                '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}'
+                '{A2F4D0D6-5C36-4A95-8B71-6C5D4A6A9E21}'
             ]
         ], JSON_THROW_ON_ERROR);
     }
@@ -75,78 +75,38 @@ class ZeptrionAir extends IPSModuleStrict
         // Einmaliger Anfangszustand; danach ausschließlich chnotify.
         $this->Poll();
 
-        // HTTP Client kurz Zeit zum Aktivieren geben. Danach startet der erste
-        // HTTP-Long-Poll; weitere Requests werden direkt aus ReceiveData gestartet.
-        $this->SetTimerInterval('NotifyStartTimer', 1000);
+        // chnotify läuft vollständig im eigenen I/O; im Device kein Long-Poll-Timer.
+        $this->SetTimerInterval('NotifyStartTimer', 0);
     }
 
     public function GetConfigurationForParent(): string
     {
-        $host = trim($this->ReadPropertyString('Host'));
         return json_encode([
-            'Host' => $host,
-            'Port' => 80,
-            'Open' => true
+            'Host' => trim($this->ReadPropertyString('Host')),
+            'Active' => true
         ], JSON_UNESCAPED_SLASHES);
     }
 
     public function StartChannelNotify(): void
     {
+        // chnotify wird vom eigenen Zeptrion Air I/O verwaltet.
         $this->SetTimerInterval('NotifyStartTimer', 0);
-        $host = trim($this->ReadPropertyString('Host'));
-
-        $this->SendDebug(
-            'chnotify Start',
-            'Client Socket / Parent aktiv=' . ($this->HasActiveParent() ? 'ja' : 'nein'),
-            0
-        );
-
-        if ($host === '' || !$this->HasActiveParent()) {
-            return;
-        }
-
-        $this->SetBuffer('NotifyRx', '');
-        $this->SetBuffer('NotifyPending', '1');
-
-        $request = "GET /zrap/chnotify HTTP/1.1\r\n"
-            . "Host: " . $host . "\r\n"
-            . "Connection: close\r\n"
-            . "Accept: */*\r\n\r\n";
-
-        $this->SendDebug('chnotify TX', str_replace("\r\n", ' | ', trim($request)), 0);
-        $this->SendDataToParent(json_encode([
-            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
-            'Buffer' => $request
-        ], JSON_UNESCAPED_SLASHES));
     }
 
     public function ReceiveData(string $JSONString): string
     {
         $packet = json_decode($JSONString, true);
-        if (!is_array($packet) || !array_key_exists('Buffer', $packet)) {
+        if (!is_array($packet) || !isset($packet['Buffer'])) {
             return '';
         }
 
-        $chunk = (string)$packet['Buffer'];
-        $rx = $this->GetBuffer('NotifyRx') . $chunk;
-        $this->SetBuffer('NotifyRx', $rx);
-        $this->SendDebug('Socket RX', strlen($chunk) . ' Byte / gesamt ' . strlen($rx), 0);
-
-        $response = $this->ExtractHttpResponse($rx);
-        if ($response === null) {
+        $body = hex2bin((string)$packet['Buffer']);
+        if ($body === false || trim($body) === '') {
             return '';
         }
 
-        $body = trim((string)$response['body']);
-        $this->SetBuffer('NotifyPending', '0');
-        $this->SetBuffer('NotifyRx', (string)$response['remaining']);
         $this->SendDebug('chnotify RAW', $body, 0);
-
-        if ($body !== '') {
-            $this->ProcessNotifyXml($body);
-        }
-
-        // Diagnose: noch kein automatischer Folge-Request.
+        $this->ProcessNotifyXml($body);
         return '';
     }
 
