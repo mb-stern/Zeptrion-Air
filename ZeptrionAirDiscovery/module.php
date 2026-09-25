@@ -51,13 +51,24 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'name' => $host
                     ],
                     [
-                        // Eigenes I/O hält /zrap/chnotify asynchron über curl_multi offen.
+                        // Eigenes I/O verarbeitet die vom nativen Symcon SSE Client
+                        // gelieferten Daten.
                         'moduleID' => '{A2F4D0D6-5C36-4A95-8B71-6C5D4A6A9E21}',
                         'configuration' => [
                             'Host' => $host,
                             'Active' => true
                         ],
                         'name' => 'Zeptrion Air IO ' . $host
+                    ],
+                    [
+                        // IPSModuleStrict benötigt im Configurator die vollständige
+                        // Erstellungs-Kette bis zum I/O-Parent.
+                        'moduleID' => '{2FADB4B7-FDAB-3C64-3E2C-068A4809849A}',
+                        'configuration' => [
+                            'URL' => 'http://' . $host . '/zrap/chnotify',
+                            'Headers' => '[]'
+                        ],
+                        'name' => 'Zeptrion Air SSE ' . $host
                     ]
                 ]
             ];
