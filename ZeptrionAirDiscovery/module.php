@@ -47,7 +47,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'Channel2Type'  => $device['channelConfig'][2]['type'] ?? 'unused',
                             'Channel2Scenes'=> $device['channelConfig'][2]['scenes'] ?? false
                         ],
-                        'name' => $device['name'] !== '' ? $device['name'] : 'zeptrionAIR ' . $host
+                        // Instanzname immer anhand des eindeutigen zapp-Hostnamens setzen.
+                        'name' => $host
                     ]
                 ]
             ];
