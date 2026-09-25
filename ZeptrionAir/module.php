@@ -278,6 +278,15 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
+    private function RemoveVariableIfExists(string $ident): void
+    {
+        $variableID = @$this->GetIDForIdent($ident);
+        if ($variableID > 0 && IPS_VariableExists($variableID)) {
+            $this->SendDebug('Variablen', 'Entferne nicht mehr benötigte Variable ' . $ident . ' (ID ' . $variableID . ')', 0);
+            IPS_DeleteVariable($variableID);
+        }
+    }
+
     private function SetVariableName(string $ident, string $name): void
     {
         $variableID = @$this->GetIDForIdent($ident);
@@ -302,6 +311,22 @@ class ZeptrionAir extends IPSModuleStrict
             }
 
             $active = $channel <= $max && $type !== 'unused';
+
+            // Alte Variable eines zuvor erkannten/konfigurierten Kanaltyps entfernen.
+            // Beispiel: Wurde der Kanal zuerst als Licht angelegt und später korrekt als
+            // Store erkannt, darf Ch1Switch nicht zusätzlich zu Ch1Command bestehen bleiben.
+            $wantedIdent = null;
+            if ($active && in_array($type, ['light', 'dimmer'], true)) {
+                $wantedIdent = 'Ch' . $channel . 'Switch';
+            } elseif ($active && $type === 'shutter') {
+                $wantedIdent = 'Ch' . $channel . 'Command';
+            }
+
+            foreach (['Ch' . $channel . 'Switch', 'Ch' . $channel . 'Command'] as $possibleIdent) {
+                if ($possibleIdent !== $wantedIdent) {
+                    $this->RemoveVariableIfExists($possibleIdent);
+                }
+            }
 
             if ($active && in_array($type, ['light', 'dimmer'], true)) {
                 $ident = 'Ch' . $channel . 'Switch';
