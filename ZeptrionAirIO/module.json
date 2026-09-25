@@ -10,7 +10,9 @@
   "childRequirements": [
     "{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"
   ],
-  "implemented": [],
+  "implemented": [
+    "{B8F62D31-7D8A-4F5E-A3C1-91D2476E5B20}"
+  ],
   "prefix": "ZEPAIO",
   "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAirIO"
 }
