@@ -39,7 +39,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                             'DeviceName'   => $device['name'],
                             'DeviceType'   => $device['type'],
                             'SerialNumber' => $device['serial'],
-                            'Channels'     => $device['channels']
+                            'Channels'     => $device['channels'],
+                            'Channel1Name'  => $device['channelConfig'][1]['name'] ?? 'Kanal 1',
+                            'Channel1Type'  => $device['channelConfig'][1]['type'] ?? 'unused',
+                            'Channel1Scenes'=> $device['channelConfig'][1]['scenes'] ?? false,
+                            'Channel2Name'  => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
+                            'Channel2Type'  => $device['channelConfig'][2]['type'] ?? 'unused',
+                            'Channel2Scenes'=> $device['channelConfig'][2]['scenes'] ?? false
                         ],
                         'name' => $device['name'] !== '' ? $device['name'] : 'zeptrionAIR ' . $host
                     ]
@@ -90,10 +96,15 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         $this->SendDebug('Discovery', 'DNS-SD Control ID: ' . $zcID, 0);
 
         // API Kap. 4: aktuelle Firmware annonciert _zapp._tcp.
+        // Nur wenn dort nichts gefunden wird, suchen wir als Fallback über _http._tcp.
         $this->CollectServices($zcID, '_zapp._tcp', false, $found);
 
-        // Ältere Firmware: _http._tcp, gefiltert über den zapp-Hostnamen.
-        $this->CollectServices($zcID, '_http._tcp', true, $found);
+        if ($found === []) {
+            $this->SendDebug('Discovery', 'Keine _zapp._tcp Geräte gefunden, verwende Legacy-Fallback _http._tcp', 0);
+            $this->CollectServices($zcID, '_http._tcp', true, $found);
+        } else {
+            $this->SendDebug('Discovery', '_zapp._tcp erfolgreich - Legacy-Suche wird übersprungen', 0);
+        }
 
         foreach ($found as &$device) {
             $this->EnrichFromApi($device);
@@ -128,37 +139,11 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 continue;
             }
 
-            // Für die zeptrionAIR-API reicht der per mDNS gelieferte zapp-Hostname.
-            // Die Geräte sind in der Praxis genau unter diesem Namen per HTTP erreichbar
-            // (z.B. http://zapp-19370101/zrap/chctrl/ch1). Dadurch sind wir nicht davon
-            // abhängig, dass ZC_QueryService() zusätzlich eine IPv4-Adresse zurückliefert.
-            $host = $name;
-
-            try {
-                $detail = ZC_QueryService(
-                    $zcID,
-                    $name,
-                    (string)($service['Type'] ?? $type),
-                    (string)($service['Domain'] ?? 'local.')
-                );
-            } catch (Throwable $e) {
-                $detail = [];
-                $this->SendDebug('mDNS resolve ' . $name, $e->getMessage(), 0);
-            }
-
-            $this->SendDebug('mDNS resolve ' . $name . ' RAW', json_encode($detail, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-
-            $resolved = $this->ExtractIPv4($detail);
-            if ($resolved !== '') {
-                $host = $resolved;
-            } else {
-                $resolvedHost = rtrim((string)($detail['Host'] ?? $detail['Hostname'] ?? ''), '.');
-                if ($resolvedHost !== '') {
-                    $host = $resolvedHost;
-                }
-            }
-
-            $this->SendDebug('mDNS ' . $name, 'Verwende Host: ' . $host, 0);
+            // Der mDNS-Service-Name ist zugleich der funktionierende HTTP-Hostname.
+            // Eine zusätzliche ZC_QueryService()-Auflösung ist nicht nötig und kostet
+            // bei den zeptrionAIR-Modulen etwa eine Sekunde pro Gerät.
+            $host = rtrim($name, '.');
+            $this->SendDebug('mDNS ' . $name, 'Verwende Host direkt: ' . $host, 0);
 
             $txt = $this->NormalizeTxt($detail['TXT'] ?? $detail['Text'] ?? $detail['TXTRecords'] ?? []);
             $deviceType = (string)($txt['type'] ?? '');
@@ -171,7 +156,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'serial'      => '',
                 'sw'          => (string)($txt['sw'] ?? ''),
                 'channels'    => $channels,
-                'channelInfo' => ''
+                'channelInfo' => '',
+                'channelConfig' => []
             ];
         }
     }
@@ -215,6 +201,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $label = trim((string)($ch['name'] ?? ''));
             $type = trim((string)($ch['type'] ?? ''));
             $cat = trim((string)($ch['cat'] ?? ''));
+            $mapped = $this->MapChannelCategory($cat, $label);
+            $device['channelConfig'][$channel] = [
+                'name' => $label !== '' ? $label : 'Kanal ' . $channel,
+                'type' => $mapped['type'],
+                'scenes' => $mapped['scenes']
+            ];
+
             $text = 'K' . $channel;
             if ($label !== '') {
                 $text .= ': ' . $label;
@@ -222,9 +215,35 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             if ($type !== '' || $cat !== '') {
                 $text .= ' [' . trim($type . '/' . $cat, '/') . ']';
             }
+            $text .= ' – ' . $mapped['label'];
             $parts[] = $text;
         }
         $device['channelInfo'] = implode(' | ', $parts);
+    }
+
+    private function MapChannelCategory(string $cat, string $name): array
+    {
+        // Zuordnung aus den realen /zrap/chdes Antworten dieser Installation.
+        // Unbekannte Kategorien bleiben bewusst "Nicht erkannt".
+        return match ($cat) {
+            '1' => ['type' => 'light',   'label' => 'Licht / Schalter', 'scenes' => false],
+            '3' => ['type' => 'dimmer',  'label' => 'Dimmer / DALI',    'scenes' => false],
+            '5' => ['type' => 'shutter', 'label' => 'Store / Rollo',    'scenes' => false],
+            '6' => ['type' => 'shutter', 'label' => 'Markise',          'scenes' => false],
+            default => $this->MapChannelByName($name)
+        };
+    }
+
+    private function MapChannelByName(string $name): array
+    {
+        $name = strtolower(trim($name));
+        if ($name === '' || str_contains($name, 'nicht belegt')) {
+            return ['type' => 'unused', 'label' => 'Nicht belegt', 'scenes' => false];
+        }
+        if (str_contains($name, 'szene') || str_contains($name, 'scene')) {
+            return ['type' => 'unused', 'label' => 'Szenentaster', 'scenes' => true];
+        }
+        return ['type' => 'unused', 'label' => 'Nicht erkannt', 'scenes' => false];
     }
 
     private function HttpXmlGet(string $host, string $path): ?array
