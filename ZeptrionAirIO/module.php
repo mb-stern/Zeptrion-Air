@@ -96,8 +96,8 @@ class ZeptrionAirIO extends IPSModuleStrict
         // Für IPS_Execute ist die Kernel-Plattform maßgebend.
         $platform = strtolower((string)IPS_GetKernelPlatform());
         $isWindows = str_contains($platform, 'win');
-        $curl = $isWindows ? 'curl.exe' : '/usr/bin/curl';
-        $shell = $isWindows ? 'cmd.exe' : '/bin/sh';
+        $curl = $isWindows ? 'C:\\Windows\\System32\\curl.exe' : '/usr/bin/curl';
+        $shell = $isWindows ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh';
 
         // Keine PHP-Dateisystemprüfung auf Systemprogramme: je nach Symcon-
         // Sandbox/open_basedir kann is_file()/is_executable() hier false liefern,
@@ -125,10 +125,18 @@ class ZeptrionAirIO extends IPSModuleStrict
 
         try {
             if ($isWindows) {
-                // Aktuell nur Diagnose; dein Symcon-Host ist Linux/Raspberry Pi.
-                throw new RuntimeException('Windows-Startpfad für chnotify noch nicht implementiert');
+                // Unter Windows die beiden curl-Aufrufe über cmd.exe verketten.
+                // Die bereits gequoteten Argumente sind auch für die hier verwendeten
+                // URLs/Optionen ohne Sonderzeichen ausreichend.
+                $windowsCommand =
+                    '"' . $curl . '" --silent --show-error --max-time 35 --connect-timeout 2 ' .
+                    '--header "Connection: close" "' . $source . '" | ' .
+                    '"' . $curl . '" --silent --show-error --max-time 5 --connect-timeout 2 ' .
+                    '--request POST --header "Content-Type: application/xml" --data-binary @- "' . $callback . '"';
+                $result = IPS_Execute($shell, '/C "' . $windowsCommand . '"', false, false);
+            } else {
+                $result = IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
             }
-            $result = IPS_Execute($shell, '-c ' . escapeshellarg($command), false, false);
             $this->SendDebug('chnotify Start', 'IPS_Execute => ' . var_export($result, true), 0);
             $this->SetStatus(102);
         } catch (Throwable $e) {
