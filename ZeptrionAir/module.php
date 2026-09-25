@@ -88,12 +88,29 @@ class ZeptrionAir extends IPSModuleStrict
 
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             if (isset($element['items']) && is_array($element['items'])) {
+                // Dimmer und Rollo verwenden teilweise dieselben Properties für
+                // Fahr-/Dimmzeiten. Deshalb darf im Formular immer nur der zum
+                // Kanaltyp passende Konfigurationsblock existieren. Zwei Controls
+                // mit demselben Property-Namen können sich beim Speichern gegenseitig
+                // überschreiben, auch wenn eines davon nur unsichtbar ist.
+                $element['items'] = array_values(array_filter(
+                    $element['items'],
+                    static function (array $item) use ($channel, $type): bool {
+                        $name = (string)($item['name'] ?? '');
+                        if ($name === 'Channel' . $channel . 'DimmerConfig') {
+                            return $type === 'dimmer';
+                        }
+                        if ($name === 'Channel' . $channel . 'ShutterConfig') {
+                            return $type === 'shutter';
+                        }
+                        return true;
+                    }
+                ));
                 foreach ($element['items'] as &$item) {
                     $name = (string)($item['name'] ?? '');
-                    if ($name === 'Channel' . $channel . 'DimmerConfig') {
-                        $item['visible'] = $type === 'dimmer';
-                    } elseif ($name === 'Channel' . $channel . 'ShutterConfig') {
-                        $item['visible'] = $type === 'shutter';
+                    if ($name === 'Channel' . $channel . 'DimmerConfig' ||
+                        $name === 'Channel' . $channel . 'ShutterConfig') {
+                        $item['visible'] = true;
                     }
                 }
                 unset($item);
