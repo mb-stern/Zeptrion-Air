@@ -28,13 +28,6 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
-        // Migrationsbereinigung: Dieser Timer existierte kurzzeitig in einer
-        // Entwicklungsversion. Registrieren mit 0 deaktiviert einen eventuell
-        // noch in bestehenden Instanzen gespeicherten NotifyTimer zuverlässig.
-        $this->RegisterTimer('NotifyTimer', 0, '');
-        $this->RegisterTimer('NotifyStartTimer', 0, 'ZEPA_StartChannelNotify($_IPS[\'TARGET\']);');
-        $this->SetBuffer('NotifyRx', '');
-        $this->SetBuffer('NotifyPending', '0');
 
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -180,8 +173,6 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
 
         // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
-        $this->SetTimerInterval('NotifyTimer', 0);
-        $this->SetTimerInterval('NotifyStartTimer', 0);
         $this->SetTimerInterval('SceneResetTimer', 0);
 
         $this->ApplyChannelVariables();
@@ -190,7 +181,6 @@ class ZeptrionAir extends IPSModuleStrict
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->SetTimerInterval('NotifyStartTimer', 0);
             $this->SetStatus(201);
             return;
         }
@@ -226,82 +216,6 @@ class ZeptrionAir extends IPSModuleStrict
 
         $this->ApplyChannelStates($data, 'chscan');
         $this->SetStatus(102);
-    }
-
-    public function TestChannelNotify(): void
-    {
-        // Bewusst nur manueller Diagnoseaufruf: /zrap/chnotify blockiert bis zu
-        // rund 30 Sekunden. Ein zyklischer Modultimer würde dabei PHP-Slots
-        // belegen und kann beim Neuladen/Löschen der Instanz seine
-        // InstanceInterface verlieren.
-        $hostValue = $this->ReadPropertyString('Host');
-        if (!is_string($hostValue)) {
-            return;
-        }
-        $host = trim($hostValue);
-        if ($host === '') {
-            return;
-        }
-
-        $url = 'http://' . $host . '/zrap/chnotify';
-        $curl = curl_init();
-        if ($curl === false) {
-            return;
-        }
-
-        $this->SendDebug('chnotify Test', 'Warte auf ' . $url, 0);
-        curl_setopt_array($curl, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1000,
-            CURLOPT_TIMEOUT_MS => 35000,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_HTTPHEADER => ['Connection: close']
-        ]);
-
-        $started = microtime(true);
-        $response = curl_exec($curl);
-        $error = curl_error($curl);
-        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
-        $elapsed = round(microtime(true) - $started, 3);
-
-        // Für den manuellen Test die Antwort direkt im Instanz-Debug anzeigen.
-        // TestChannelNotify wird nicht automatisch per Timer gestartet, daher gibt
-        // es hier keinen dauerhaft blockierenden Long-Poll.
-        $message =
-            'HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' .
-            ($error !== '' ? 'Fehler: ' . $error . ' / ' : '') . (string)$response;
-        $this->SendDebug('chnotify RAW', $message, 0);
-
-        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
-            return;
-        }
-
-        libxml_use_internal_errors(true);
-        $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
-        if ($xml === false) {
-            libxml_clear_errors();
-            $this->SendDebug('chnotify Parse', 'Ungültiges XML', 0);
-            return;
-        }
-
-        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $data = json_decode((string)$json, true);
-        if (!is_array($data)) {
-            return;
-        }
-
-        // Alle gelieferten Kanalwerte zusätzlich kompakt ausgeben. Damit sehen
-        // wir beim normalen Schalter und anschließend beim DALI-Dimmer sofort,
-        // ob nur 0/100 oder auch Zwischenwerte gemeldet werden.
-        foreach ($data as $channel => $state) {
-            $this->SendDebug(
-                'chnotify Wert',
-                (string)$channel . ' => ' . json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                0
-            );
-        }
     }
 
     public function RebootDevice(): string
@@ -793,37 +707,6 @@ class ZeptrionAir extends IPSModuleStrict
         return null;
     }
 
-    private function ProcessNotifyXml(string $response): void
-    {
-        if ($response === '') {
-            return;
-        }
-
-        libxml_use_internal_errors(true);
-        $xml = simplexml_load_string($response, 'SimpleXMLElement', LIBXML_NOCDATA);
-        if ($xml === false) {
-            libxml_clear_errors();
-            $this->SendDebug('chnotify Parse', 'Ungültiges XML: ' . $response, 0);
-            return;
-        }
-
-        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $data = json_decode((string)$json, true);
-        if (!is_array($data)) {
-            return;
-        }
-
-        foreach ($data as $channel => $state) {
-            $this->SendDebug(
-                'chnotify Wert',
-                (string)$channel . ' => ' . json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                0
-            );
-        }
-
-        $this->ApplyChannelStates($data, 'chnotify');
-    }
-
     private function HttpXmlGet(string $path): ?array
     {
         $host = trim($this->ReadPropertyString('Host'));
@@ -924,7 +807,6 @@ class ZeptrionAir extends IPSModuleStrict
                     $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', true);
                 }
             }
-            // Store/Markise wird später separat über chnotify/Fahrzeit ausgewertet.
         }
     }
 
