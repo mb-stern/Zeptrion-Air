@@ -278,6 +278,14 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
+    private function SetVariableName(string $ident, string $name): void
+    {
+        $variableID = @$this->GetIDForIdent($ident);
+        if ($variableID > 0 && IPS_GetName($variableID) !== $name) {
+            IPS_SetName($variableID, $name);
+        }
+    }
+
     private function ApplyChannelVariables(): void
     {
         $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
@@ -296,16 +304,25 @@ class ZeptrionAir extends IPSModuleStrict
             $active = $channel <= $max && $type !== 'unused';
 
             if ($active && in_array($type, ['light', 'dimmer'], true)) {
-                $this->RegisterVariableBoolean('Ch' . $channel . 'Switch', $name, '~Switch', $channel * 10);
-                $this->EnableAction('Ch' . $channel . 'Switch');
+                $ident = 'Ch' . $channel . 'Switch';
+                $this->RegisterVariableBoolean($ident, $name, '~Switch', $channel * 10);
+                // RegisterVariable* ändert den Namen einer bereits vorhandenen Variable nicht.
+                // Der aus /zrap/chdes gelesene Kanalname soll aber auch nachträglich übernommen werden.
+                $this->SetVariableName($ident, $name);
+                $this->EnableAction($ident);
             } elseif ($active && $type === 'shutter') {
-                $this->RegisterVariableInteger('Ch' . $channel . 'Command', $name, 'ZEPA.ShutterCommand', $channel * 10);
-                $this->EnableAction('Ch' . $channel . 'Command');
+                $ident = 'Ch' . $channel . 'Command';
+                $this->RegisterVariableInteger($ident, $name, 'ZEPA.ShutterCommand', $channel * 10);
+                $this->SetVariableName($ident, $name);
+                $this->EnableAction($ident);
             }
 
             if ($active && $this->ReadPropertyBoolean('Channel' . $channel . 'Scenes')) {
-                $this->RegisterVariableInteger('Ch' . $channel . 'Scene', $name . ' Szenen', 'ZEPA.Scene', $channel * 10 + 5);
-                $this->EnableAction('Ch' . $channel . 'Scene');
+                $ident = 'Ch' . $channel . 'Scene';
+                $sceneName = $name . ' Szenen';
+                $this->RegisterVariableInteger($ident, $sceneName, 'ZEPA.Scene', $channel * 10 + 5);
+                $this->SetVariableName($ident, $sceneName);
+                $this->EnableAction($ident);
             }
         }
     }
