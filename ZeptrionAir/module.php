@@ -40,8 +40,8 @@ class ZeptrionAir extends IPSModuleStrict
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 5000);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'DownTimeMs', 5000);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 4000);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'DownTimeMs', 4000);
             $this->RegisterPropertyInteger('Channel' . $channel . 'StepPercent', 10);
             $this->RegisterPropertyInteger('Channel' . $channel . 'LamellaTimeMs', 350);
             for ($scene = 1; $scene <= 4; $scene++) {
