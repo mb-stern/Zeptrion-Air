@@ -447,18 +447,6 @@ class ZeptrionAir extends IPSModuleStrict
             $active = $channel <= $max && $type !== 'unused';
 
             if ($active && in_array($type, ['light', 'dimmer'], true)) {
-                $wantedIdent = 'Ch' . $channel . 'Switch';
-            } elseif ($active && $type === 'shutter') {
-                $wantedIdent = 'Ch' . $channel . 'Command';
-            }
-
-            foreach (['Ch' . $channel . 'Switch', 'Ch' . $channel . 'Command'] as $possibleIdent) {
-                if ($possibleIdent !== $wantedIdent) {
-                    $this->RemoveVariableIfExists($possibleIdent);
-                }
-            }
-
-            if ($active && in_array($type, ['light', 'dimmer'], true)) {
                 $ident = 'Ch' . $channel . 'Switch';
                 $this->RegisterVariableBoolean($ident, $name, '~Switch', $channel * 10);
                 // RegisterVariable* ändert den Namen einer bereits vorhandenen Variable nicht.
