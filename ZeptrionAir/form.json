@@ -42,9 +42,67 @@
           ]
         },
         {
-          "type": "CheckBox",
-          "name": "Channel1Scenes",
-          "caption": "Szenen 1-4 bereitstellen"
+          "type": "ExpansionPanel",
+          "caption": "Szenen verwalten",
+          "expanded": false,
+          "items": [
+            {
+              "type": "Label",
+              "caption": "Szene 1"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 1, 1);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 1, 1);"
+            },
+            {
+              "type": "Label",
+              "caption": "Szene 2"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 1, 2);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 1, 2);"
+            },
+            {
+              "type": "Label",
+              "caption": "Szene 3"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 1, 3);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 1, 3);"
+            },
+            {
+              "type": "Label",
+              "caption": "Szene 4"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 1, 4);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 1, 4);"
+            }
+          ]
         }
       ]
     },
@@ -81,9 +139,67 @@
           ]
         },
         {
-          "type": "CheckBox",
-          "name": "Channel2Scenes",
-          "caption": "Szenen 1-4 bereitstellen"
+          "type": "ExpansionPanel",
+          "caption": "Szenen verwalten",
+          "expanded": false,
+          "items": [
+            {
+              "type": "Label",
+              "caption": "Szene 1"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 2, 1);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 2, 1);"
+            },
+            {
+              "type": "Label",
+              "caption": "Szene 2"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 2, 2);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 2, 2);"
+            },
+            {
+              "type": "Label",
+              "caption": "Szene 3"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 2, 3);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 2, 3);"
+            },
+            {
+              "type": "Label",
+              "caption": "Szene 4"
+            },
+            {
+              "type": "Button",
+              "caption": "Neu speichern",
+              "onClick": "ZEPA_StoreScene($id, 2, 4);"
+            },
+            {
+              "type": "Button",
+              "caption": "Löschen",
+              "onClick": "ZEPA_DeleteScene($id, 2, 4);"
+            }
+          ]
         }
       ]
     },
@@ -126,6 +242,11 @@
           "type": "CheckBox",
           "name": "ShowChannelActualValues",
           "caption": "Kanal-Istwerte"
+        },
+        {
+          "type": "CheckBox",
+          "name": "ShowScenes",
+          "caption": "Szenen Recall 1-4"
         }
       ]
     },
