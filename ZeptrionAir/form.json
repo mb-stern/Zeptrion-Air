@@ -47,6 +47,11 @@
           "expanded": false,
           "items": [
             {
+              "type": "CheckBox",
+              "name": "Channel1Scene1Visible",
+              "caption": "Szene 1 als Variable anzeigen"
+            },
+            {
               "type": "ValidationTextBox",
               "name": "Channel1Scene1Name",
               "caption": "Szene 1 – Name"
@@ -60,6 +65,11 @@
               "type": "Button",
               "caption": "Löschen",
               "onClick": "ZEPA_DeleteScene($id, 1, 1);"
+            },
+            {
+              "type": "CheckBox",
+              "name": "Channel1Scene2Visible",
+              "caption": "Szene 2 als Variable anzeigen"
             },
             {
               "type": "ValidationTextBox",
@@ -77,6 +87,11 @@
               "onClick": "ZEPA_DeleteScene($id, 1, 2);"
             },
             {
+              "type": "CheckBox",
+              "name": "Channel1Scene3Visible",
+              "caption": "Szene 3 als Variable anzeigen"
+            },
+            {
               "type": "ValidationTextBox",
               "name": "Channel1Scene3Name",
               "caption": "Szene 3 – Name"
@@ -92,6 +107,11 @@
               "onClick": "ZEPA_DeleteScene($id, 1, 3);"
             },
             {
+              "type": "CheckBox",
+              "name": "Channel1Scene4Visible",
+              "caption": "Szene 4 als Variable anzeigen"
+            },
+            {
               "type": "ValidationTextBox",
               "name": "Channel1Scene4Name",
               "caption": "Szene 4 – Name"
@@ -105,6 +125,73 @@
               "type": "Button",
               "caption": "Löschen",
               "onClick": "ZEPA_DeleteScene($id, 1, 4);"
+            }
+          ]
+        },
+        {
+          "type": "ExpansionPanel",
+          "name": "Channel1DimmerConfig",
+          "caption": "Dimmer konfigurieren",
+          "expanded": false,
+          "visible": false,
+          "items": [
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1UpTimeMs",
+              "caption": "Zeit 0 → 100 % (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1DownTimeMs",
+              "caption": "Zeit 100 → 0 % (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1StepPercent",
+              "caption": "Schrittweite (%)",
+              "minimum": 1,
+              "maximum": 100
+            }
+          ]
+        },
+        {
+          "type": "ExpansionPanel",
+          "name": "Channel1ShutterConfig",
+          "caption": "Rollo / Store konfigurieren",
+          "expanded": false,
+          "visible": false,
+          "items": [
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1UpTimeMs",
+              "caption": "Fahrzeit ganz zu → ganz auf (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1DownTimeMs",
+              "caption": "Fahrzeit ganz auf → ganz zu (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1StepPercent",
+              "caption": "Schrittweite Position (%)",
+              "minimum": 1,
+              "maximum": 100
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel1LamellaTimeMs",
+              "caption": "Lamellenimpuls auf/zu (ms)",
+              "minimum": 100,
+              "maximum": 32000
             }
           ]
         }
@@ -148,6 +235,11 @@
           "expanded": false,
           "items": [
             {
+              "type": "CheckBox",
+              "name": "Channel2Scene1Visible",
+              "caption": "Szene 1 als Variable anzeigen"
+            },
+            {
               "type": "ValidationTextBox",
               "name": "Channel2Scene1Name",
               "caption": "Szene 1 – Name"
@@ -161,6 +253,11 @@
               "type": "Button",
               "caption": "Löschen",
               "onClick": "ZEPA_DeleteScene($id, 2, 1);"
+            },
+            {
+              "type": "CheckBox",
+              "name": "Channel2Scene2Visible",
+              "caption": "Szene 2 als Variable anzeigen"
             },
             {
               "type": "ValidationTextBox",
@@ -178,6 +275,11 @@
               "onClick": "ZEPA_DeleteScene($id, 2, 2);"
             },
             {
+              "type": "CheckBox",
+              "name": "Channel2Scene3Visible",
+              "caption": "Szene 3 als Variable anzeigen"
+            },
+            {
               "type": "ValidationTextBox",
               "name": "Channel2Scene3Name",
               "caption": "Szene 3 – Name"
@@ -193,6 +295,11 @@
               "onClick": "ZEPA_DeleteScene($id, 2, 3);"
             },
             {
+              "type": "CheckBox",
+              "name": "Channel2Scene4Visible",
+              "caption": "Szene 4 als Variable anzeigen"
+            },
+            {
               "type": "ValidationTextBox",
               "name": "Channel2Scene4Name",
               "caption": "Szene 4 – Name"
@@ -206,6 +313,73 @@
               "type": "Button",
               "caption": "Löschen",
               "onClick": "ZEPA_DeleteScene($id, 2, 4);"
+            }
+          ]
+        },
+        {
+          "type": "ExpansionPanel",
+          "name": "Channel2DimmerConfig",
+          "caption": "Dimmer konfigurieren",
+          "expanded": false,
+          "visible": false,
+          "items": [
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2UpTimeMs",
+              "caption": "Zeit 0 → 100 % (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2DownTimeMs",
+              "caption": "Zeit 100 → 0 % (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2StepPercent",
+              "caption": "Schrittweite (%)",
+              "minimum": 1,
+              "maximum": 100
+            }
+          ]
+        },
+        {
+          "type": "ExpansionPanel",
+          "name": "Channel2ShutterConfig",
+          "caption": "Rollo / Store konfigurieren",
+          "expanded": false,
+          "visible": false,
+          "items": [
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2UpTimeMs",
+              "caption": "Fahrzeit ganz zu → ganz auf (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2DownTimeMs",
+              "caption": "Fahrzeit ganz auf → ganz zu (ms)",
+              "minimum": 100,
+              "maximum": 32000
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2StepPercent",
+              "caption": "Schrittweite Position (%)",
+              "minimum": 1,
+              "maximum": 100
+            },
+            {
+              "type": "NumberSpinner",
+              "name": "Channel2LamellaTimeMs",
+              "caption": "Lamellenimpuls auf/zu (ms)",
+              "minimum": 100,
+              "maximum": 32000
             }
           ]
         }
@@ -250,11 +424,6 @@
           "type": "CheckBox",
           "name": "ShowChannelActualValues",
           "caption": "Kanal-Istwerte"
-        },
-        {
-          "type": "CheckBox",
-          "name": "ShowScenes",
-          "caption": "Szenen Recall 1-4"
         }
       ]
     },
