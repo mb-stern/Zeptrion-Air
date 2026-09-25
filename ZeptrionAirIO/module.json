@@ -1,0 +1,12 @@
+{
+  "id": "{A2F4D0D6-5C36-4A95-8B71-6C5D4A6A9E21}",
+  "name": "Zeptrion Air IO",
+  "type": 1,
+  "vendor": "Feller",
+  "aliases": ["Feller zeptrionAIR I/O"],
+  "parentRequirements": [],
+  "childRequirements": ["{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"],
+  "implemented": [],
+  "prefix": "ZEPAIO",
+  "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAirIO"
+}
