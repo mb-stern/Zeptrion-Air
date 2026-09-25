@@ -16,10 +16,10 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyString('SerialNumber', '');
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
+        // PollTimer bleibt nur für manuelle/kompatible Statusabfragen registriert.
+        // Laufende Statusänderungen kommen über /zrap/chnotify.
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
-        // chnotify-Test automatisch ausführen, damit die RAW-Antwort direkt im
-        // Instanz-Debug sichtbar wird. Der Aufruf selbst ist ein Long-Poll.
-        $this->RegisterTimer('NotifyTestTimer', 0, 'ZEPA_TestChannelNotify($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('NotifyTimer', 0, 'ZEPA_ChannelNotify($_IPS[\'TARGET\']);');
 
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -37,19 +37,17 @@ class ZeptrionAir extends IPSModuleStrict
 
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
-            $this->SetTimerInterval('NotifyTestTimer', 0);
+            $this->SetTimerInterval('NotifyTimer', 0);
             $this->SetStatus(201);
             return;
         }
 
-        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
-        $this->SetTimerInterval('PollTimer', $interval * 1000);
-        // Nur zum Test: chnotify automatisch starten. Nach jeder Rückkehr wird
-        // nach einer kurzen Pause erneut gewartet.
-        $this->SetTimerInterval('NotifyTestTimer', 1000);
+        // Kein zyklisches chscan-Polling mehr. Ein chscan wird nur beim Start
+        // für den definierten Ausgangszustand gelesen; danach übernimmt chnotify.
+        $this->SetTimerInterval('PollTimer', 0);
+        $this->SetTimerInterval('NotifyTimer', 1000);
         $this->SetStatus(102);
 
-        // Beim Übernehmen sofort einen ersten Status einlesen.
         $this->Poll();
     }
 
@@ -68,32 +66,11 @@ class ZeptrionAir extends IPSModuleStrict
 
         $this->SendDebug('Poll', json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
 
-        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        for ($channel = 1; $channel <= $max; $channel++) {
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-            $state = $this->ExtractChannelState($data, $channel);
-            if ($state === null) {
-                continue;
-            }
-
-            if (in_array($type, ['light', 'dimmer'], true)) {
-                $ident = 'Ch' . $channel . 'Switch';
-                $variableID = @$this->GetIDForIdent($ident);
-                if ($variableID > 0) {
-                    $value = $this->StateToBool($state);
-                    if ($value !== null && GetValue($variableID) !== $value) {
-                        $this->SetValue($ident, $value);
-                    }
-                }
-            }
-            // Store/Markise liefert über chscan keine verlässliche absolute Position.
-            // Diese wird später separat über Fahrzeit/chnotify nachgeführt.
-        }
-
+        $this->ApplyChannelStates($data, 'chscan');
         $this->SetStatus(102);
     }
 
-    public function TestChannelNotify(): void
+    public function ChannelNotify(): void
     {
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
@@ -106,7 +83,6 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
 
-        $this->SendDebug('chnotify Test', 'Warte auf ' . $url, 0);
         curl_setopt_array($curl, [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
@@ -123,13 +99,35 @@ class ZeptrionAir extends IPSModuleStrict
         curl_close($curl);
         $elapsed = round(microtime(true) - $started, 3);
 
-        $this->SendDebug(
-            'chnotify RAW',
-            'HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' .
-            ($error !== '' ? 'Fehler: ' . $error . ' / ' : '') .
-            (string)$response,
-            0
-        );
+        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
+            $this->SendDebug(
+                'chnotify Fehler',
+                'HTTP ' . $httpCode . ' / ' . $elapsed . ' s' . ($error !== '' ? ' / ' . $error : ''),
+                0
+            );
+            return;
+        }
+
+        // RAW bleibt vorerst absichtlich im Debug. Damit können wir als Nächstes
+        // prüfen, ob DALI-Dimmer hier neben 0/100 auch Zwischenwerte liefern.
+        $this->SendDebug('chnotify RAW', 'HTTP ' . $httpCode . ' / ' . $elapsed . ' s / ' . (string)$response, 0);
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
+        if ($xml === false) {
+            libxml_clear_errors();
+            $this->SendDebug('chnotify Fehler', 'Ungültiges XML von ' . $url, 0);
+            return;
+        }
+
+        $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $data = json_decode((string)$json, true);
+        if (!is_array($data)) {
+            return;
+        }
+
+        $this->ApplyChannelStates($data, 'chnotify');
+        $this->SetStatus(102);
     }
 
     public function RequestAction($Ident, $Value): void
@@ -414,6 +412,41 @@ class ZeptrionAir extends IPSModuleStrict
         $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $data = json_decode((string)$json, true);
         return is_array($data) ? $data : null;
+    }
+
+    private function ApplyChannelStates(array $data, string $source): void
+    {
+        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        for ($channel = 1; $channel <= $max; $channel++) {
+            $state = $this->ExtractChannelState($data, $channel);
+            if ($state === null) {
+                continue;
+            }
+
+            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+
+            // Für den DALI-Test den gelieferten Rohwert separat sichtbar machen.
+            if ($type === 'dimmer') {
+                $this->SendDebug(
+                    'Dimmer Status',
+                    $source . ' / ch' . $channel . ' => ' .
+                    json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                    0
+                );
+            }
+
+            if (in_array($type, ['light', 'dimmer'], true)) {
+                $ident = 'Ch' . $channel . 'Switch';
+                $variableID = @$this->GetIDForIdent($ident);
+                if ($variableID > 0) {
+                    $value = $this->StateToBool($state);
+                    if ($value !== null && GetValue($variableID) !== $value) {
+                        $this->SetValue($ident, $value);
+                    }
+                }
+            }
+            // Store/Markise wird später separat über chnotify/Fahrzeit ausgewertet.
+        }
     }
 
     private function ExtractChannelState(array $data, int $channel): mixed
