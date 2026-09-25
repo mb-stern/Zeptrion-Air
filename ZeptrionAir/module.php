@@ -47,6 +47,7 @@ class ZeptrionAir extends IPSModuleStrict
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
 
         // Auch bei bereits vorhandenen Instanzen einen alten NotifyTimer sofort
         // stilllegen. Damit blockiert ein neuer Long-Poll kein Modulupdate mehr.
@@ -96,6 +97,12 @@ class ZeptrionAir extends IPSModuleStrict
     public function StartChannelNotify(): void
     {
         $this->SetTimerInterval('NotifyStartTimer', 0);
+        $this->SendDebug(
+            'chnotify Start',
+            'Aufruf / Parent aktiv=' . ($this->HasActiveParent() ? 'ja' : 'nein') .
+            ' / Pending=' . $this->GetBuffer('NotifyPending'),
+            0
+        );
 
         if ($this->GetBuffer('NotifyPending') === '1') {
             return;
