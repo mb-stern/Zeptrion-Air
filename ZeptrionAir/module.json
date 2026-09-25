@@ -1,0 +1,12 @@
+{
+  "id": "{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}",
+  "name": "Zeptrion Air",
+  "type": 3,
+  "vendor": "Feller",
+  "aliases": ["Feller zeptrionAIR"],
+  "parentRequirements": [],
+  "childRequirements": [],
+  "implemented": [],
+  "prefix": "ZEPA",
+  "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAir"
+}
