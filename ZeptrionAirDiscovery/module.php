@@ -58,7 +58,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'configuration' => [
                             'URL' => 'http://' . $host . '/zrap/chnotify',
                             'Interval' => 0,
-                            'Active' => false
+                            'Active' => true
                         ],
                         'name' => 'HTTP Client ' . $host
                     ]
