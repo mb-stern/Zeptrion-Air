@@ -126,6 +126,7 @@ class ZeptrionAir extends IPSModuleStrict
             array_splice($otherElements, 0, 0, [[
                 'type' => 'Button',
                 'caption' => $addressCaption,
+                'link' => true,
                 'onClick' => 'echo "http://' . addslashes($host) . '/";'
             ]]);
         }
