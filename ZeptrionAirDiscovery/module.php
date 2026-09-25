@@ -40,7 +40,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'Host'         => $host,
                 'IP'           => $device['ip'],
                 'RSSI'         => $device['rssi'],
-                'Name'         => $device['name'],
                 'Type'         => $device['type'],
                 'SerialNumber' => $device['serial'],
                 'Software'     => $device['sw'],
@@ -95,7 +94,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
 
         $values = array_values($rows);
-        usort($values, static fn(array $a, array $b): int => strnatcasecmp($a['Name'] . $a['Host'], $b['Name'] . $b['Host']));
+        usort($values, static fn(array $a, array $b): int => strnatcasecmp($a['Host'], $b['Host']));
 
         return json_encode([
             'actions' => [
@@ -107,11 +106,10 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     'add'     => false,
                     'delete'  => false,
                     'sort'    => [
-                        'column'    => 'Name',
+                        'column'    => 'Host',
                         'direction' => 'ascending'
                     ],
                     'columns' => [
-                        ['caption' => 'Name',       'name' => 'Name',        'width' => '70px'],
                         ['caption' => 'Host',       'name' => 'Host',        'width' => '145px'],
                         ['caption' => 'IP-Adresse', 'name' => 'IP',          'width' => '125px'],
                         ['caption' => 'RSSI',       'name' => 'RSSI',        'width' => '80px'],
@@ -639,7 +637,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             'Host' => $host,
             'IP' => '',
             'RSSI' => '',
-            'Name' => $instance['name'],
             'Type' => $instance['type'],
             'SerialNumber' => $instance['serial'],
             'Software' => '',
