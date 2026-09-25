@@ -24,7 +24,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyBoolean('ShowSoftwareInfo', false);
         $this->RegisterPropertyBoolean('ShowRSSI', true);
         $this->RegisterPropertyBoolean('ShowChannelActualValues', false);
-        $this->RegisterPropertyBoolean('ShowScenes', true);
+        $this->RegisterPropertyBoolean('ShowScenes', false);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, 'ZEPA_ResetSceneVariables($_IPS[\'TARGET\']);');
