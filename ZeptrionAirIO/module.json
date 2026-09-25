@@ -3,10 +3,16 @@
   "name": "Zeptrion Air IO",
   "type": 1,
   "vendor": "Feller",
-  "aliases": ["Feller zeptrionAIR I/O"],
+  "aliases": [
+    "Feller zeptrionAIR I/O"
+  ],
   "parentRequirements": [],
-  "childRequirements": ["{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"],
-  "implemented": [],
+  "childRequirements": [
+    "{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"
+  ],
+  "implemented": [
+    "{6D87A41A-1B43-4C3D-9F53-2A2E1F6B73A4}"
+  ],
   "prefix": "ZEPAIO",
   "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAirIO"
 }
