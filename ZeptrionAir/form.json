@@ -437,7 +437,16 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Steuerung integriert: Licht Ein/Aus, Dimmen, Store Auf/Ab/Stopp/Lamellenimpuls und Szenen 1-4. Statusrückmeldung und Positionsberechnung folgen separat."
+      "caption": "Diagnose: Der Test wartet maximal 35 Sekunden auf die nächste Meldung von /zrap/chnotify. Nach dem Start den physischen Taster betätigen; die Antwort erscheint im Instanz-Debug."
+    },
+    {
+      "type": "Button",
+      "caption": "chnotify – nächste Tasterbetätigung testen",
+      "onClick": "ZEPA_TestChannelNotify($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "Steuerung integriert: Licht Ein/Aus, Dimmen, Store Auf/Ab/Stopp/Lamellenimpuls und Szenen 1-4."
     }
   ],
   "status": [
