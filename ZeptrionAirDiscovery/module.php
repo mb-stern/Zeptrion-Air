@@ -87,6 +87,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
 
         $zcID = $zcIDs[0];
+        $this->SendDebug('Discovery', 'DNS-SD Control ID: ' . $zcID, 0);
 
         // API Kap. 4: aktuelle Firmware annonciert _zapp._tcp.
         $this->CollectServices($zcID, '_zapp._tcp', false, $found);
@@ -111,11 +112,17 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             return;
         }
 
+        $this->SendDebug('mDNS ' . $type . ' RAW', json_encode($services, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
+
         if (!is_array($services)) {
+            $this->SendDebug('mDNS ' . $type, 'Antwort ist kein Array', 0);
             return;
         }
 
+        $this->SendDebug('mDNS ' . $type, 'Gefundene Services: ' . count($services), 0);
+
         foreach ($services as $service) {
+            $this->SendDebug('mDNS ' . $type . ' Service RAW', json_encode($service, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
             $name = (string)($service['Name'] ?? '');
             if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) {
                 continue;
@@ -133,13 +140,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 continue;
             }
 
+            $this->SendDebug('mDNS resolve ' . $name . ' RAW', json_encode($detail, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
+
             $host = $this->ExtractIPv4($detail);
             if ($host === '') {
                 $host = rtrim((string)($detail['Host'] ?? $detail['Hostname'] ?? ''), '.');
             }
             if ($host === '') {
+                $this->SendDebug('mDNS ' . $name, 'Keine IPv4/kein Host aus Service-Antwort ermittelt', 0);
                 continue;
             }
+
+            $this->SendDebug('mDNS ' . $name, 'Aufgelöst auf: ' . $host, 0);
 
             $txt = $this->NormalizeTxt($detail['TXT'] ?? $detail['Text'] ?? $detail['TXTRecords'] ?? []);
             $deviceType = (string)($txt['type'] ?? '');
@@ -159,8 +171,10 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
     private function EnrichFromApi(array &$device): void
     {
+        $this->SendDebug('API', 'Prüfe ' . $device['host'] . ' /zrap/id', 0);
         $id = $this->HttpXmlGet($device['host'], '/zrap/id');
         if ($id !== null) {
+            $this->SendDebug('API /zrap/id RAW', json_encode($id, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
             $sys = strtoupper((string)($id['sys'] ?? ''));
             if ($sys !== '' && $sys !== 'ZEPTRION') {
                 return;
@@ -171,12 +185,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $device['sw'] = (string)($id['sw'] ?? $device['sw']);
             $device['name'] = trim((string)($id['oen'] ?? $id['name'] ?? $device['name']));
             $device['channels'] = $this->ChannelsFromType($device['type'], $device['channels']);
+        } else {
+            $this->SendDebug('API', $device['host'] . ' liefert keine verwertbare Antwort auf /zrap/id', 0);
         }
 
+        $this->SendDebug('API', 'Prüfe ' . $device['host'] . ' /zrap/chdes', 0);
         $des = $this->HttpXmlGet($device['host'], '/zrap/chdes');
         if ($des === null) {
+            $this->SendDebug('API', $device['host'] . ' liefert keine verwertbare Antwort auf /zrap/chdes', 0);
             return;
         }
+
+        $this->SendDebug('API /zrap/chdes RAW', json_encode($des, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
 
         $parts = [];
         for ($channel = 1; $channel <= $device['channels']; $channel++) {
@@ -212,10 +232,15 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             ]
         ]);
 
+        $this->SendDebug('HTTP GET', $url, 0);
         $xml = @file_get_contents($url, false, $context);
         if (!is_string($xml) || trim($xml) === '') {
+            $error = error_get_last();
+            $this->SendDebug('HTTP GET Fehler', $url . ' / ' . ($error['message'] ?? 'keine Antwort'), 0);
             return null;
         }
+
+        $this->SendDebug('HTTP GET RAW', $url . ' => ' . $xml, 0);
 
         libxml_use_internal_errors(true);
         $node = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NOCDATA);
