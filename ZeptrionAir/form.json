@@ -47,8 +47,9 @@
           "expanded": false,
           "items": [
             {
-              "type": "Label",
-              "caption": "Szene 1"
+              "type": "ValidationTextBox",
+              "name": "Channel1Scene1Name",
+              "caption": "Szene 1 – Name"
             },
             {
               "type": "Button",
@@ -61,8 +62,9 @@
               "onClick": "ZEPA_DeleteScene($id, 1, 1);"
             },
             {
-              "type": "Label",
-              "caption": "Szene 2"
+              "type": "ValidationTextBox",
+              "name": "Channel1Scene2Name",
+              "caption": "Szene 2 – Name"
             },
             {
               "type": "Button",
@@ -75,8 +77,9 @@
               "onClick": "ZEPA_DeleteScene($id, 1, 2);"
             },
             {
-              "type": "Label",
-              "caption": "Szene 3"
+              "type": "ValidationTextBox",
+              "name": "Channel1Scene3Name",
+              "caption": "Szene 3 – Name"
             },
             {
               "type": "Button",
@@ -89,8 +92,9 @@
               "onClick": "ZEPA_DeleteScene($id, 1, 3);"
             },
             {
-              "type": "Label",
-              "caption": "Szene 4"
+              "type": "ValidationTextBox",
+              "name": "Channel1Scene4Name",
+              "caption": "Szene 4 – Name"
             },
             {
               "type": "Button",
@@ -144,8 +148,9 @@
           "expanded": false,
           "items": [
             {
-              "type": "Label",
-              "caption": "Szene 1"
+              "type": "ValidationTextBox",
+              "name": "Channel2Scene1Name",
+              "caption": "Szene 1 – Name"
             },
             {
               "type": "Button",
@@ -158,8 +163,9 @@
               "onClick": "ZEPA_DeleteScene($id, 2, 1);"
             },
             {
-              "type": "Label",
-              "caption": "Szene 2"
+              "type": "ValidationTextBox",
+              "name": "Channel2Scene2Name",
+              "caption": "Szene 2 – Name"
             },
             {
               "type": "Button",
@@ -172,8 +178,9 @@
               "onClick": "ZEPA_DeleteScene($id, 2, 2);"
             },
             {
-              "type": "Label",
-              "caption": "Szene 3"
+              "type": "ValidationTextBox",
+              "name": "Channel2Scene3Name",
+              "caption": "Szene 3 – Name"
             },
             {
               "type": "Button",
@@ -186,8 +193,9 @@
               "onClick": "ZEPA_DeleteScene($id, 2, 3);"
             },
             {
-              "type": "Label",
-              "caption": "Szene 4"
+              "type": "ValidationTextBox",
+              "name": "Channel2Scene4Name",
+              "caption": "Szene 4 – Name"
             },
             {
               "type": "Button",
