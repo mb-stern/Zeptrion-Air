@@ -185,19 +185,19 @@ class ZeptrionAir extends IPSModuleStrict
         $rssi = $this->HttpXmlGet('/zrap/rssi');
 
         $online = $id !== null || $rssi !== null;
-        $this->SetValue('Online', $online);
-        $this->SetValue('IPAddress', $ip);
+        $this->SetValueIfChanged('Online', $online);
+        $this->SetValueIfChanged('IPAddress', $ip);
 
         if ($id !== null) {
-            $this->SetValue('DeviceTypeInfo', (string)($id['type'] ?? $this->ReadPropertyString('DeviceType')));
-            $this->SetValue('SerialNumberInfo', (string)($id['sn'] ?? $this->ReadPropertyString('SerialNumber')));
-            $this->SetValue('SoftwareInfo', (string)($id['sw'] ?? ''));
+            $this->SetValueIfChanged('DeviceTypeInfo', (string)($id['type'] ?? $this->ReadPropertyString('DeviceType')));
+            $this->SetValueIfChanged('SerialNumberInfo', (string)($id['sn'] ?? $this->ReadPropertyString('SerialNumber')));
+            $this->SetValueIfChanged('SoftwareInfo', (string)($id['sw'] ?? ''));
         }
 
         if ($rssi !== null) {
             $value = $this->FindNumericValue($rssi, ['rssi', 'val', 'value']);
             if ($value !== null) {
-                $this->SetValue('RSSI', (int)round($value));
+                $this->SetValueIfChanged('RSSI', (int)round($value));
             }
         }
     }
@@ -592,7 +592,7 @@ class ZeptrionAir extends IPSModuleStrict
             if ($rawValue !== null) {
                 $rawIdent = 'Ch' . $channel . 'ActualValue';
                 $this->RegisterVariableFloat($rawIdent, 'Kanal ' . $channel . ' Istwert', '', $channel * 10 + 8);
-                $this->SetValue($rawIdent, $rawValue);
+                $this->SetValueIfChanged($rawIdent, $rawValue);
             }
 
             // Für den DALI-Test den gelieferten Rohwert separat sichtbar machen.
@@ -690,6 +690,17 @@ class ZeptrionAir extends IPSModuleStrict
             }
         }
         return null;
+    }
+
+    private function SetValueIfChanged(string $ident, mixed $value): void
+    {
+        $variableID = @$this->GetIDForIdent($ident);
+        if ($variableID <= 0) {
+            return;
+        }
+        if (GetValue($variableID) !== $value) {
+            $this->SetValue($ident, $value);
+        }
     }
 
     private function SetVariableName(string $ident, string $name): void
