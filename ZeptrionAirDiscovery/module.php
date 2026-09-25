@@ -176,6 +176,24 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
         $responses = $this->HttpXmlGetMulti($requests);
 
+        // Einzelne WLAN-Module reagieren gelegentlich nicht innerhalb des ersten kurzen
+        // Parallel-Laufs. Nur die fehlgeschlagenen Requests einmal gemeinsam wiederholen.
+        $retry = [];
+        foreach ($requests as $key => $request) {
+            if (($responses[$key] ?? null) === null) {
+                $retry[$key] = $request;
+            }
+        }
+        if ($retry !== []) {
+            $this->SendDebug('Discovery', 'Wiederhole ' . count($retry) . ' fehlgeschlagene API-Abfragen einmalig', 0);
+            $retryResponses = $this->HttpXmlGetMulti($retry, 2500, 5000);
+            foreach ($retryResponses as $key => $response) {
+                if ($response !== null) {
+                    $responses[$key] = $response;
+                }
+            }
+        }
+
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
             $des = $responses[$host . '|chdes'] ?? null;
@@ -190,7 +208,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         );
     }
 
-    private function HttpXmlGetMulti(array $requests): array
+    private function HttpXmlGetMulti(array $requests, int $connectTimeoutMs = 1500, int $timeoutMs = 3500): array
     {
         $multi = curl_multi_init();
         $handles = [];
@@ -201,8 +219,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             curl_setopt_array($curl, [
                 CURLOPT_URL => $url,
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => 1500,
-                CURLOPT_TIMEOUT_MS => 3500,
+                CURLOPT_CONNECTTIMEOUT_MS => $connectTimeoutMs,
+                CURLOPT_TIMEOUT_MS => $timeoutMs,
                 CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_HTTPHEADER => ['Connection: close']
             ]);
@@ -374,7 +392,11 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             return ['type' => 'unused', 'label' => 'Nicht belegt', 'scenes' => false];
         }
         if (str_contains($name, 'szene') || str_contains($name, 'scene')) {
-            return ['type' => 'unused', 'label' => 'Szenentaster', 'scenes' => true];
+            // /zrap/chdes kennzeichnet Smart-Tasten nicht eindeutig. Die bekannten
+            // /zapi/smartbt-Endpunkte sind Programmierfunktionen (prgm/prgn/prgs) und
+            // werden zur Discovery absichtlich NICHT aufgerufen, da sie das Gerät bzw.
+            // die Tasten in den Programmiermodus versetzen können.
+            return ['type' => 'unused', 'label' => 'Möglicher Szenentaster', 'scenes' => false];
         }
         return ['type' => 'unused', 'label' => 'Nicht erkannt', 'scenes' => false];
     }
