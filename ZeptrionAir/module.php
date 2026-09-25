@@ -17,6 +17,10 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterPropertyInteger('PollInterval', 5);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
+        // Migrationsbereinigung: Dieser Timer existierte kurzzeitig in einer
+        // Entwicklungsversion. Registrieren mit 0 deaktiviert einen eventuell
+        // noch in bestehenden Instanzen gespeicherten NotifyTimer zuverlässig.
+        $this->RegisterTimer('NotifyTimer', 0, '');
 
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -28,6 +32,10 @@ class ZeptrionAir extends IPSModuleStrict
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+
+        // Auch bei bereits vorhandenen Instanzen einen alten NotifyTimer sofort
+        // stilllegen. Damit blockiert ein neuer Long-Poll kein Modulupdate mehr.
+        $this->SetTimerInterval('NotifyTimer', 0);
 
         $this->RegisterProfiles();
         $this->ApplyChannelVariables();
