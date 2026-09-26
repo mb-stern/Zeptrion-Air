@@ -92,279 +92,158 @@ class ZeptrionAir extends IPSModuleStrict
 
 
     public function GetConfigurationForm(): string
-
     {
+        $elements = [];
 
-        $path = __DIR__ . '/form.json';
-
-        $form = json_decode((string)file_get_contents($path), true);
-        // Das Pollintervall wird automatisch geregelt (5/10/30/60 s)
-        // und ist deshalb nicht mehr konfigurierbar.
-        if (isset($form['elements']) && is_array($form['elements'])) {
-            $form['elements'] = array_values(array_filter(
-                $form['elements'],
-                static fn(array $element): bool => (string)($element['name'] ?? '') !== 'PollInterval'
-            ));
-        }
-
-        if (!is_array($form)) {
-
-            return '{}';
-
-        }
-
-        // Den alten Erklärungstext "Die Kanäle entsprechen ..." in allen
-        // Konfigurationsbereichen entfernen.
-        $removeChannelHint = static function (array &$items) use (&$removeChannelHint): void {
-            $items = array_values(array_filter($items, static function (array $item): bool {
-                $text = trim((string)($item['caption'] ?? $item['label'] ?? ''));
-                return stripos($text, 'Die Kanäle entsprechen') !== 0;
-            }));
-            foreach ($items as &$item) {
-                if (isset($item['items']) && is_array($item['items'])) {
-                    $removeChannelHint($item['items']);
-                }
+        $host = trim($this->ReadPropertyString('Host'));
+        $hostItems = [
+            [
+                'type' => 'ValidationTextBox',
+                'name' => 'Host',
+                'caption' => 'IP-Adresse / Hostname'
+            ]
+        ];
+        if ($host !== '') {
+            $ip = gethostbyname($host);
+            if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
+                $ip = '';
             }
-            unset($item);
-        };
-        if (isset($form['elements']) && is_array($form['elements'])) {
-            $removeChannelHint($form['elements']);
-        }
-
-
-
-        // form.json enthält die Grundstruktur für Kanal 1/2. Bei 4-Kanal-Geräten
-
-        // werden Kanal 3/4 daraus erzeugt. Nicht vorhandene Kanäle erscheinen
-
-        // überhaupt nicht in der Konfiguration.
-
-        $channelTemplates = [];
-
-        $otherElements = [];
-
-        foreach ($form['elements'] ?? [] as $element) {
-
-            if (($element['type'] ?? '') === 'ExpansionPanel'
-
-                && preg_match('/^Kanal ([1-4])$/', (string)($element['caption'] ?? ''), $match)) {
-
-                $channelTemplates[(int)$match[1]] = $element;
-
-            } else {
-
-                $otherElements[] = $element;
-
+            $caption = 'Gerät öffnen: http://' . $host . '/';
+            if ($ip !== '' && $ip !== $host) {
+                $caption .= '  (IP: ' . $ip . ')';
             }
-
+            $hostItems[] = [
+                'type' => 'Label',
+                'caption' => $caption,
+                'link' => true
+            ];
         }
-
-
+        $elements[] = ['type' => 'RowLayout', 'items' => $hostItems];
 
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-
-        $baseTemplate = $channelTemplates[2] ?? ($channelTemplates[1] ?? null);
-
-        $channelElements = [];
-
-
-
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
-
-            if (isset($channelTemplates[$channel])) {
-
-                $element = $channelTemplates[$channel];
-
-            } elseif ($baseTemplate !== null) {
-
-                $element = $this->CloneChannelFormElement($baseTemplate, 2, $channel);
-
-            } else {
-
-                continue;
-
-            }
-
-
-
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-
-            if (isset($element['items']) && is_array($element['items'])) {
-
-                // Dimmer und Rollo verwenden teilweise dieselben Properties für
-
-                // Fahr-/Dimmzeiten. Deshalb darf im Formular immer nur der zum
-
-                // Kanaltyp passende Konfigurationsblock existieren. Zwei Controls
-
-                // mit demselben Property-Namen können sich beim Speichern gegenseitig
-
-                // überschreiben, auch wenn eines davon nur unsichtbar ist.
-
-                $element['items'] = array_values(array_filter(
-
-                    $element['items'],
-
-                    static function (array $item) use ($channel, $type): bool {
-
-                        $name = (string)($item['name'] ?? '');
-
-                        if ($name === 'Channel' . $channel . 'DimmerConfig') {
-
-                            return $type === 'dimmer';
-
-                        }
-
-                        if ($name === 'Channel' . $channel . 'ShutterConfig') {
-
-                            return $type === 'shutter';
-
-                        }
-
-                        return true;
-
-                    }
-
-                ));
-
-                foreach ($element['items'] as &$item) {
-
-                    $name = (string)($item['name'] ?? '');
-
-                    if ($name === 'Channel' . $channel . 'DimmerConfig' ||
-
-                        $name === 'Channel' . $channel . 'ShutterConfig') {
-
-                        $item['visible'] = true;
-
-                    }
-
-                }
-
-                unset($item);
-
-            }
-
-            $channelElements[] = $element;
-
-        }
-
-
-
-        // Host-Eingabe und anklickbaren Geräte-Link in derselben Zeile anzeigen.
-
-        $prefix = [];
-
-        if ($otherElements !== [] && (($otherElements[0]['name'] ?? '') === 'Host')) {
-
-            $hostElement = array_shift($otherElements);
-
-            $host = trim($this->ReadPropertyString('Host'));
-
-            $rowItems = [$hostElement];
-
-            if ($host !== '') {
-
-                $ip = gethostbyname($host);
-
-                if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
-
-                    $ip = '';
-
-                }
-
-                $caption = 'Gerät öffnen: http://' . $host . '/';
-
-                if ($ip !== '' && $ip !== $host) {
-
-                    $caption .= '  (IP: ' . $ip . ')';
-
-                }
-
-                $rowItems[] = [
-
-                    'type' => 'Label',
-
-                    'caption' => $caption,
-
-                    'link' => true
-
-                ];
-
-            }
-
-            $prefix[] = [
-
-                'type' => 'RowLayout',
-
-                'items' => $rowItems
-
+            $items = [
+                [
+                    'type' => 'ValidationTextBox',
+                    'name' => 'Channel' . $channel . 'Name',
+                    'caption' => 'Name'
+                ],
+                [
+                    'type' => 'Select',
+                    'name' => 'Channel' . $channel . 'Type',
+                    'caption' => 'Art',
+                    'options' => [
+                        ['caption' => 'Nicht verwendet', 'value' => 'unused'],
+                        ['caption' => 'Licht', 'value' => 'light'],
+                        ['caption' => 'Dimmer / DALI', 'value' => 'dimmer'],
+                        ['caption' => 'Store / Rollo', 'value' => 'shutter']
+                    ]
+                ]
             ];
 
+            $sceneItems = [];
+            for ($scene = 1; $scene <= 4; $scene++) {
+                $sceneItems[] = [
+                    'type' => 'CheckBox',
+                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
+                    'caption' => 'Szene ' . $scene . ' als Variable anzeigen'
+                ];
+                $sceneItems[] = [
+                    'type' => 'ValidationTextBox',
+                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
+                    'caption' => 'Szene ' . $scene . ' – Name'
+                ];
+                $sceneItems[] = [
+                    'type' => 'Button',
+                    'caption' => 'Neu speichern',
+                    'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
+                ];
+                $sceneItems[] = [
+                    'type' => 'Button',
+                    'caption' => 'Löschen',
+                    'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
+                ];
+            }
+            $items[] = [
+                'type' => 'ExpansionPanel',
+                'caption' => 'Szenen verwalten',
+                'expanded' => false,
+                'items' => $sceneItems
+            ];
+
+            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+            if ($type === 'dimmer') {
+                $items[] = [
+                    'type' => 'ExpansionPanel',
+                    'name' => 'Channel' . $channel . 'DimmerConfig',
+                    'caption' => 'Dimmer konfigurieren',
+                    'expanded' => false,
+                    'items' => [
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'UpTimeMs', 'caption' => 'Zeit 0 → 100 % (ms)', 'minimum' => 100, 'maximum' => 32000],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'DownTimeMs', 'caption' => 'Zeit 100 → 0 % (ms)', 'minimum' => 100, 'maximum' => 32000],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'StepPercent', 'caption' => 'Schrittweite (%)', 'minimum' => 1, 'maximum' => 100]
+                    ]
+                ];
+            } elseif ($type === 'shutter') {
+                $items[] = [
+                    'type' => 'ExpansionPanel',
+                    'name' => 'Channel' . $channel . 'ShutterConfig',
+                    'caption' => 'Rollo / Store konfigurieren',
+                    'expanded' => false,
+                    'items' => [
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'UpTimeMs', 'caption' => 'Fahrzeit ganz zu → ganz auf (ms)', 'minimum' => 100, 'maximum' => 32000],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'DownTimeMs', 'caption' => 'Fahrzeit ganz auf → ganz zu (ms)', 'minimum' => 100, 'maximum' => 32000],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'StepPercent', 'caption' => 'Schrittweite Position (%)', 'minimum' => 1, 'maximum' => 100],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'LamellaTimeMs', 'caption' => 'Lamellenzeit geschlossen → offen (ms)', 'minimum' => 100, 'maximum' => 32000]
+                    ]
+                ];
+            }
+
+            $elements[] = [
+                'type' => 'ExpansionPanel',
+                'caption' => 'Kanal ' . $channel,
+                'items' => $items
+            ];
         }
 
-        // Der Hinweis direkt nach Host gehört ebenfalls nach oben.
+        $elements[] = [
+            'type' => 'ExpansionPanel',
+            'caption' => 'Variablen',
+            'expanded' => true,
+            'items' => [
+                ['type' => 'CheckBox', 'name' => 'ShowOnline', 'caption' => 'Erreichbar'],
+                ['type' => 'CheckBox', 'name' => 'ShowIPAddress', 'caption' => 'IP-Adresse'],
+                ['type' => 'CheckBox', 'name' => 'ShowDeviceTypeInfo', 'caption' => 'Gerätetyp'],
+                ['type' => 'CheckBox', 'name' => 'ShowSerialNumberInfo', 'caption' => 'Seriennummer'],
+                ['type' => 'CheckBox', 'name' => 'ShowSoftwareInfo', 'caption' => 'Software / Firmware'],
+                ['type' => 'CheckBox', 'name' => 'ShowRSSI', 'caption' => 'WLAN RSSI'],
+                ['type' => 'CheckBox', 'name' => 'ShowChannelActualValues', 'caption' => 'Kanal-Istwerte']
+            ]
+        ];
 
-        if ($otherElements !== [] && ($otherElements[0]['type'] ?? '') === 'Label') {
-
-            $prefix[] = array_shift($otherElements);
-
-        }
-
-        $form['elements'] = array_merge($prefix, $channelElements, $otherElements);
-
-
+        $form = [
+            'elements' => $elements,
+            'actions' => [
+                [
+                    'type' => 'Button',
+                    'caption' => 'zeptrionAIR neu starten',
+                    'onClick' => 'echo ZEPA_RebootDevice($id);'
+                ],
+                [
+                    'type' => 'Button',
+                    'caption' => 'PayPal – Entwicklung unterstützen',
+                    'onClick' => "echo 'https://paypal.me/mbstern';"
+                ]
+            ],
+            'status' => [
+                ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
+                ['code' => 201, 'icon' => 'inactive', 'caption' => 'IP-Adresse / Hostname fehlt'],
+                ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler']
+            ]
+        ];
 
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
     }
-
-
-
-    private function CloneChannelFormElement(array $value, int $fromChannel, int $toChannel): array
-
-    {
-
-        $replace = static function ($item) use (&$replace, $fromChannel, $toChannel) {
-
-            if (is_array($item)) {
-
-                foreach ($item as $key => $child) {
-
-                    $item[$key] = $replace($child);
-
-                }
-
-                return $item;
-
-            }
-
-            if (!is_string($item)) {
-
-                return $item;
-
-            }
-
-
-
-            $item = str_replace('Channel' . $fromChannel, 'Channel' . $toChannel, $item);
-
-            $item = str_replace('Kanal ' . $fromChannel, 'Kanal ' . $toChannel, $item);
-
-            // Szenen-Buttons enthalten den Kanal als Funktionsargument.
-
-            $item = str_replace(', ' . $fromChannel . ', ', ', ' . $toChannel . ', ', $item);
-
-            return $item;
-
-        };
-
-
-
-        return $replace($value);
-
-    }
-
 
 
     public function ApplyChanges(): void
