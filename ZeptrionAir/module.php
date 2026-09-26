@@ -69,13 +69,13 @@ class ZeptrionAir extends IPSModuleStrict
 
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
 
-            $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 4000);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 27000);
 
-            $this->RegisterPropertyInteger('Channel' . $channel . 'DownTimeMs', 4000);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'DownTimeMs', 27000);
 
             $this->RegisterPropertyInteger('Channel' . $channel . 'StepPercent', 10);
 
-            $this->RegisterPropertyInteger('Channel' . $channel . 'LamellaTimeMs', 350);
+            $this->RegisterPropertyInteger('Channel' . $channel . 'LamellaTimeMs', 1000);
 
             for ($scene = 1; $scene <= 4; $scene++) {
 
@@ -111,6 +111,24 @@ class ZeptrionAir extends IPSModuleStrict
 
             return '{}';
 
+        }
+
+        // Den alten Erklärungstext "Die Kanäle entsprechen ..." in allen
+        // Konfigurationsbereichen entfernen.
+        $removeChannelHint = static function (array &$items) use (&$removeChannelHint): void {
+            $items = array_values(array_filter($items, static function (array $item): bool {
+                $text = trim((string)($item['caption'] ?? $item['label'] ?? ''));
+                return stripos($text, 'Die Kanäle entsprechen') !== 0;
+            }));
+            foreach ($items as &$item) {
+                if (isset($item['items']) && is_array($item['items'])) {
+                    $removeChannelHint($item['items']);
+                }
+            }
+            unset($item);
+        };
+        if (isset($form['elements']) && is_array($form['elements'])) {
+            $removeChannelHint($form['elements']);
         }
 
 
@@ -764,7 +782,7 @@ class ZeptrionAir extends IPSModuleStrict
 
     {
 
-        if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Command|Scene)$/', (string)$Ident, $m)) {
+        if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Lamella|Command|Scene)$/', (string)$Ident, $m)) {
 
             throw new Exception('Ungültiger Ident: ' . $Ident);
 
@@ -946,8 +964,37 @@ class ZeptrionAir extends IPSModuleStrict
 
                     $this->SetValueIfChanged($ident, $target);
 
+                    // Bei einer Fahrt ist die Lamellen-Endstellung aus der
+                    // Fahrtrichtung ableitbar: hoch = offen, tief = geschlossen.
+                    $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $target < $current ? 100 : 0);
+
                 }
 
+                return;
+
+
+            case 'Lamella':
+
+                // Berechnete Lamellenstellung: 0 % = geschlossen, 100 % = offen.
+                // Die konfigurierte Lamellenzeit beschreibt die komplette Fahrt
+                // von geschlossen nach offen (Standard 1000 ms).
+                $target = max(0, min(100, (int)$Value));
+                $ident = 'Ch' . $channel . 'Lamella';
+                $id = @$this->GetIDForIdent($ident);
+                $current = $id > 0 ? (int)GetValue($id) : 0;
+
+                if ($target === $current) {
+                    return;
+                }
+
+                $fullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
+                $time = (int)round(abs($target - $current) * $fullTime / 100);
+                $time = max(100, min(32000, $time));
+                $command = $target > $current ? 'move_open_' . $time : 'move_close_' . $time;
+
+                if ($this->SendCommand($channel, $command)) {
+                    $this->SetValueIfChanged($ident, $target);
+                }
                 return;
 
 
@@ -968,15 +1015,18 @@ class ZeptrionAir extends IPSModuleStrict
 
             case 'Command':
 
+                $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
+                $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
+
                 $commands = [
 
                     0 => 'open',
 
-                    1 => 'move_open_' . max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'))),
+                    1 => 'move_open_' . $lamellaStepTime,
 
                     2 => 'stop',
 
-                    3 => 'move_close_' . max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'))),
+                    3 => 'move_close_' . $lamellaStepTime,
 
                     4 => 'close'
 
@@ -999,10 +1049,24 @@ class ZeptrionAir extends IPSModuleStrict
                     if ($value === 0) {
 
                         $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
+                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 100);
+
+                    } elseif ($value === 1) {
+
+                        $lamellaID = @$this->GetIDForIdent('Ch' . $channel . 'Lamella');
+                        $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
+                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
+
+                    } elseif ($value === 3) {
+
+                        $lamellaID = @$this->GetIDForIdent('Ch' . $channel . 'Lamella');
+                        $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
+                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
 
                     } elseif ($value === 4) {
 
                         $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
+                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 0);
 
                     }
 
@@ -1950,6 +2014,20 @@ class ZeptrionAir extends IPSModuleStrict
 
                 $this->EnableAction($positionIdent);
 
+                // Berechnete Lamellenstellung. zeptrion liefert dafür keine
+                // Rückmeldung; 0 % = geschlossen, 100 % = offen.
+                $lamellaIdent = 'Ch' . $channel . 'Lamella';
+                $this->RegisterVariableInteger($lamellaIdent, $name . ' Lamellen', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
+                    'MIN' => 0,
+                    'MAX' => 100,
+                    'STEP_SIZE' => 1,
+                    'PERCENTAGE' => false,
+                    'SUFFIX' => ' %'
+                ], $channel * 10 + 1);
+                $this->SetVariableName($lamellaIdent, $name . ' Lamellen');
+                $this->EnableAction($lamellaIdent);
+
 
 
                 $commandIdent = 'Ch' . $channel . 'Command';
@@ -1976,7 +2054,7 @@ class ZeptrionAir extends IPSModuleStrict
 
                     ], JSON_UNESCAPED_UNICODE)
 
-                ], $channel * 10 + 1);
+                ], $channel * 10 + 2);
 
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
 
