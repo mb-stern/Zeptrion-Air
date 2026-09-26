@@ -1986,10 +1986,12 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnsureShutterVariable($dummyID, $lamellaIdent, 'Drehgrad', [
                     'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
                     'USAGE_TYPE' => 1,
-                    'CLOSE_INSIDE_VALUE' => 0,
-                    'OPEN_OUTSIDE_VALUE' => 100,
-                    'MAX_ROTATION_INSIDE' => -55,
-                    'MAX_ROTATION_OUTSIDE' => 55,
+                    // Gleiche Orientierung wie die Rollo-Position:
+                    // 0 = offen/außen, 100 = geschlossen/innen.
+                    'CLOSE_INSIDE_VALUE' => 100,
+                    'OPEN_OUTSIDE_VALUE' => 0,
+                    'MAX_ROTATION_INSIDE' => 0,
+                    'MAX_ROTATION_OUTSIDE' => 75,
                     'SUN_POSITION' => 1
                 ], 20);
 
