@@ -32,7 +32,6 @@ class ZeptrionAir extends IPSModuleStrict
 
         $this->RegisterPropertyInteger('Channels', 2);
 
-        $this->RegisterPropertyInteger('PollInterval', 5);
 
         // Sichtbarkeit aller erzeugten Variablen ist pro Geräteinstanz konfigurierbar.
 
@@ -54,11 +53,10 @@ class ZeptrionAir extends IPSModuleStrict
 
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
 
-        $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshDeviceInfo($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshRuntimeInfo($_IPS[\'TARGET\']);');
 
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
         $this->RegisterAttributeInteger('CommunicationFailures', 0);
-        $this->RegisterAttributeInteger('PollSlotCounter', 0);
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
 
 
@@ -100,6 +98,14 @@ class ZeptrionAir extends IPSModuleStrict
         $path = __DIR__ . '/form.json';
 
         $form = json_decode((string)file_get_contents($path), true);
+        // Das Pollintervall wird automatisch geregelt (5/10/30/60 s)
+        // und ist deshalb nicht mehr konfigurierbar.
+        if (isset($form['elements']) && is_array($form['elements'])) {
+            $form['elements'] = array_values(array_filter(
+                $form['elements'],
+                static fn(array $element): bool => (string)($element['name'] ?? '') !== 'PollInterval'
+            ));
+        }
 
         if (!is_array($form)) {
 
@@ -379,24 +385,19 @@ class ZeptrionAir extends IPSModuleStrict
 
 
 
-        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
-
-        $this->SetTimerInterval('PollTimer', $interval * 1000);
-
-        // Kein separater InfoTimer mehr: RSSI ersetzt etwa alle 60 s einen Poll-Slot.
-        $this->SetTimerInterval('InfoTimer', 0);
+        // Polling wird vollständig automatisch geregelt:
+        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
         $this->WriteAttributeInteger('CommunicationFailures', 0);
-        $this->WriteAttributeInteger('PollSlotCounter', 0);
-
+        $this->SetTimerInterval('PollTimer', 5000);
+        $this->SetTimerInterval('InfoTimer', 60000);
         $this->SetStatus(102);
 
-
-
-        // Anfangszustand und Geräteinformationen sofort einlesen.
-
+        // Anfangszustand sofort einlesen. Geräteinformationen nur dann laden,
+        // wenn der erste Status-Poll erfolgreich war.
         $this->Poll();
-
-        $this->RefreshDeviceInfo();
+        if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
+            $this->RefreshDeviceInfo();
+        }
 
     }
 
@@ -409,18 +410,6 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
 
-        // Etwa alle 60 Sekunden einen regulären chscan auslassen und stattdessen
-        // nur RSSI lesen. Dadurch entsteht keine zusätzliche HTTP-Last.
-        $interval = max(1, $this->ReadPropertyInteger('PollInterval'));
-        $slotsPerInfo = max(1, (int)round(60 / $interval));
-        $slot = $this->ReadAttributeInteger('PollSlotCounter') + 1;
-        if ($slot >= $slotsPerInfo) {
-            $this->WriteAttributeInteger('PollSlotCounter', 0);
-            $this->RefreshRSSI();
-            return;
-        }
-        $this->WriteAttributeInteger('PollSlotCounter', $slot);
-
         $data = $this->HttpXmlGet('/zrap/chscan');
         if ($this->ReadAttributeBoolean('LastRequestSkipped')) {
             $this->SendDebug('Poll', 'Übersprungen – Gerätekommunikation läuft bereits', 0);
@@ -430,12 +419,20 @@ class ZeptrionAir extends IPSModuleStrict
         if ($data === null) {
             $failures = $this->ReadAttributeInteger('CommunicationFailures') + 1;
             $this->WriteAttributeInteger('CommunicationFailures', $failures);
-            $this->SetTimerInterval('PollTimer', 60000);
+
+            $nextInterval = match ($failures) {
+                1 => 10,
+                2 => 30,
+                default => 60
+            };
+            $this->SetTimerInterval('PollTimer', $nextInterval * 1000);
+
             $this->SendDebug(
                 'Poll Fehler',
-                'Keine Antwort (' . $failures . '/3) – Pollintervall vorübergehend auf 60 s erhöht',
+                'Keine Antwort (' . $failures . ') – nächster Status-Poll in ' . $nextInterval . ' s',
                 0
             );
+
             if ($failures >= 3) {
                 if ($this->ReadPropertyBoolean('ShowOnline')) {
                     $this->SetValueIfChanged('Online', false);
@@ -445,21 +442,28 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
 
-        $this->SendDebug('Poll', json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-        $this->ApplyChannelStates($data, 'chscan');
-
         $failures = $this->ReadAttributeInteger('CommunicationFailures');
         if ($failures > 0) {
-            $normalInterval = max(1, $this->ReadPropertyInteger('PollInterval'));
             $this->WriteAttributeInteger('CommunicationFailures', 0);
-            $this->WriteAttributeInteger('PollSlotCounter', 0);
-            $this->SetTimerInterval('PollTimer', $normalInterval * 1000);
+            $this->SetTimerInterval('PollTimer', 5000);
             $this->SendDebug(
                 'Poll',
-                'Gerät wieder erreichbar – Pollintervall zurück auf ' . $normalInterval . ' s',
+                'Gerät wieder erreichbar – Pollintervall zurück auf 5 s',
                 0
             );
+        } else {
+            // Sicherstellen, dass im gesunden Zustand immer 5 s aktiv sind.
+            $this->SetTimerInterval('PollTimer', 5000);
         }
+
+        $this->SendDebug(
+            'Poll',
+            'Erfolgreich – nächster Poll in 5 s | ' .
+            json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            0
+        );
+
+        $this->ApplyChannelStates($data, 'chscan');
 
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
@@ -583,6 +587,23 @@ class ZeptrionAir extends IPSModuleStrict
 
 
 
+    public function RefreshRuntimeInfo(): void
+    {
+        // Während einer Kommunikationsstörung keine Zusatzabfragen senden.
+        $failures = $this->ReadAttributeInteger('CommunicationFailures');
+        if ($failures > 0) {
+            $this->SendDebug(
+                'Info',
+                'Übersprungen – Status-Poll befindet sich in Fehler-/Erholungsphase (' . $failures . ')',
+                0
+            );
+            return;
+        }
+
+        $this->SendDebug('Info', '60-s-Infoabfrage: RSSI', 0);
+        $this->RefreshRSSI();
+    }
+
     public function RefreshDeviceInfo(): void
     {
         $host = trim($this->ReadPropertyString('Host'));
@@ -632,8 +653,14 @@ class ZeptrionAir extends IPSModuleStrict
         }
 
         $value = $this->FindNumericValue($rssi, ['rssi', 'val', 'value']);
-        if ($value !== null && $this->ReadPropertyBoolean('ShowRSSI')) {
-            $this->SetValueIfChanged('RSSI', (int)round($value));
+        if ($value !== null) {
+            $rounded = (int)round($value);
+            $this->SendDebug('RSSI', 'Erfolgreich: ' . $rounded . ' dBm', 0);
+            if ($this->ReadPropertyBoolean('ShowRSSI')) {
+                $this->SetValueIfChanged('RSSI', $rounded);
+            }
+        } else {
+            $this->SendDebug('RSSI', 'Antwort erhalten, aber kein RSSI-Wert gefunden', 0);
         }
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
