@@ -1642,7 +1642,9 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $variableID = $this->FindManagedVariableID($ident);
         if ($variableID > 0 && GetValue($variableID) !== $value) {
-            SetValue($variableID, $value);
+            // Statusvariablen des Moduls sind von außen schreibgeschützt.
+            // Der Wert muss deshalb durch die besitzende Modulinstanz gesetzt werden.
+            $this->SetValue($ident, $value);
         }
     }
 
