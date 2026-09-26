@@ -828,7 +828,7 @@ class ZeptrionAir extends IPSModuleStrict
 
                 $ident = 'Ch' . $channel . 'Position';
 
-                $id = @$this->GetIDForIdent($ident);
+                $id = $this->FindManagedVariableID($ident);
 
                 $current = $id > 0 ? (int)GetValue($id) : 0;
 
@@ -868,7 +868,7 @@ class ZeptrionAir extends IPSModuleStrict
                 // von geschlossen nach offen (Standard 1000 ms).
                 $target = max(0, min(100, (int)$Value));
                 $ident = 'Ch' . $channel . 'Lamella';
-                $id = @$this->GetIDForIdent($ident);
+                $id = $this->FindManagedVariableID($ident);
                 $current = $id > 0 ? (int)GetValue($id) : 0;
 
                 if ($target === $current) {
@@ -941,13 +941,13 @@ class ZeptrionAir extends IPSModuleStrict
 
                     } elseif ($value === 1) {
 
-                        $lamellaID = @$this->GetIDForIdent('Ch' . $channel . 'Lamella');
+                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
 
                     } elseif ($value === 3) {
 
-                        $lamellaID = @$this->GetIDForIdent('Ch' . $channel . 'Lamella');
+                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
 
@@ -1639,26 +1639,81 @@ class ZeptrionAir extends IPSModuleStrict
 
 
     private function SetValueIfChanged(string $ident, mixed $value): void
-
     {
-
-        $variableID = @$this->GetIDForIdent($ident);
-
-        if ($variableID <= 0) {
-
-            return;
-
+        $variableID = $this->FindManagedVariableID($ident);
+        if ($variableID > 0 && GetValue($variableID) !== $value) {
+            SetValue($variableID, $value);
         }
-
-        if (GetValue($variableID) !== $value) {
-
-            $this->SetValue($ident, $value);
-
-        }
-
     }
 
+    private function FindManagedVariableID(string $ident): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if ($id !== false && IPS_VariableExists($id)) {
+            return $id;
+        }
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $dummyID = @IPS_GetObjectIDByIdent('Ch' . $channel . 'Shutter', $this->InstanceID);
+            if ($dummyID !== false && IPS_InstanceExists($dummyID)) {
+                $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
+                if ($id !== false && IPS_VariableExists($id)) {
+                    return $id;
+                }
+            }
+        }
+        return 0;
+    }
 
+    private function EnsureShutterDummy(int $channel, string $name): int
+    {
+        $ident = 'Ch' . $channel . 'Shutter';
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if ($id === false || !IPS_InstanceExists($id)) {
+            $id = IPS_CreateInstance('{485D0419-BE97-4548-AA9C-C083EB82E61E}');
+            IPS_SetParent($id, $this->InstanceID);
+            IPS_SetIdent($id, $ident);
+            IPS_ApplyChanges($id);
+        }
+        IPS_SetName($id, $name);
+        IPS_SetPosition($id, $channel * 10);
+        return $id;
+    }
+
+    private function EnsureShutterVariable(int $dummyID, string $ident, string $name, array $presentation, int $position): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
+        if ($id === false || !IPS_VariableExists($id)) {
+            // Vorhandene Variable migrieren, damit ihr aktueller Wert erhalten bleibt.
+            $oldID = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+            if ($oldID !== false && IPS_VariableExists($oldID)) {
+                $id = $oldID;
+                IPS_SetParent($id, $dummyID);
+            } else {
+                $id = IPS_CreateVariable(VARIABLETYPE_INTEGER);
+                IPS_SetParent($id, $dummyID);
+                IPS_SetIdent($id, $ident);
+            }
+        }
+        IPS_SetName($id, $name);
+        IPS_SetPosition($id, $position);
+        IPS_SetVariableCustomPresentation($id, $presentation);
+        IPS_SetVariableCustomAction($id, $this->InstanceID);
+        return $id;
+    }
+
+    private function RemoveShutterDummy(int $channel): void
+    {
+        $id = @IPS_GetObjectIDByIdent('Ch' . $channel . 'Shutter', $this->InstanceID);
+        if ($id === false || !IPS_InstanceExists($id)) {
+            return;
+        }
+        foreach (IPS_GetChildrenIDs($id) as $childID) {
+            if (IPS_VariableExists($childID)) {
+                IPS_DeleteVariable($childID);
+            }
+        }
+        IPS_DeleteInstance($id);
+    }
 
     private function SetVariableName(string $ident, string $name): void
 
@@ -1876,47 +1931,27 @@ class ZeptrionAir extends IPSModuleStrict
 
             } elseif ($active && $type === 'shutter') {
 
+                $dummyID = $this->EnsureShutterDummy($channel, $name);
+
                 $positionIdent = 'Ch' . $channel . 'Position';
-
-                // Die native Rollladen-Darstellung ist genau die gewünschte
-
-                // Kachel: Hauptregler = Position, Pfeile = ganz Auf/Zu und
-
-                // Lamellen-Tasten = kurzer Schritt Auf/Zu. Alle Aktionen laufen
-
-                // deshalb über dieselbe Positionsvariable.
-
-                $this->RegisterVariableInteger($positionIdent, $name . ' Position', [
-
+                $this->EnsureShutterVariable($dummyID, $positionIdent, 'Position', [
                     'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
-
                     'USAGE_TYPE' => 0,
-
                     'OPEN_OUTSIDE_VALUE' => 0,
+                    'CLOSE_INSIDE_VALUE' => 100,
+                    'SUN_POSITION' => 1
+                ], 10);
 
-                    'CLOSE_INSIDE_VALUE' => 100
-
-                ], $channel * 10);
-
-                $this->SetVariableName($positionIdent, $name . ' Position');
-
-                $this->EnableAction($positionIdent);
-
-                // Berechnete Lamellenstellung. zeptrion liefert dafür keine
-                // Rückmeldung; 0 % = geschlossen, 100 % = offen.
                 $lamellaIdent = 'Ch' . $channel . 'Lamella';
-                $this->RegisterVariableInteger($lamellaIdent, $name . ' Lamellen', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
-                    'MIN' => 0,
-                    'MAX' => 100,
-                    'STEP_SIZE' => 1,
-                    'PERCENTAGE' => false,
-                    'SUFFIX' => ' %'
-                ], $channel * 10 + 1);
-                $this->SetVariableName($lamellaIdent, $name . ' Lamellen');
-                $this->EnableAction($lamellaIdent);
-
-
+                $this->EnsureShutterVariable($dummyID, $lamellaIdent, 'Drehgrad', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
+                    'USAGE_TYPE' => 1,
+                    'CLOSE_INSIDE_VALUE' => 0,
+                    'OPEN_OUTSIDE_VALUE' => 100,
+                    'MAX_ROTATION_INSIDE' => -55,
+                    'MAX_ROTATION_OUTSIDE' => 55,
+                    'SUN_POSITION' => 1
+                ], 20);
 
                 $commandIdent = 'Ch' . $channel . 'Command';
 
@@ -1955,40 +1990,32 @@ class ZeptrionAir extends IPSModuleStrict
 
 
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
-
             foreach ([
-
                 'Switch' => $active && $type === 'light',
-
                 'DimmerSwitch' => $active && $type === 'dimmer',
-
                 'Level' => $active && $type === 'dimmer',
-
                 'Position' => $active && $type === 'shutter',
-
                 'Lamella' => $active && $type === 'shutter',
-
                 'Command' => $active && $type === 'shutter'
-
             ] as $suffix => $needed) {
-
                 if ($needed) {
-
                     continue;
-
                 }
 
                 $oldIdent = 'Ch' . $channel . $suffix;
-
-                if (@$this->GetIDForIdent($oldIdent) > 0) {
-
+                if ($suffix === 'Position' || $suffix === 'Lamella') {
+                    $oldID = $this->FindManagedVariableID($oldIdent);
+                    if ($oldID > 0 && IPS_VariableExists($oldID)) {
+                        IPS_DeleteVariable($oldID);
+                    }
+                } elseif (@$this->GetIDForIdent($oldIdent) > 0) {
                     $this->UnregisterVariable($oldIdent);
-
                 }
-
             }
 
-
+            if (!($active && $type === 'shutter')) {
+                $this->RemoveShutterDummy($channel);
+            }
 
             $showSceneVariable = false;
 
