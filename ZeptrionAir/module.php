@@ -1642,9 +1642,35 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $variableID = $this->FindManagedVariableID($ident);
         if ($variableID > 0 && GetValue($variableID) !== $value) {
-            // Statusvariablen des Moduls sind von außen schreibgeschützt.
-            // Der Wert muss deshalb durch die besitzende Modulinstanz gesetzt werden.
+            // RegisterVariable-Statusvariablen wurden für die gemeinsame
+            // Jalousie-Darstellung unter die Dummy-Instanz verschoben.
+            // SetValue($ident, ...) sucht nur direkt unter der Modulinstanz und
+            // findet sie dort nicht mehr. Daher den Modul-internen Wert direkt
+            // über die Variablen-ID aktualisieren.
+            $this->SetValueByID($variableID, $value);
+        }
+    }
+
+    private function SetValueByID(int $variableID, mixed $value): void
+    {
+        // IPS_RequestAction would trigger the actuator again. We only need to
+        // update the calculated status here. Temporarily move the registered
+        // variable back to its owning module, let IPSModule::SetValue update it,
+        // and restore the Dummy parent immediately afterwards.
+        $object = IPS_GetObject($variableID);
+        $parentID = (int)$object['ParentID'];
+        $ident = (string)$object['ObjectIdent'];
+
+        if ($parentID === $this->InstanceID) {
             $this->SetValue($ident, $value);
+            return;
+        }
+
+        IPS_SetParent($variableID, $this->InstanceID);
+        try {
+            $this->SetValue($ident, $value);
+        } finally {
+            IPS_SetParent($variableID, $parentID);
         }
     }
 
