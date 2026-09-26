@@ -457,7 +457,7 @@ class ZeptrionAir extends IPSModuleStrict
             $this->SetTimerInterval('PollTimer', 5000);
             $message = 'Gerät wieder erreichbar – Kommunikation wiederhergestellt, Pollintervall zurück auf 5 s';
             $this->SendDebug('Poll', $message, 0);
-            $this->LogMessage('Kommunikation wiederhergestellt', KL_ERROR);
+            $this->LogMessage('Kommunikation wiederhergestellt', KL_SUCCESS);
         } else {
             // Sicherstellen, dass im gesunden Zustand immer 5 s aktiv sind.
             $this->SetTimerInterval('PollTimer', 5000);
