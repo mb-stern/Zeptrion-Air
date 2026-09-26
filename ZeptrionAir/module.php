@@ -388,25 +388,51 @@ class ZeptrionAir extends IPSModuleStrict
         // Polling wird vollständig automatisch geregelt:
         // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
         $this->WriteAttributeInteger('CommunicationFailures', 0);
-        $this->SetTimerInterval('PollTimer', 5000);
         $this->SetTimerInterval('InfoTimer', 60000);
         $this->SetStatus(102);
 
-        // Anfangszustand sofort einlesen. Geräteinformationen nur dann laden,
-        // wenn der erste Status-Poll erfolgreich war.
-        $this->Poll();
-        if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
+        if ($this->IsMotorOnlyDevice()) {
+            $this->SetTimerInterval('PollTimer', 0);
+            $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
             $this->RefreshDeviceInfo();
+        } else {
+            $this->SetTimerInterval('PollTimer', 5000);
+            $this->Poll();
+            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
+                $this->RefreshDeviceInfo();
+            }
         }
 
     }
 
 
 
+    private function IsMotorOnlyDevice(): bool
+    {
+        $found = false;
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $type = strtolower(trim($this->ReadPropertyString('Channel' . $channel . 'Type')));
+            if ($type === '' || $type === 'unused') {
+                continue;
+            }
+            $found = true;
+            if ($type !== 'shutter') {
+                return false;
+            }
+        }
+        return $found;
+    }
+
     public function Poll(): void
     {
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
+            return;
+        }
+
+        // Reine Motoraktoren liefern über chscan keine verwertbare Position.
+        if ($this->IsMotorOnlyDevice()) {
+            $this->SetTimerInterval('PollTimer', 0);
             return;
         }
 
@@ -596,19 +622,79 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function RefreshRuntimeInfo(): void
     {
-        // Während einer Kommunikationsstörung keine Zusatzabfragen senden.
+        if ($this->IsMotorOnlyDevice()) {
+            $this->RefreshMotorCommunication();
+            return;
+        }
+
         $failures = $this->ReadAttributeInteger('CommunicationFailures');
         if ($failures > 0) {
-            $this->SendDebug(
-                'Info',
-                'Übersprungen – Status-Poll befindet sich in Fehler-/Erholungsphase (' . $failures . ')',
-                0
-            );
+            $this->SendDebug('Info', 'Übersprungen – Status-Poll befindet sich in Fehler-/Erholungsphase (' . $failures . ')', 0);
             return;
         }
 
         $this->SendDebug('Info', '60-s-Infoabfrage: RSSI', 0);
         $this->RefreshRSSI();
+    }
+
+    private function RefreshMotorCommunication(): void
+    {
+        $this->SendDebug('Info', '60-s-Kommunikationstest Motoraktor: RSSI', 0);
+        $rssi = $this->HttpXmlGet('/zrap/rssi');
+
+        if ($this->ReadAttributeBoolean('LastRequestSkipped')) {
+            $this->SendDebug('Info', 'RSSI-Test übersprungen – Gerätekommunikation läuft bereits', 0);
+            return;
+        }
+
+        if ($rssi === null) {
+            $failures = $this->ReadAttributeInteger('CommunicationFailures') + 1;
+            $this->WriteAttributeInteger('CommunicationFailures', $failures);
+            // Motoraktoren werden bewusst nur einmal pro Minute geprüft.
+            // Auch bei einem Fehler wird die Abfrage nicht beschleunigt.
+            $this->SetTimerInterval('InfoTimer', 60000);
+            $this->SendDebug(
+                'Kommunikation Fehler',
+                'Keine Antwort (' . $failures . ') – nächster Kommunikationstest in 60 s',
+                0
+            );
+
+            if ($failures >= 3) {
+                if ($this->ReadPropertyBoolean('ShowOnline')) {
+                    $this->SetValueIfChanged('Online', false);
+                }
+                if ($failures === 3) {
+                    $this->SendDebug('Instanzstatus', 'Gerät nicht erreichbar – 3 aufeinanderfolgende Kommunikationsfehler', 0);
+                    $this->LogMessage('Kommunikation zum Gerät abgebrochen', KL_ERROR);
+                }
+                $this->SetStatus(202);
+            }
+            return;
+        }
+
+        $failures = $this->ReadAttributeInteger('CommunicationFailures');
+        if ($failures > 0) {
+            $this->WriteAttributeInteger('CommunicationFailures', 0);
+            $this->SetTimerInterval('InfoTimer', 60000);
+            $this->SendDebug('Kommunikation', 'Gerät wieder erreichbar – Kommunikationstest zurück auf 60 s', 0);
+            $this->LogMessage('Kommunikation wiederhergestellt', KL_SUCCESS);
+        } else {
+            $this->SetTimerInterval('InfoTimer', 60000);
+        }
+
+        $value = $this->FindNumericValue($rssi, ['rssi', 'val', 'value']);
+        if ($value !== null) {
+            $rounded = (int)round($value);
+            $this->SendDebug('RSSI', 'Erfolgreich: ' . $rounded . ' dBm', 0);
+            if ($this->ReadPropertyBoolean('ShowRSSI')) {
+                $this->SetValueIfChanged('RSSI', $rounded);
+            }
+        }
+
+        if ($this->ReadPropertyBoolean('ShowOnline')) {
+            $this->SetValueIfChanged('Online', true);
+        }
+        $this->SetStatus(102);
     }
 
     public function RefreshDeviceInfo(): void
