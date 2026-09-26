@@ -1682,22 +1682,34 @@ class ZeptrionAir extends IPSModuleStrict
     private function EnsureShutterVariable(int $dummyID, string $ident, string $name, array $presentation, int $position): int
     {
         $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
+
         if ($id === false || !IPS_VariableExists($id)) {
-            // Vorhandene Variable migrieren, damit ihr aktueller Wert erhalten bleibt.
+            // Die Variable zuerst als echte Modulvariable registrieren und mit
+            // EnableAction() an RequestAction() anbinden. Keine CustomAction.
             $oldID = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+
             if ($oldID !== false && IPS_VariableExists($oldID)) {
                 $id = $oldID;
-                IPS_SetParent($id, $dummyID);
+                $this->EnableAction($ident);
             } else {
-                $id = IPS_CreateVariable(VARIABLETYPE_INTEGER);
+                $this->RegisterVariableInteger($ident, $name, '', $position);
+                $this->EnableAction($ident);
+                $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+            }
+
+            if ($id !== false && IPS_VariableExists($id)) {
                 IPS_SetParent($id, $dummyID);
-                IPS_SetIdent($id, $ident);
             }
         }
+
+        if ($id === false || !IPS_VariableExists($id)) {
+            throw new Exception('Rollo-Variable konnte nicht angelegt werden: ' . $ident);
+        }
+
         IPS_SetName($id, $name);
         IPS_SetPosition($id, $position);
         IPS_SetVariableCustomPresentation($id, $presentation);
-        IPS_SetVariableCustomAction($id, $this->InstanceID);
+
         return $id;
     }
 
