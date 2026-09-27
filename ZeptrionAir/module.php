@@ -28,9 +28,11 @@ class ZeptrionAir extends IPSModuleStrict
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyBoolean('Channel' . $channel . 'IsSmartButton', false);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'SmartTargetInstance', 0);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'SmartTargetChannel', 1);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'SmartTargetScene', 1);
+            for ($button = 1; $button <= 2; $button++) {
+                $this->RegisterPropertyInteger('Channel' . $channel . 'SmartButton' . $button . 'TargetInstance', 0);
+                $this->RegisterPropertyInteger('Channel' . $channel . 'SmartButton' . $button . 'TargetChannel', 1);
+                $this->RegisterPropertyInteger('Channel' . $channel . 'SmartButton' . $button . 'TargetScene', 1);
+            }
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
             $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 27000);
@@ -529,16 +531,17 @@ class ZeptrionAir extends IPSModuleStrict
         }
         return 'Smart-Tasten blinken. Jetzt die gewünschte Taste am Schalter drücken.';
     }
-    public function AssignSmartButtonScene(int $smartChannel): string
+    public function AssignSmartButtonScene(int $smartChannel, int $button): string
     {
-        if ($smartChannel < 1 || $smartChannel > 4 || !$this->ReadPropertyBoolean('Channel' . $smartChannel . 'IsSmartButton')) {
-            return 'Ungültiger Smart-Taster-Kanal.';
+        if ($smartChannel < 1 || $smartChannel > 4 || $button < 1 || $button > 2 || !$this->ReadPropertyBoolean('Channel' . $smartChannel . 'IsSmartButton')) {
+            return 'Ungültiger Smart-Taster oder ungültige Taste.';
         }
-        $targetInstance = $this->ReadPropertyInteger('Channel' . $smartChannel . 'SmartTargetInstance');
-        $targetChannel = max(1, min(4, $this->ReadPropertyInteger('Channel' . $smartChannel . 'SmartTargetChannel')));
-        $targetScene = max(1, min(4, $this->ReadPropertyInteger('Channel' . $smartChannel . 'SmartTargetScene')));
+        $prefix = 'Channel' . $smartChannel . 'SmartButton' . $button;
+        $targetInstance = $this->ReadPropertyInteger($prefix . 'TargetInstance');
+        $targetChannel = max(1, min(4, $this->ReadPropertyInteger($prefix . 'TargetChannel')));
+        $targetScene = max(1, min(4, $this->ReadPropertyInteger($prefix . 'TargetScene')));
         if ($targetInstance <= 0 || !IPS_InstanceExists($targetInstance)) {
-            return 'Bitte zuerst ein gültiges Zielgerät wählen und die Konfiguration übernehmen.';
+            return 'Bitte für Taste ' . $button . ' zuerst ein gültiges Zielgerät wählen und die Konfiguration übernehmen.';
         }
         $targetHost = trim((string)IPS_GetProperty($targetInstance, 'Host'));
         if ($targetHost === '') {
@@ -562,9 +565,9 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         $result = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgs', $payload);
         if (!$result['success']) {
-            return 'Smart-Taste konnte nicht zugewiesen werden: ' . $result['message'];
+            return 'Smart-Taste ' . $button . ' konnte nicht zugewiesen werden: ' . $result['message'];
         }
-        return 'Smart-Taste zugewiesen: ' . IPS_GetName($targetInstance) . ' / Kanal ' . $targetChannel . ' / S' . $targetScene . '.';
+        return 'Smart-Taste ' . $button . ' zugewiesen: ' . IPS_GetName($targetInstance) . ' / Kanal ' . $targetChannel . ' / S' . $targetScene . '.';
     }
     public function RequestAction($Ident, $Value): void
     {
@@ -927,7 +930,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'value' => $instanceID
             ];
         }
-        return [
+        $items = [
             ['type' => 'Label', 'caption' => 'Art: Smart-Taster'],
             [
                 'type' => 'RowLayout',
@@ -935,22 +938,37 @@ class ZeptrionAir extends IPSModuleStrict
                     ['type' => 'Button', 'caption' => 'Programmiermodus starten', 'onClick' => 'echo ZEPA_SmartButtonProgramMode($id);'],
                     ['type' => 'Button', 'caption' => 'Smart-Tasten blinken', 'onClick' => 'echo ZEPA_SmartButtonBlink($id);']
                 ]
-            ],
-            ['type' => 'Select', 'name' => 'Channel' . $smartChannel . 'SmartTargetInstance', 'caption' => 'Zielgerät', 'options' => $targetOptions],
-            ['type' => 'NumberSpinner', 'name' => 'Channel' . $smartChannel . 'SmartTargetChannel', 'caption' => 'Zielkanal', 'minimum' => 1, 'maximum' => 4],
-            [
-                'type' => 'Select',
-                'name' => 'Channel' . $smartChannel . 'SmartTargetScene',
-                'caption' => 'Speicherposition',
-                'options' => [
-                    ['caption' => 'S1', 'value' => 1],
-                    ['caption' => 'S2', 'value' => 2],
-                    ['caption' => 'S3', 'value' => 3],
-                    ['caption' => 'S4', 'value' => 4]
-                ]
-            ],
-            ['type' => 'Button', 'caption' => 'Ausgewählte Smart-Taste zuweisen', 'onClick' => 'echo ZEPA_AssignSmartButtonScene($id, ' . $smartChannel . ');']
+            ]
         ];
+        for ($button = 1; $button <= 2; $button++) {
+            $prefix = 'Channel' . $smartChannel . 'SmartButton' . $button;
+            $items[] = [
+                'type' => 'ExpansionPanel',
+                'caption' => 'Taste ' . $button,
+                'expanded' => true,
+                'items' => [
+                    ['type' => 'Select', 'name' => $prefix . 'TargetInstance', 'caption' => 'Zielgerät', 'options' => $targetOptions],
+                    ['type' => 'NumberSpinner', 'name' => $prefix . 'TargetChannel', 'caption' => 'Zielkanal', 'minimum' => 1, 'maximum' => 4],
+                    [
+                        'type' => 'Select',
+                        'name' => $prefix . 'TargetScene',
+                        'caption' => 'Speicherposition',
+                        'options' => [
+                            ['caption' => 'S1', 'value' => 1],
+                            ['caption' => 'S2', 'value' => 2],
+                            ['caption' => 'S3', 'value' => 3],
+                            ['caption' => 'S4', 'value' => 4]
+                        ]
+                    ],
+                    [
+                        'type' => 'Button',
+                        'caption' => 'Taste ' . $button . ' zuweisen',
+                        'onClick' => 'echo ZEPA_AssignSmartButtonScene($id, ' . $smartChannel . ', ' . $button . ');'
+                    ]
+                ]
+            ];
+        }
+        return $items;
     }
     private function SmartButtonRequest(string $method, string $path, ?array $payload = null): array
     {
