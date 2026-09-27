@@ -20,6 +20,10 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyBoolean('ShowRSSI', true);
         $this->RegisterPropertyBoolean('ShowChannelActualValues', false);
         $this->RegisterPropertyBoolean('ShowScenes', false); // Migration: wird nicht mehr für neue Szenenauswahl verwendet.
+        $this->RegisterPropertyBoolean('HasSmartButtons', false);
+        $this->RegisterPropertyInteger('SmartTargetInstance', 0);
+        $this->RegisterPropertyInteger('SmartTargetChannel', 1);
+        $this->RegisterPropertyInteger('SmartTargetScene', 1);
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshRuntimeInfo($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
@@ -160,6 +164,87 @@ class ZeptrionAir extends IPSModuleStrict
                 'items' => $items
             ];
         }
+        $smartItems = [
+            [
+                'type' => 'CheckBox',
+                'name' => 'HasSmartButtons',
+                'caption' => 'Smart-Taster vorhanden'
+            ]
+        ];
+        if ($this->ReadPropertyBoolean('HasSmartButtons')) {
+            $targetOptions = [
+                ['caption' => 'Bitte Zielgerät wählen', 'value' => 0]
+            ];
+            foreach (IPS_GetInstanceListByModuleID('{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}') as $instanceID) {
+                $targetHost = trim((string)IPS_GetProperty($instanceID, 'Host'));
+                $targetName = IPS_GetName($instanceID);
+                if ($targetHost === '') {
+                    continue;
+                }
+                $targetOptions[] = [
+                    'caption' => $targetName . ' (' . $targetHost . ')',
+                    'value' => $instanceID
+                ];
+            }
+            $smartItems[] = [
+                'type' => 'Label',
+                'caption' => 'Zum Programmieren: Programmiermodus starten, blinkende Smart-Taste am Schalter drücken, danach Ziel und S1–S4 wählen und zuweisen.'
+            ];
+            $smartItems[] = [
+                'type' => 'RowLayout',
+                'items' => [
+                    [
+                        'type' => 'Button',
+                        'caption' => 'Programmiermodus starten',
+                        'onClick' => 'echo ZEPA_SmartButtonProgramMode($id);'
+                    ],
+                    [
+                        'type' => 'Button',
+                        'caption' => 'Smart-Tasten blinken',
+                        'onClick' => 'echo ZEPA_SmartButtonBlink($id);'
+                    ]
+                ]
+            ];
+            $smartItems[] = [
+                'type' => 'Select',
+                'name' => 'SmartTargetInstance',
+                'caption' => 'Zielgerät',
+                'options' => $targetOptions
+            ];
+            $smartItems[] = [
+                'type' => 'NumberSpinner',
+                'name' => 'SmartTargetChannel',
+                'caption' => 'Zielkanal',
+                'minimum' => 1,
+                'maximum' => 4
+            ];
+            $smartItems[] = [
+                'type' => 'Select',
+                'name' => 'SmartTargetScene',
+                'caption' => 'Speicherposition',
+                'options' => [
+                    ['caption' => 'S1', 'value' => 1],
+                    ['caption' => 'S2', 'value' => 2],
+                    ['caption' => 'S3', 'value' => 3],
+                    ['caption' => 'S4', 'value' => 4]
+                ]
+            ];
+            $smartItems[] = [
+                'type' => 'Button',
+                'caption' => 'Ausgewählte Smart-Taste zuweisen',
+                'onClick' => 'echo ZEPA_AssignSmartButtonScene($id);'
+            ];
+            $smartItems[] = [
+                'type' => 'Label',
+                'caption' => 'Hinweis: Ein dokumentierter Lese-Endpunkt für bereits gespeicherte Smart-Taster-Webservices ist derzeit nicht bekannt. Diese Testfunktion schreibt erst beim Klick auf „Zuweisen“.'
+            ];
+        }
+        $elements[] = [
+            'type' => 'ExpansionPanel',
+            'caption' => 'Smart-Taster',
+            'expanded' => false,
+            'items' => $smartItems
+        ];
         $elements[] = [
             'type' => 'ExpansionPanel',
             'caption' => 'Variablen',
@@ -491,6 +576,56 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
         }
+    }
+    public function SmartButtonProgramMode(): string
+    {
+        $result = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgm', ['on' => true, 'ntm' => 60]);
+        if (!$result['success']) {
+            return 'Programmiermodus konnte nicht gestartet werden: ' . $result['message'];
+        }
+        return 'Programmiermodus gestartet (60 s).';
+    }
+    public function SmartButtonBlink(): string
+    {
+        $result = $this->SmartButtonRequest('GET', '/zapi/smartbt/prgn');
+        if (!$result['success']) {
+            return 'Smart-Tasten konnten nicht aktiviert werden: ' . $result['message'];
+        }
+        return 'Smart-Tasten blinken. Jetzt die gewünschte Taste am Schalter drücken.';
+    }
+    public function AssignSmartButtonScene(): string
+    {
+        $targetInstance = $this->ReadPropertyInteger('SmartTargetInstance');
+        $targetChannel = max(1, min(4, $this->ReadPropertyInteger('SmartTargetChannel')));
+        $targetScene = max(1, min(4, $this->ReadPropertyInteger('SmartTargetScene')));
+        if ($targetInstance <= 0 || !IPS_InstanceExists($targetInstance)) {
+            return 'Bitte zuerst ein gültiges Zielgerät wählen und die Konfiguration übernehmen.';
+        }
+        $targetHost = trim((string)IPS_GetProperty($targetInstance, 'Host'));
+        if ($targetHost === '') {
+            return 'Beim Zielgerät ist kein Hostname eingetragen.';
+        }
+        $targetChannels = (int)IPS_GetProperty($targetInstance, 'Channels');
+        if ($targetChannel > max(1, min(4, $targetChannels))) {
+            return 'Der gewählte Zielkanal existiert auf diesem Gerät nicht.';
+        }
+        $targetType = strtolower((string)IPS_GetProperty($targetInstance, 'Channel' . $targetChannel . 'Type'));
+        if ($targetType === 'unused') {
+            return 'Der gewählte Zielkanal ist nicht belegt.';
+        }
+        $payload = [
+            'req' => 'POST',
+            'typ' => 'application/x-www-form-urlencoded',
+            'loc' => $targetHost,
+            'prt' => '80',
+            'pth' => '/zrap/chctrl/ch' . $targetChannel,
+            'bdy' => 'cmd=recall_s' . $targetScene
+        ];
+        $result = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgs', $payload);
+        if (!$result['success']) {
+            return 'Smart-Taste konnte nicht zugewiesen werden: ' . $result['message'];
+        }
+        return 'Smart-Taste zugewiesen: ' . IPS_GetName($targetInstance) . ' / Kanal ' . $targetChannel . ' / S' . $targetScene . '.';
     }
     public function RequestAction($Ident, $Value): void
     {
@@ -839,6 +974,44 @@ class ZeptrionAir extends IPSModuleStrict
         if ($channel < 1 || $channel > $max) {
             throw new InvalidArgumentException('Kanal ' . $channel . ' ist bei diesem Gerät nicht vorhanden');
         }
+    }
+    private function SmartButtonRequest(string $method, string $path, ?array $payload = null): array
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') {
+            return ['success' => false, 'message' => 'IP-Adresse / Hostname fehlt'];
+        }
+        $url = 'http://' . $host . $path;
+        $curl = curl_init();
+        if ($curl === false) {
+            return ['success' => false, 'message' => 'cURL konnte nicht initialisiert werden'];
+        }
+        $options = [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => 1500,
+            CURLOPT_TIMEOUT_MS => 4000,
+            CURLOPT_FOLLOWLOCATION => false
+        ];
+        if (strtoupper($method) === 'POST') {
+            $json = json_encode($payload ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $options[CURLOPT_POST] = true;
+            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json'];
+            $options[CURLOPT_POSTFIELDS] = $json;
+        }
+        curl_setopt_array($curl, $options);
+        $response = curl_exec($curl);
+        $error = curl_error($curl);
+        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+        $this->SendDebug('Smart-Taster', strtoupper($method) . ' ' . $url . ' / HTTP ' . $httpCode . ' / Antwort: ' . (string)$response, 0);
+        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) {
+            return [
+                'success' => false,
+                'message' => 'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') . ($response !== false && trim((string)$response) !== '' ? ' / ' . trim((string)$response) : '')
+            ];
+        }
+        return ['success' => true, 'message' => trim((string)$response)];
     }
     private function HttpXmlGet(string $path): ?array
     {
