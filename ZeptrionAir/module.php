@@ -66,47 +66,20 @@ class ZeptrionAir extends IPSModuleStrict
             ];
         }
         $elements[] = ['type' => 'RowLayout', 'items' => $hostItems];
-        $smartButtonItems = [];
+        $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        $smartButtonAssignments = [];
         $splitterIDs = IPS_GetInstanceListByModuleID('{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}');
         if ($splitterIDs !== []) {
             try {
-                $assignments = json_decode(ZEPAS_GetSmartButtonAssignments($splitterIDs[0], $this->InstanceID), true);
-                if (is_array($assignments)) {
-                    foreach (array_slice($assignments, 0, 2) as $index => $assignment) {
-                        $smartButtonItems[] = [
-                            'type' => 'Label',
-                            'caption' => 'Smart-Taster ' . ($index + 1) . ': ' . (string)($assignment['name'] ?? 'Smart-Taster')
-                        ];
-                        $targets = is_array($assignment['targets'] ?? null) ? $assignment['targets'] : [];
-                        if ($targets === []) {
-                            $smartButtonItems[] = ['type' => 'Label', 'caption' => '  Keine Ziele gespeichert'];
-                        } else {
-                            foreach ($targets as $target) {
-                                $smartButtonItems[] = ['type' => 'Label', 'caption' => '  → ' . (string)$target];
-                            }
-                        }
-                    }
+                $decodedAssignments = json_decode(ZEPAS_GetSmartButtonAssignments($splitterIDs[0], $this->InstanceID), true);
+                if (is_array($decodedAssignments)) {
+                    $smartButtonAssignments = array_slice($decodedAssignments, 0, 2);
                 }
             } catch (Throwable $e) {
                 $this->SendDebug('Smart-Taster Anzeige', $e->getMessage(), 0);
             }
         }
-        if ($smartButtonItems === []) {
-            $smartButtonItems[] = ['type' => 'Label', 'caption' => 'Keine Smart-Taster für dieses zApp gespeichert'];
-        }
-        $smartButtonItems[] = [
-            'type' => 'Button',
-            'caption' => 'Smart-Taster konfigurieren',
-            'link' => true,
-            'onClick' => "echo '/hook/zeptrionair';"
-        ];
-        $elements[] = [
-            'type' => 'ExpansionPanel',
-            'caption' => 'Smart-Taster',
-            'expanded' => true,
-            'items' => $smartButtonItems
-        ];
-        $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        $smartButtonIndex = 0;
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
             $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
                 'light' => 'Licht',
@@ -115,17 +88,52 @@ class ZeptrionAir extends IPSModuleStrict
                 'awning' => 'Markise',
                 default => 'Nicht verwendet'
             };
-            $items = [
-                [
-                    'type' => 'ValidationTextBox',
-                    'name' => 'Channel' . $channel . 'Name',
-                    'caption' => 'Name'
-                ],
-                [
-                    'type' => 'Label',
-                    'caption' => 'Art: ' . $typeLabel
-                ]
-            ];
+            if ($typeLabel === 'Nicht verwendet' && isset($smartButtonAssignments[$smartButtonIndex])) {
+                $assignment = $smartButtonAssignments[$smartButtonIndex++];
+                $items = [
+                    [
+                        'type' => 'Label',
+                        'caption' => 'Art: Smart-Taster'
+                    ],
+                    [
+                        'type' => 'Label',
+                        'caption' => 'Szene: ' . (string)($assignment['name'] ?? 'Smart-Taster')
+                    ]
+                ];
+                $targets = is_array($assignment['targets'] ?? null) ? $assignment['targets'] : [];
+                foreach ($targets as $target) {
+                    $items[] = [
+                        'type' => 'Label',
+                        'caption' => '→ ' . (string)$target
+                    ];
+                }
+                $items[] = [
+                    'type' => 'Button',
+                    'caption' => 'Smart-Taster konfigurieren',
+                    'link' => true,
+                    'onClick' => "echo '/hook/zeptrionair';"
+                ];
+            } else {
+                $items = [
+                    [
+                        'type' => 'ValidationTextBox',
+                        'name' => 'Channel' . $channel . 'Name',
+                        'caption' => 'Name'
+                    ],
+                    [
+                        'type' => 'Label',
+                        'caption' => 'Art: ' . $typeLabel
+                    ]
+                ];
+                if ($typeLabel === 'Nicht verwendet') {
+                    $items[] = [
+                        'type' => 'Button',
+                        'caption' => 'Smart-Taster konfigurieren',
+                        'link' => true,
+                        'onClick' => "echo '/hook/zeptrionair';"
+                    ];
+                }
+            }
             $sceneItems = [];
             if ($typeLabel !== 'Nicht verwendet') {
             for ($scene = 1; $scene <= 4; $scene++) {
