@@ -68,6 +68,13 @@ class ZeptrionAir extends IPSModuleStrict
         $elements[] = ['type' => 'RowLayout', 'items' => $hostItems];
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
+            $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
+                'light' => 'Licht',
+                'dimmer' => 'Dimmer',
+                'shutter' => 'Rollo',
+                'awning' => 'Markise',
+                default => 'Nicht verwendet'
+            };
             $items = [
                 [
                     'type' => 'ValidationTextBox',
@@ -75,16 +82,8 @@ class ZeptrionAir extends IPSModuleStrict
                     'caption' => 'Name'
                 ],
                 [
-                    'type' => 'Select',
-                    'name' => 'Channel' . $channel . 'Type',
-                    'caption' => 'Art',
-                    'options' => [
-                        ['caption' => 'Nicht verwendet', 'value' => 'unused'],
-                        ['caption' => 'Licht', 'value' => 'light'],
-                        ['caption' => 'Dimmer', 'value' => 'dimmer'],
-                        ['caption' => 'Rollo', 'value' => 'shutter'],
-                        ['caption' => 'Markise', 'value' => 'awning']
-                    ]
+                    'type' => 'Label',
+                    'caption' => 'Art: ' . $typeLabel
                 ]
             ];
             $sceneItems = [];
