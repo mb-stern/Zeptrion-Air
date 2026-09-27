@@ -27,10 +27,6 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
-            $this->RegisterPropertyBoolean('Channel' . $channel . 'IsSmartButton', false);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'SmartTargetInstance', 0);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'SmartTargetChannel', 1);
-            $this->RegisterPropertyInteger('Channel' . $channel . 'SmartTargetScene', 1);
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
             $this->RegisterPropertyBoolean('Channel' . $channel . 'Scenes', false);
             $this->RegisterPropertyInteger('Channel' . $channel . 'UpTimeMs', 27000);
@@ -72,8 +68,7 @@ class ZeptrionAir extends IPSModuleStrict
         $elements[] = ['type' => 'RowLayout', 'items' => $hostItems];
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-            $typeLabel = match ($type) {
+            $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
                 'light' => 'Licht',
                 'dimmer' => 'Dimmer',
                 'shutter' => 'Rollo',
@@ -85,28 +80,12 @@ class ZeptrionAir extends IPSModuleStrict
                     'type' => 'ValidationTextBox',
                     'name' => 'Channel' . $channel . 'Name',
                     'caption' => 'Name'
-                ]
-            ];
-            if ($type === 'unused') {
-                $items[] = [
-                    'type' => 'CheckBox',
-                    'name' => 'Channel' . $channel . 'IsSmartButton',
-                    'caption' => 'Smart-Taster'
-                ];
-                if ($this->ReadPropertyBoolean('Channel' . $channel . 'IsSmartButton')) {
-                    $items = array_merge($items, $this->BuildSmartButtonConfigItems($channel));
-                } else {
-                    $items[] = [
-                        'type' => 'Label',
-                        'caption' => 'Art: Nicht verwendet'
-                    ];
-                }
-            } else {
-                $items[] = [
+                ],
+                [
                     'type' => 'Label',
                     'caption' => 'Art: ' . $typeLabel
-                ];
-            }
+                ]
+            ];
             $sceneItems = [];
             for ($scene = 1; $scene <= 4; $scene++) {
                 $sceneItems[] = [
@@ -177,7 +156,7 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $elements[] = [
                 'type' => 'ExpansionPanel',
-                'caption' => ($type === 'unused' ? 'Smart-Taster' : 'Kanal ' . $channel),
+                'caption' => 'Kanal ' . $channel,
                 'items' => $items
             ];
         }
@@ -206,14 +185,14 @@ class ZeptrionAir extends IPSModuleStrict
                 [
                     'type' => 'RowLayout',
                     'items' => [
-                        [
-                            'type' => 'Image',
-                            'onClick' => "echo 'https://paypal.me/mbstern';",
-                            'image' => "data:image/jpeg;base64,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"
+                          [
+                                'type'   => 'Image',
+                                'onClick'=> "echo 'https://paypal.me/mbstern';",
+                                'image'=> "data:image/jpeg;base64,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"
                         ],
                         [
-                            'type' => 'Label',
-                            'caption' => 'Sag danke und unterstütze den Modulentwickler: paypal.me/mbstern'
+                            'type'    => 'Label',
+                            'caption' => "Sag danke und unterstütze den Modulentwickler: paypal.me/mbstern"
                         ]
                     ]
                 ]
@@ -512,60 +491,6 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
         }
-    }
-    public function SmartButtonProgramMode(): string
-    {
-        $result = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgm', ['on' => true, 'ntm' => 60]);
-        if (!$result['success']) {
-            return 'Programmiermodus konnte nicht gestartet werden: ' . $result['message'];
-        }
-        return 'Programmiermodus gestartet (60 s).';
-    }
-    public function SmartButtonBlink(): string
-    {
-        $result = $this->SmartButtonRequest('GET', '/zapi/smartbt/prgn');
-        if (!$result['success']) {
-            return 'Smart-Tasten konnten nicht aktiviert werden: ' . $result['message'];
-        }
-        return 'Smart-Tasten blinken. Jetzt die gewünschte Taste am Schalter drücken.';
-    }
-    public function AssignSmartButtonScene(int $smartChannel): string
-    {
-        if ($smartChannel < 1 || $smartChannel > 4 || !$this->ReadPropertyBoolean('Channel' . $smartChannel . 'IsSmartButton')) {
-            return 'Ungültiger Smart-Taster.';
-        }
-        $prefix = 'Channel' . $smartChannel . 'Smart';
-        $targetInstance = $this->ReadPropertyInteger($prefix . 'TargetInstance');
-        $targetChannel = max(1, min(4, $this->ReadPropertyInteger($prefix . 'TargetChannel')));
-        $targetScene = max(1, min(4, $this->ReadPropertyInteger($prefix . 'TargetScene')));
-        if ($targetInstance <= 0 || !IPS_InstanceExists($targetInstance)) {
-            return 'Bitte zuerst ein gültiges Zielgerät wählen und die Konfiguration übernehmen.';
-        }
-        $targetHost = trim((string)IPS_GetProperty($targetInstance, 'Host'));
-        if ($targetHost === '') {
-            return 'Beim Zielgerät ist kein Hostname eingetragen.';
-        }
-        $targetChannels = (int)IPS_GetProperty($targetInstance, 'Channels');
-        if ($targetChannel > max(1, min(4, $targetChannels))) {
-            return 'Der gewählte Zielkanal existiert auf diesem Gerät nicht.';
-        }
-        $targetType = strtolower((string)IPS_GetProperty($targetInstance, 'Channel' . $targetChannel . 'Type'));
-        if ($targetType === 'unused') {
-            return 'Der gewählte Zielkanal ist nicht belegt.';
-        }
-        $payload = [
-            'req' => 'POST',
-            'typ' => 'application/x-www-form-urlencoded',
-            'loc' => $targetHost,
-            'prt' => '80',
-            'pth' => '/zrap/chctrl/ch' . $targetChannel,
-            'bdy' => 'cmd=recall_s' . $targetScene
-        ];
-        $result = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgs', $payload);
-        if (!$result['success']) {
-            return 'Gedrückte Smart-Taste konnte nicht zugewiesen werden: ' . $result['message'];
-        }
-        return 'Gedrückte Smart-Taste zugewiesen: ' . IPS_GetName($targetInstance) . ' / Kanal ' . $targetChannel . ' / S' . $targetScene . '.';
     }
     public function RequestAction($Ident, $Value): void
     {
@@ -914,108 +839,6 @@ class ZeptrionAir extends IPSModuleStrict
         if ($channel < 1 || $channel > $max) {
             throw new InvalidArgumentException('Kanal ' . $channel . ' ist bei diesem Gerät nicht vorhanden');
         }
-    }
-    private function BuildSmartButtonConfigItems(int $smartChannel): array
-    {
-        $targetOptions = [['caption' => 'Bitte Zielgerät wählen', 'value' => 0]];
-        foreach (IPS_GetInstanceListByModuleID('{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}') as $instanceID) {
-            $targetHost = trim((string)IPS_GetProperty($instanceID, 'Host'));
-            if ($targetHost === '') {
-                continue;
-            }
-            $targetOptions[] = [
-                'caption' => IPS_GetName($instanceID) . ' (' . $targetHost . ')',
-                'value' => $instanceID
-            ];
-        }
-        $prefix = 'Channel' . $smartChannel . 'Smart';
-        $selectedTarget = $this->ReadPropertyInteger($prefix . 'TargetInstance');
-        $channelOptions = [];
-        if ($selectedTarget > 0 && IPS_InstanceExists($selectedTarget)) {
-            $targetChannelCount = max(1, min(4, (int)IPS_GetProperty($selectedTarget, 'Channels')));
-            for ($targetChannel = 1; $targetChannel <= $targetChannelCount; $targetChannel++) {
-                $targetType = strtolower((string)IPS_GetProperty($selectedTarget, 'Channel' . $targetChannel . 'Type'));
-                if ($targetType === 'unused') {
-                    continue;
-                }
-                $targetName = trim((string)IPS_GetProperty($selectedTarget, 'Channel' . $targetChannel . 'Name'));
-                if ($targetName === '') {
-                    $targetName = 'Kanal ' . $targetChannel;
-                }
-                $channelOptions[] = [
-                    'caption' => $targetName,
-                    'value' => $targetChannel
-                ];
-            }
-        }
-        if ($channelOptions === []) {
-            $channelOptions[] = ['caption' => 'Zuerst Zielgerät wählen und übernehmen', 'value' => 1];
-        }
-        return [
-            ['type' => 'Label', 'caption' => 'Art: Smart-Taster'],
-            [
-                'type' => 'Button',
-                'caption' => '1. Programmierung starten / Smart-Tasten blinken',
-                'onClick' => 'echo ZEPA_SmartButtonProgramMode($id); echo "\n"; echo ZEPA_SmartButtonBlink($id);'
-            ],
-            ['type' => 'Label', 'caption' => '2. Gewünschte blinkende Smart-Taste am Schalter drücken.'],
-            ['type' => 'Select', 'name' => $prefix . 'TargetInstance', 'caption' => 'Zielgerät', 'options' => $targetOptions],
-            ['type' => 'Select', 'name' => $prefix . 'TargetChannel', 'caption' => 'Ziel', 'options' => $channelOptions],
-            [
-                'type' => 'Select',
-                'name' => $prefix . 'TargetScene',
-                'caption' => 'Speicherposition',
-                'options' => [
-                    ['caption' => 'S1', 'value' => 1],
-                    ['caption' => 'S2', 'value' => 2],
-                    ['caption' => 'S3', 'value' => 3],
-                    ['caption' => 'S4', 'value' => 4]
-                ]
-            ],
-            [
-                'type' => 'Button',
-                'caption' => '3. Gedrückte Smart-Taste zuweisen',
-                'onClick' => 'echo ZEPA_AssignSmartButtonScene($id, ' . $smartChannel . ');'
-            ]
-        ];
-    }
-    private function SmartButtonRequest(string $method, string $path, ?array $payload = null): array
-    {
-        $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') {
-            return ['success' => false, 'message' => 'IP-Adresse / Hostname fehlt'];
-        }
-        $url = 'http://' . $host . $path;
-        $curl = curl_init();
-        if ($curl === false) {
-            return ['success' => false, 'message' => 'cURL konnte nicht initialisiert werden'];
-        }
-        $options = [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1500,
-            CURLOPT_TIMEOUT_MS => 4000,
-            CURLOPT_FOLLOWLOCATION => false
-        ];
-        if (strtoupper($method) === 'POST') {
-            $json = json_encode($payload ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $options[CURLOPT_POST] = true;
-            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json'];
-            $options[CURLOPT_POSTFIELDS] = $json;
-        }
-        curl_setopt_array($curl, $options);
-        $response = curl_exec($curl);
-        $error = curl_error($curl);
-        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
-        $this->SendDebug('Smart-Taster', strtoupper($method) . ' ' . $url . ' / HTTP ' . $httpCode . ' / Antwort: ' . (string)$response, 0);
-        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) {
-            return [
-                'success' => false,
-                'message' => 'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') . ($response !== false && trim((string)$response) !== '' ? ' / ' . trim((string)$response) : '')
-            ];
-        }
-        return ['success' => true, 'message' => trim((string)$response)];
     }
     private function HttpXmlGet(string $path): ?array
     {
