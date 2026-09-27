@@ -505,8 +505,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         // Zuordnung aus den realen /zrap/chdes Antworten dieser Installation.
         // Unbekannte Kategorien bleiben bewusst "Nicht erkannt".
         return match ($cat) {
-            '1' => ['type' => 'light',   'label' => 'Licht / Schalter', 'scenes' => false],
-            '3' => ['type' => 'dimmer',  'label' => 'Dimmer / DALI',    'scenes' => false],
+            '1' => ['type' => 'light',   'label' => 'Licht', 'scenes' => false],
+            '3' => ['type' => 'dimmer',  'label' => 'Dimmer',    'scenes' => false],
             '5' => ['type' => 'shutter', 'label' => 'Rollo',    'scenes' => false],
             '6' => ['type' => 'shutter', 'label' => 'Markise',          'scenes' => false],
             default => $this->MapChannelByName($name)
@@ -630,8 +630,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 $channelConfig[$channel] = ['name' => $name, 'type' => $type];
 
                 $label = match ($type) {
-                    'light' => 'Licht / Schalter',
-                    'dimmer' => 'Dimmer / DALI',
+                    'light' => 'Licht',
+                    'dimmer' => 'Dimmer',
                     'shutter' => 'Rollo',
                     default => 'Leer / Smart-Taster'
                 };
