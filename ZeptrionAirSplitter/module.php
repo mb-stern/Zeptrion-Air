@@ -48,6 +48,70 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         return implode(', ', array_values(array_unique($names)));
     }
 
+    public function GetSmartButtonAssignments(int $deviceInstance): string
+    {
+        $result = [];
+        foreach ($this->ReadScenes() as $scene) {
+            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
+                continue;
+            }
+            $targets = [];
+            foreach (($scene['targets'] ?? []) as $target) {
+                if (!is_array($target)) {
+                    continue;
+                }
+                $type = (string)($target['type'] ?? '');
+                if ($type === 'zeptrion') {
+                    $instance = (int)($target['instance'] ?? 0);
+                    $channel = (int)($target['channel'] ?? 0);
+                    $memory = (int)($target['memory'] ?? 0);
+                    if ($this->IsDeviceInstance($instance)) {
+                        $channelName = trim((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Name'));
+                        $deviceName = trim(IPS_GetName($instance));
+                        $caption = $channelName !== '' ? $channelName : ($deviceName . ' / Kanal ' . $channel);
+                    } else {
+                        $caption = 'zeptrionAIR';
+                    }
+                    $targets[] = $caption . ' → S' . $memory;
+                } elseif ($type === 'symcon') {
+                    $objectID = (int)($target['object'] ?? 0);
+                    if (IPS_VariableExists($objectID)) {
+                        $targets[] = $this->ObjectPath($objectID) . ' → ' . $this->FormatSmartButtonValue($objectID, $target['value'] ?? null);
+                    } elseif (IPS_ScriptExists($objectID)) {
+                        $targets[] = $this->ObjectPath($objectID) . ' → Script ausführen';
+                    }
+                }
+            }
+            $result[] = [
+                'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
+                'targets' => $targets
+            ];
+            if (count($result) >= 2) {
+                break;
+            }
+        }
+        return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    private function FormatSmartButtonValue(int $variableID, mixed $value): string
+    {
+        $variable = IPS_GetVariable($variableID);
+        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
+        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
+            $profile = IPS_GetVariableProfile($profileName);
+            foreach (($profile['Associations'] ?? []) as $association) {
+                if ((string)($association['Value'] ?? '') === (string)$value) {
+                    return (string)($association['Name'] ?? $value);
+                }
+            }
+            return (string)$value . (string)($profile['Suffix'] ?? '');
+        }
+        if ((int)$variable['VariableType'] === 0) {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
+        }
+        return (string)$value;
+    }
+
     protected function ProcessHookData(): void
     {
         if ((string)($_GET['action'] ?? '') === 'run') {
