@@ -72,7 +72,8 @@ class ZeptrionAir extends IPSModuleStrict
         $elements[] = ['type' => 'RowLayout', 'items' => $hostItems];
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
-            $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
+            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+            $typeLabel = match ($type) {
                 'light' => 'Licht',
                 'dimmer' => 'Dimmer',
                 'shutter' => 'Rollo',
