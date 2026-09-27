@@ -136,7 +136,7 @@ class ZeptrionAir extends IPSModuleStrict
                         ['caption' => 'Nicht verwendet', 'value' => 'unused'],
                         ['caption' => 'Licht', 'value' => 'light'],
                         ['caption' => 'Dimmer / DALI', 'value' => 'dimmer'],
-                        ['caption' => 'Store / Rollo', 'value' => 'shutter']
+                        ['caption' => 'Rollo', 'value' => 'shutter']
                     ]
                 ]
             ];
@@ -188,7 +188,7 @@ class ZeptrionAir extends IPSModuleStrict
                 $items[] = [
                     'type' => 'ExpansionPanel',
                     'name' => 'Channel' . $channel . 'ShutterConfig',
-                    'caption' => 'Rollo / Store konfigurieren',
+                    'caption' => 'Rollo konfigurieren',
                     'expanded' => false,
                     'items' => [
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'UpTimeMs', 'caption' => 'Fahrzeit ganz zu → ganz auf (ms)', 'minimum' => 100, 'maximum' => 32000],
@@ -917,7 +917,7 @@ class ZeptrionAir extends IPSModuleStrict
 
                 if (!isset($commands[$value])) {
 
-                    throw new InvalidArgumentException('Unbekannter Store-Befehl');
+                    throw new InvalidArgumentException('Unbekannter Rollo-Befehl');
 
                 }
 
