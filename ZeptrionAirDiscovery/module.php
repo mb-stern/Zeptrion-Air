@@ -1,17 +1,13 @@
 <?php
-
 declare(strict_types=1);
-
 class ZeptrionAirDiscovery extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
     private const ZEROCONF_MODULE_ID = '{780B2D48-916C-4D59-AD35-5A429B2355A5}';
-
     public function Create(): void
     {
         parent::Create();
     }
-
     public function GetConfigurationForm(): string
     {
         // Configurator = aktuell entdeckte Geräte UNION bereits vorhandene Instanzen.
@@ -19,23 +15,19 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         // niemals Properties oder Namen einer bestehenden Device-Instanz zurück.
         $discovered = $this->DiscoverDevices();
         $existing = $this->GetExistingInstanceData();
-
         $rows = [];
-
         // 1) Aktuell per mDNS gefundene Geräte. Nur ein erfolgreiches /zrap/id mit
         // sys=ZEPTRION berechtigt zur Erstellung einer neuen Instanz.
         foreach ($discovered as $device) {
             $host = $device['host'];
             $instance = $existing[$host] ?? null;
             $reachable = (bool)($device['reachable'] ?? false);
-
             if ($instance !== null && !$reachable) {
                 // Gerät ist noch per mDNS sichtbar, die API antwortet aber nicht.
                 // Für eine vorhandene Instanz zeigen wir deren gespeicherte Daten an.
                 $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar');
                 continue;
             }
-
             $rows[$host] = [
                 'Host'         => $host,
                 'IP'           => $device['ip'],
@@ -47,7 +39,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'ChannelInfo'  => $reachable ? $device['channelInfo'] : 'Nicht erreichbar',
                 'instanceID'   => $instance['instanceID'] ?? 0
             ];
-
             if ($reachable && $instance === null) {
                 // Noch nicht angelegt: vollständige Startkonfiguration für die
                 // neu zu erstellende Geräteinstanz.
@@ -103,7 +94,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 ];
             }
         }
-
         // 2) Bereits vorhandene Instanzen, die aktuell überhaupt nicht entdeckt wurden,
         // bleiben im Configurator sichtbar. Wird die Instanz gelöscht und das Gerät ist
         // weiterhin nicht erreichbar, verschwindet die Zeile automatisch.
@@ -112,10 +102,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar / nicht entdeckt');
             }
         }
-
         $values = array_values($rows);
         usort($values, static fn(array $a, array $b): int => strnatcasecmp($a['Host'], $b['Host']));
-
         return json_encode([
             'actions' => [
                 [
@@ -144,7 +132,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             ]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
-
     private function DiscoverDevices(): array
     {
         $found = [];
@@ -153,21 +140,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $this->SendDebug('Discovery', 'Kein DNS-SD Control (Zeroconf) gefunden', 0);
             return [];
         }
-
         $zcID = $zcIDs[0];
         $this->SendDebug('Discovery', 'DNS-SD Control ID: ' . $zcID, 0);
-
-        // API Kap. 4: aktuelle Firmware annonciert _zapp._tcp.
-        // Nur wenn dort nichts gefunden wird, suchen wir als Fallback über _http._tcp.
+        // API Kap. 4: aktuelle Firmware annonciert \_zapp.\_tcp.
+        // Nur wenn dort nichts gefunden wird, suchen wir als Fallback über \_http.\_tcp.
         // Die zeptrionAIR WLAN-Module antworten auf mDNS nicht immer alle im
         // selben Query-Lauf. Mehrere kurze Läufe zusammenführen; vorhandene Hosts
         // werden durch den Hostnamen als Array-Key automatisch dedupliziert.
         $previousCount = -1;
         for ($attempt = 1; $attempt <= 3; $attempt++) {
-            $this->CollectServices($zcID, '_zapp._tcp', false, $found);
+            $this->CollectServices($zcID, '\_zapp.\_tcp', false, $found);
             $count = count($found);
-            $this->SendDebug('Discovery', '_zapp._tcp Lauf ' . $attempt . ': insgesamt ' . $count . ' Geräte', 0);
-
+            $this->SendDebug('Discovery', '\_zapp.\_tcp Lauf ' . $attempt . ': insgesamt ' . $count . ' Geräte', 0);
             if ($attempt > 1 && $count === $previousCount) {
                 break;
             }
@@ -176,17 +160,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 usleep(250000);
             }
         }
-
-        // Legacy-Ankündigungen immer ergänzend abfragen. Bisher wurde _http._tcp
-        // übersprungen, sobald auch nur ein einziges _zapp._tcp Gerät gefunden war.
+        // Legacy-Ankündigungen immer ergänzend abfragen. Bisher wurde \_http.\_tcp
+        // übersprungen, sobald auch nur ein einziges \_zapp.\_tcp Gerät gefunden war.
         // Dadurch konnten einzelne Geräte zeitweise aus der Liste fehlen.
-        $this->CollectServices($zcID, '_http._tcp', true, $found);
-
+        $this->CollectServices($zcID, '\_http.\_tcp', true, $found);
         $this->EnrichDevicesParallel($found);
-
         return array_values($found);
     }
-
     private function CollectServices(int $zcID, string $type, bool $legacyOnly, array &$found): void
     {
         try {
@@ -195,34 +175,27 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $this->SendDebug('mDNS ' . $type, $e->getMessage(), 0);
             return;
         }
-
         $this->SendDebug('mDNS ' . $type . ' RAW', json_encode($services, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-
         if (!is_array($services)) {
             $this->SendDebug('mDNS ' . $type, 'Antwort ist kein Array', 0);
             return;
         }
-
         $this->SendDebug('mDNS ' . $type, 'Gefundene Services: ' . count($services), 0);
-
         foreach ($services as $service) {
             $this->SendDebug('mDNS ' . $type . ' Service RAW', json_encode($service, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
             $name = (string)($service['Name'] ?? '');
             if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) {
                 continue;
             }
-
             // Der mDNS-Service-Name ist zugleich der funktionierende HTTP-Hostname.
             // Eine zusätzliche ZC_QueryService()-Auflösung ist nicht nötig und kostet
             // bei den zeptrionAIR-Modulen etwa eine Sekunde pro Gerät.
             $host = rtrim($name, '.');
             $this->SendDebug('mDNS ' . $name, 'Verwende Host direkt: ' . $host, 0);
-
             // ZC_QueryServiceType liefert bei diesen Geräten keine TXT-Daten.
             $txt = [];
             $deviceType = '';
             $channels = $this->ChannelsFromType($deviceType);
-
             $found[$host] = [
                 'host'        => $host,
                 'ip'          => '',
@@ -237,13 +210,11 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             ];
         }
     }
-
     private function EnrichDevicesParallel(array &$devices): void
     {
         if ($devices === []) {
             return;
         }
-
         $started = microtime(true);
         $requests = [];
         foreach ($devices as $host => $device) {
@@ -251,9 +222,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $requests[$host . '|chdes'] = ['host' => $host, 'path' => '/zrap/chdes'];
             $requests[$host . '|rssi'] = ['host' => $host, 'path' => '/zrap/rssi'];
         }
-
         $responses = $this->HttpXmlGetMulti($requests);
-
         // Einzelne WLAN-Module reagieren gelegentlich nicht innerhalb des ersten kurzen
         // Parallel-Laufs. Nur die fehlgeschlagenen Requests einmal gemeinsam wiederholen.
         $retry = [];
@@ -271,7 +240,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 }
             }
         }
-
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
             $des = $responses[$host . '|chdes'] ?? null;
@@ -282,14 +250,12 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $this->ApplyApiData($device, $id, $des);
         }
         unset($device);
-
         $this->SendDebug(
             'Discovery',
             sprintf('API-Daten für %d Geräte parallel geladen in %.2f s', count($devices), microtime(true) - $started),
             0
         );
     }
-
     private function ResolveIPv4(string $host): string
     {
         $ip = gethostbyname($host);
@@ -298,7 +264,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? $ip : '';
     }
-
     private function ExtractRssi(?array $data): string
     {
         if ($data === null) {
@@ -322,14 +287,12 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return '';
     }
-
     private function HttpXmlGetMulti(array $requests, int $connectTimeoutMs = 1500, int $timeoutMs = 3500): array
     {
         $multi = curl_multi_init();
         $handles = [];
-
         foreach ($requests as $key => $request) {
-            $url = 'http://' . $request['host'] . $request['path'];
+            $url = 'http\://' . $request['host'] . $request['path'];
             $curl = curl_init();
             curl_setopt_array($curl, [
                 CURLOPT_URL => $url,
@@ -342,21 +305,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             curl_multi_add_handle($multi, $curl);
             $handles[$key] = ['handle' => $curl, 'url' => $url];
         }
-
         do {
             $status = curl_multi_exec($multi, $running);
             if ($running > 0) {
                 curl_multi_select($multi, 0.25);
             }
         } while ($running > 0 && $status === CURLM_OK);
-
         $result = [];
         foreach ($handles as $key => $entry) {
             $curl = $entry['handle'];
             $body = curl_multi_getcontent($curl);
             $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
             $error = curl_error($curl);
-
             if ($error !== '' || $httpCode < 200 || $httpCode >= 400 || !is_string($body) || trim($body) === '') {
                 $this->SendDebug(
                     'HTTP Parallel Fehler',
@@ -367,15 +327,12 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             } else {
                 $result[$key] = $this->ParseXml($body);
             }
-
             curl_multi_remove_handle($multi, $curl);
             curl_close($curl);
         }
         curl_multi_close($multi);
-
         return $result;
     }
-
     private function ApplyApiData(array &$device, ?array $id, ?array $des): void
     {
         if ($id !== null) {
@@ -383,30 +340,25 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             if ($sys !== '' && $sys !== 'ZEPTRION') {
                 return;
             }
-
             $device['type'] = (string)($id['type'] ?? $device['type']);
             $device['serial'] = (string)($id['sn'] ?? '');
             $device['sw'] = (string)($id['sw'] ?? $device['sw']);
             $device['name'] = trim((string)($id['oen'] ?? $id['name'] ?? $device['name']));
             $device['channels'] = $this->ChannelsFromType($device['type'], $device['channels']);
         }
-
         if ($des === null) {
             return;
         }
-
         $parts = [];
         for ($channel = 1; $channel <= $device['channels']; $channel++) {
             $key = 'ch' . $channel;
             if (!isset($des[$key]) || !is_array($des[$key])) {
                 continue;
             }
-
             $ch = $des[$key];
             $label = trim((string)($ch['name'] ?? ''));
             $type = trim((string)($ch['type'] ?? ''));
             $cat = trim((string)($ch['cat'] ?? ''));
-
             // Kategorie -1 ist über /zrap/chdes nicht eindeutig. Für den Vergleich
             // zwischen tatsächlich leerem Kanal und Smart-/Szenentaster geben wir
             // deshalb den vollständigen Kanal-Datensatz aus, ohne etwas am Gerät zu ändern.
@@ -418,15 +370,12 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     0
                 );
             }
-
             $mapped = $this->MapChannelCategory($cat, $label);
-
             $device['channelConfig'][$channel] = [
                 'name' => $label !== '' ? $label : 'Kanal ' . $channel,
                 'type' => $mapped['type'],
                 'scenes' => $mapped['scenes']
             ];
-
             $text = 'K' . $channel;
             if ($label !== '') {
                 $text .= ': ' . $label;
@@ -437,10 +386,8 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $text .= ' – ' . $mapped['label'];
             $parts[] = $text;
         }
-
         $device['channelInfo'] = implode(' | ', $parts);
     }
-
     private function EnrichFromApi(array &$device): void
     {
         $this->SendDebug('API', 'Prüfe ' . $device['host'] . ' /zrap/id', 0);
@@ -451,7 +398,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             if ($sys !== '' && $sys !== 'ZEPTRION') {
                 return;
             }
-
             $device['type'] = (string)($id['type'] ?? $device['type']);
             $device['serial'] = (string)($id['sn'] ?? '');
             $device['sw'] = (string)($id['sw'] ?? $device['sw']);
@@ -460,16 +406,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         } else {
             $this->SendDebug('API', $device['host'] . ' liefert keine verwertbare Antwort auf /zrap/id', 0);
         }
-
         $this->SendDebug('API', 'Prüfe ' . $device['host'] . ' /zrap/chdes', 0);
         $des = $this->HttpXmlGet($device['host'], '/zrap/chdes');
         if ($des === null) {
             $this->SendDebug('API', $device['host'] . ' liefert keine verwertbare Antwort auf /zrap/chdes', 0);
             return;
         }
-
         $this->SendDebug('API /zrap/chdes RAW', json_encode($des, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-
         $parts = [];
         for ($channel = 1; $channel <= $device['channels']; $channel++) {
             $key = 'ch' . $channel;
@@ -486,7 +429,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'type' => $mapped['type'],
                 'scenes' => $mapped['scenes']
             ];
-
             $text = 'K' . $channel;
             if ($label !== '') {
                 $text .= ': ' . $label;
@@ -499,20 +441,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         $device['channelInfo'] = implode(' | ', $parts);
     }
-
     private function MapChannelCategory(string $cat, string $name): array
     {
         // Zuordnung aus den realen /zrap/chdes Antworten dieser Installation.
         // Unbekannte Kategorien bleiben bewusst "Nicht erkannt".
         return match ($cat) {
-            '1' => ['type' => 'light',   'label' => 'Licht', 'scenes' => false],
-            '3' => ['type' => 'dimmer',  'label' => 'Dimmer',    'scenes' => false],
+            '1' => ['type' => 'light',   'label' => 'Licht',   'scenes' => false],
+            '3' => ['type' => 'dimmer',  'label' => 'Dimmer',  'scenes' => false],
             '5' => ['type' => 'shutter', 'label' => 'Rollo',    'scenes' => false],
-            '6' => ['type' => 'awning', 'label' => 'Markise', 'scenes' => false],
+            '6' => ['type' => 'awning',  'label' => 'Markise', 'scenes' => false],
             default => $this->MapChannelByName($name)
         };
     }
-
     private function MapChannelByName(string $name): array
     {
         // /zrap/chdes kennzeichnet Smart-Taster und leere Kanäle nicht eindeutig.
@@ -520,10 +460,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         // als "Leer / Smart-Taster" angezeigt – unabhängig vom vergebenen Namen.
         return ['type' => 'unused', 'label' => 'Leer / Smart-Taster', 'scenes' => false];
     }
-
     private function HttpXmlGet(string $host, string $path): ?array
     {
-        $url = 'http://' . $host . $path;
+        $url = 'http\://' . $host . $path;
         $context = stream_context_create([
             'http' => [
                 'method'        => 'GET',
@@ -532,7 +471,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'header'        => "Connection: close\r\n"
             ]
         ]);
-
         $this->SendDebug('HTTP GET', $url, 0);
         $xml = @file_get_contents($url, false, $context);
         if (!is_string($xml) || trim($xml) === '') {
@@ -540,12 +478,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $this->SendDebug('HTTP GET Fehler', $url . ' / ' . ($error['message'] ?? 'keine Antwort'), 0);
             return null;
         }
-
         $this->SendDebug('HTTP GET RAW', $url . ' => ' . $xml, 0);
-
         return $this->ParseXml($xml);
     }
-
     private function ParseXml(string $xml): ?array
     {
         libxml_use_internal_errors(true);
@@ -554,12 +489,10 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             libxml_clear_errors();
             return null;
         }
-
         $json = json_encode($node, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $data = json_decode((string)$json, true);
         return is_array($data) ? $data : null;
     }
-
     private function ExtractIPv4(array $detail): string
     {
         foreach (['IPv4', 'Address', 'IP', 'Host'] as $key) {
@@ -575,7 +508,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 }
             }
         }
-
         foreach ($detail as $value) {
             if (is_string($value) && filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
                 return $value;
@@ -583,13 +515,11 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return '';
     }
-
     private function NormalizeTxt(mixed $raw): array
     {
         if (!is_array($raw)) {
             return [];
         }
-
         $result = [];
         foreach ($raw as $key => $value) {
             if (is_string($key) && !is_int($key)) {
@@ -603,7 +533,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return $result;
     }
-
     private function ChannelsFromType(string $type, int $fallback = 2): int
     {
         if (preg_match('/^3340-(\d)-/i', $type, $m)) {
@@ -611,7 +540,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return $fallback;
     }
-
     private function GetExistingInstanceData(): array
     {
         $result = [];
@@ -620,7 +548,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             if ($host === '') {
                 continue;
             }
-
             $channels = max(1, min(4, (int)IPS_GetProperty($instanceID, 'Channels')));
             $channelConfig = [];
             $parts = [];
@@ -628,7 +555,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 $name = trim((string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Name'));
                 $type = (string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Type');
                 $channelConfig[$channel] = ['name' => $name, 'type' => $type];
-
                 $label = match ($type) {
                     'light' => 'Licht',
                     'dimmer' => 'Dimmer',
@@ -637,7 +563,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 };
                 $parts[] = 'K' . $channel . ': ' . ($name !== '' ? $name : 'Kanal ' . $channel) . ' – ' . $label;
             }
-
             $result[$host] = [
                 'instanceID' => $instanceID,
                 'name' => trim(IPS_GetName($instanceID)) !== '' ? IPS_GetName($instanceID) : $host,
@@ -650,7 +575,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return $result;
     }
-
     private function BuildExistingInstanceRow(string $host, array $instance, string $state): array
     {
         return [
