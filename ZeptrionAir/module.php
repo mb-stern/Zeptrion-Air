@@ -25,6 +25,9 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
         $this->RegisterAttributeInteger('CommunicationFailures', 0);
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
+        $this->RegisterAttributeString('SmartButtonScenes', '[]');
+        $this->RegisterAttributeString('SmartButtonToken', '');
+        $this->RegisterHook('zeptrionair-smartbutton-' . $this->InstanceID);
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -86,6 +89,14 @@ class ZeptrionAir extends IPSModuleStrict
                     'caption' => 'Art: ' . $typeLabel
                 ]
             ];
+            if ($typeLabel === 'Nicht verwendet') {
+                $items[] = [
+                    'type' => 'Button',
+                    'caption' => 'Smart-Taster konfigurieren',
+                    'link' => true,
+                    'onClick' => "echo '/hook/zeptrionair-smartbutton-' . $id;"
+                ];
+            }
             $sceneItems = [];
             for ($scene = 1; $scene <= 4; $scene++) {
                 $sceneItems[] = [
@@ -208,6 +219,10 @@ class ZeptrionAir extends IPSModuleStrict
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        if ($this->ReadAttributeString('SmartButtonToken') === '') {
+            $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
+        }
+        $this->RegisterHook('zeptrionair-smartbutton-' . $this->InstanceID);
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
         // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('SceneResetTimer', 0);
@@ -491,6 +506,146 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
         }
+    }
+    protected function ProcessHookData(): void
+    {
+        $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        $action = (string)($_GET['action'] ?? '');
+        if ($action === 'run') {
+            $this->RunSmartButtonScene((string)($_GET['scene'] ?? ''), (string)($_GET['token'] ?? ''));
+            return;
+        }
+        if ($method === 'POST') {
+            header('Content-Type: application/json; charset=utf-8');
+            $input = json_decode((string)file_get_contents('php://input'), true);
+            if (!is_array($input)) {
+                echo json_encode(['ok' => false, 'message' => 'Ungültige Anfrage']);
+                return;
+            }
+            $op = (string)($input['op'] ?? '');
+            if ($op === 'save') {
+                $scenes = is_array($input['scenes'] ?? null) ? $input['scenes'] : [];
+                $clean = $this->NormalizeSmartButtonScenes($scenes);
+                $this->WriteAttributeString('SmartButtonScenes', json_encode($clean, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+                echo json_encode(['ok' => true, 'scenes' => $clean], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                return;
+            }
+            if ($op === 'program') {
+                $sceneID = (string)($input['scene'] ?? '');
+                echo json_encode($this->ProgramSmartButtonScene($sceneID), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                return;
+            }
+            if ($op === 'blink') {
+                $a = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgm', ['on' => true, 'ntm' => 60]);
+                if (!$a['success']) {
+                    echo json_encode(['ok' => false, 'message' => $a['message']]);
+                    return;
+                }
+                $b = $this->SmartButtonRequest('GET', '/zapi/smartbt/prgn');
+                echo json_encode(['ok' => $b['success'], 'message' => $b['success'] ? 'Smart-Tasten blinken. Gewünschte Taste drücken.' : $b['message']]);
+                return;
+            }
+            echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion']);
+            return;
+        }
+        header('Content-Type: text/html; charset=utf-8');
+        echo $this->BuildSmartButtonWebInterface();
+    }
+    private function NormalizeSmartButtonScenes(array $scenes): array
+    {
+        $result = [];
+        foreach ($scenes as $scene) {
+            if (!is_array($scene)) continue;
+            $id = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($scene['id'] ?? ''));
+            if ($id === '') $id = bin2hex(random_bytes(6));
+            $name = trim((string)($scene['name'] ?? ''));
+            if ($name === '') $name = 'Szene';
+            $targets = [];
+            foreach (($scene['targets'] ?? []) as $target) {
+                if (!is_array($target)) continue;
+                $instance = (int)($target['instance'] ?? 0);
+                $channel = (int)($target['channel'] ?? 0);
+                $memory = (int)($target['memory'] ?? 0);
+                if ($instance > 0 && IPS_InstanceExists($instance) && $channel >= 1 && $channel <= 4 && $memory >= 1 && $memory <= 4) {
+                    $targets[] = ['instance' => $instance, 'channel' => $channel, 'memory' => $memory];
+                }
+            }
+            $result[] = ['id' => $id, 'name' => $name, 'targets' => $targets];
+        }
+        return $result;
+    }
+    private function GetSmartButtonTargets(): array
+    {
+        $targets = [];
+        foreach (IPS_GetInstanceListByModuleID('{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}') as $instanceID) {
+            $count = max(1, min(4, (int)IPS_GetProperty($instanceID, 'Channels')));
+            for ($channel = 1; $channel <= $count; $channel++) {
+                $type = strtolower((string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Type'));
+                if ($type === 'unused') continue;
+                $name = trim((string)IPS_GetProperty($instanceID, 'Channel' . $channel . 'Name'));
+                if ($name === '') $name = IPS_GetName($instanceID);
+                $targets[] = ['value' => $instanceID . ':' . $channel, 'caption' => $name, 'instance' => $instanceID, 'channel' => $channel];
+            }
+        }
+        usort($targets, static fn(array $a, array $b): int => strnatcasecmp($a['caption'], $b['caption']));
+        return $targets;
+    }
+    private function BuildSmartButtonWebInterface(): string
+    {
+        $scenes = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
+        if (!is_array($scenes)) $scenes = [];
+        $targets = $this->GetSmartButtonTargets();
+        $data = json_encode(['scenes' => $scenes, 'targets' => $targets], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Taster</title><style>body{font-family:system-ui,sans-serif;max-width:900px;margin:28px auto;padding:0 16px;background:#f5f5f5;color:#222}h1{font-size:24px}.card{background:#fff;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 1px 4px #0002}.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}input,select,button{font:inherit;padding:8px;border:1px solid #bbb;border-radius:6px}input{flex:1;min-width:180px}select{min-width:220px}button{cursor:pointer}.danger{margin-left:auto}.status{padding:10px 0;min-height:22px}.target{padding-left:12px;border-left:3px solid #ddd}</style></head><body><h1>Smart-Taster konfigurieren</h1><p>Hier werden nur die über IP-Symcon angelegten Szenen verwaltet.</p><div id="scenes"></div><button onclick="addScene()">+ Szene hinzufügen</button> <button onclick="save()">Speichern</button><div class="status" id="status"></div><script>const D=' . $data . ';let scenes=D.scenes||[];const targets=D.targets||[];const esc=s=>String(s).replace(/[&<>"\']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","\\\'":"&#39;"}[c]||c));function opts(sel){return targets.map(t=>`<option value="${t.value}" ${t.value===sel?"selected":""}>${esc(t.caption)}</option>`).join("")}function render(){document.getElementById("scenes").innerHTML=scenes.map((s,i)=>`<div class="card"><div class="row"><input value="${esc(s.name)}" onchange="scenes[${i}].name=this.value"><button class="danger" onclick="scenes.splice(${i},1);render()">Szene löschen</button></div><div>${(s.targets||[]).map((t,j)=>`<div class="row target"><select onchange="let p=this.value.split(\':\');scenes[${i}].targets[${j}].instance=+p[0];scenes[${i}].targets[${j}].channel=+p[1]">${opts(t.instance+\':\'+t.channel)}</select><select onchange="scenes[${i}].targets[${j}].memory=+this.value">${[1,2,3,4].map(n=>`<option value="${n}" ${n==t.memory?"selected":""}>S${n}</option>`).join("")}</select><button onclick="scenes[${i}].targets.splice(${j},1);render()">Entfernen</button></div>`).join("")}</div><div class="row"><button onclick="addTarget(${i})">+ Gerät hinzufügen</button><button onclick="blink()">Smart-Tasten blinken</button><button onclick="program(\'${s.id}\')">Gedrückte Smart-Taste programmieren</button></div></div>`).join("")}function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:"Neue Szene",targets:[]});render()}function addTarget(i){if(!targets.length)return msg("Keine Ziele vorhanden");let p=targets[0].value.split(":");scenes[i].targets.push({instance:+p[0],channel:+p[1],memory:1});render()}async function api(o){let r=await fetch(location.pathname,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});return r.json()}function msg(s){document.getElementById("status").textContent=s}async function save(){let r=await api({op:"save",scenes});if(r.ok){scenes=r.scenes;render();msg("Gespeichert.")}else msg(r.message)}async function blink(){let r=await api({op:"blink"});msg(r.message)}async function program(id){await save();let r=await api({op:"program",scene:id});msg(r.message)}render();</script></body></html>';
+    }
+    private function ProgramSmartButtonScene(string $sceneID): array
+    {
+        $scenes = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
+        if (!is_array($scenes)) $scenes = [];
+        $scene = null;
+        foreach ($scenes as $entry) if ((string)($entry['id'] ?? '') === $sceneID) { $scene = $entry; break; }
+        if ($scene === null || empty($scene['targets'])) return ['ok' => false, 'message' => 'Szene nicht gefunden oder ohne Ziele.'];
+        $hostHeader = (string)($_SERVER['HTTP_HOST'] ?? '');
+        if ($hostHeader === '') return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
+        $parts = explode(':', $hostHeader, 2);
+        $loc = $parts[0];
+        $port = isset($parts[1]) ? (int)$parts[1] : 3777;
+        $token = $this->ReadAttributeString('SmartButtonToken');
+        $payload = ['req' => 'GET', 'typ' => 'application/x-www-form-urlencoded', 'loc' => $loc, 'prt' => (string)$port, 'pth' => '/hook/zeptrionair-smartbutton-' . $this->InstanceID . '?action=run&scene=' . rawurlencode($sceneID) . '&token=' . rawurlencode($token), 'bdy' => ''];
+        $result = $this->SmartButtonRequest('POST', '/zapi/smartbt/prgs', $payload);
+        return ['ok' => $result['success'], 'message' => $result['success'] ? 'Gedrückte Smart-Taste wurde mit „' . (string)$scene['name'] . '“ programmiert.' : 'Programmierung fehlgeschlagen: ' . $result['message']];
+    }
+    private function RunSmartButtonScene(string $sceneID, string $token): void
+    {
+        if ($token === '' || !hash_equals($this->ReadAttributeString('SmartButtonToken'), $token)) { http_response_code(403); echo 'Forbidden'; return; }
+        $scenes = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
+        if (!is_array($scenes)) $scenes = [];
+        foreach ($scenes as $scene) {
+            if ((string)($scene['id'] ?? '') !== $sceneID) continue;
+            foreach (($scene['targets'] ?? []) as $target) {
+                $instance = (int)($target['instance'] ?? 0); $channel = (int)($target['channel'] ?? 0); $memory = (int)($target['memory'] ?? 0);
+                if ($instance > 0 && IPS_InstanceExists($instance)) @ZEPA_RecallScene($instance, $channel, $memory);
+            }
+            echo 'OK'; return;
+        }
+        http_response_code(404); echo 'Scene not found';
+    }
+    private function SmartButtonRequest(string $method, string $path, ?array $payload = null): array
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') return ['success' => false, 'message' => 'IP-Adresse / Hostname fehlt'];
+        $url = 'http://' . $host . $path;
+        $curl = curl_init();
+        if ($curl === false) return ['success' => false, 'message' => 'cURL konnte nicht initialisiert werden'];
+        $options = [CURLOPT_URL => $url, CURLOPT_RETURNTRANSFER => true, CURLOPT_CONNECTTIMEOUT_MS => 1500, CURLOPT_TIMEOUT_MS => 4000, CURLOPT_FOLLOWLOCATION => false];
+        if (strtoupper($method) === 'POST') {
+            $options[CURLOPT_POST] = true; $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json'];
+            $options[CURLOPT_POSTFIELDS] = json_encode($payload ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        curl_setopt_array($curl, $options); $response = curl_exec($curl); $error = curl_error($curl); $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE); curl_close($curl);
+        $this->SendDebug('Smart-Taster', strtoupper($method) . ' ' . $url . ' / HTTP ' . $httpCode . ' / Antwort: ' . (string)$response, 0);
+        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) return ['success' => false, 'message' => 'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') . ($response !== false && trim((string)$response) !== '' ? ' / ' . trim((string)$response) : '')];
+        return ['success' => true, 'message' => trim((string)$response)];
     }
     public function RequestAction($Ident, $Value): void
     {
