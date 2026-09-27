@@ -155,14 +155,14 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         if (!is_array($services)) return;
         foreach ($services as $service) {
             $name = (string)($service['Name'] ?? '');
-            if ($legacyOnly && !preg_match('/^zapp-**\d**{8}$/i', $name)) continue;
+            if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) continue;
             $host = rtrim($name, '.');
             if ($host === '') continue;
             $found[$host] = [
                 'host' => $host,
                 'ip' => '',
                 'rssi' => '',
-                'name' => preg_replace('/**\\.**&#x6C;oca&#x6C;**\\.**?$/i', '', $name) ?: $name,
+                'name' => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
                 'type' => '',
                 'serial' => '',
                 'sw' => '',
@@ -341,7 +341,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
     private function ChannelsFromType(string $type, int $fallback = 2): int
     {
-        if (preg_match('/^3340-(**\d**)-/i', $type, $m)) return max(1, min(4, (int)$m[1]));
+        if (preg_match('/^3340-(\d)-/i', $type, $m)) return max(1, min(4, (int)$m[1]));
         return $fallback;
     }
 
