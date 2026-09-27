@@ -48,6 +48,72 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         return implode(', ', array_values(array_unique($names)));
     }
 
+    public function GetSmartButtonAssignments(int $deviceInstance): string
+    {
+        $result = [];
+        foreach ($this->ReadScenes() as $scene) {
+            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
+                continue;
+            }
+            $targets = [];
+            foreach (($scene['targets'] ?? []) as $target) {
+                if (!is_array($target)) {
+                    continue;
+                }
+                $type = (string)($target['type'] ?? '');
+                if ($type === 'zeptrion') {
+                    $instance = (int)($target['instance'] ?? 0);
+                    $channel = (int)($target['channel'] ?? 0);
+                    $memory = (int)($target['memory'] ?? 0);
+                    $caption = 'zeptrionAIR';
+                    if ($this->IsDeviceInstance($instance)) {
+                        $channelName = trim((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Name'));
+                        $caption = $channelName !== '' ? $channelName : IPS_GetName($instance) . ' / Kanal ' . $channel;
+                    }
+                    $targets[] = $caption . ' → S' . $memory;
+                } elseif ($type === 'symcon') {
+                    $objectID = (int)($target['object'] ?? 0);
+                    if (IPS_ObjectExists($objectID)) {
+                        $caption = $this->ObjectPath($objectID);
+                        if (IPS_VariableExists($objectID) && array_key_exists('value', $target)) {
+                            $caption .= ' → ' . $this->FormatVariableTargetValue($objectID, $target['value']);
+                        } elseif (IPS_ScriptExists($objectID)) {
+                            $caption .= ' → Script';
+                        }
+                        $targets[] = $caption;
+                    }
+                }
+            }
+            $result[] = [
+                'name' => trim((string)($scene['name'] ?? 'Smart-Taster')),
+                'targets' => $targets
+            ];
+            if (count($result) >= 2) {
+                break;
+            }
+        }
+        return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    private function FormatVariableTargetValue(int $variableID, mixed $value): string
+    {
+        $variable = IPS_GetVariable($variableID);
+        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
+        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
+            $profile = IPS_GetVariableProfile($profileName);
+            foreach (($profile['Associations'] ?? []) as $association) {
+                if ((string)$association['Value'] === (string)$value) {
+                    return (string)$association['Name'];
+                }
+            }
+            return (string)$value . (string)($profile['Suffix'] ?? '');
+        }
+        if ((int)$variable['VariableType'] === 0) {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
+        }
+        return (string)$value;
+    }
+
     protected function ProcessHookData(): void
     {
         if ((string)($_GET['action'] ?? '') === 'run') {
@@ -320,7 +386,7 @@ async function api(x){try{const r=await fetch('/hook/zeptrionair',{method:'POST'
 async function objectInfo(id){if(!id)return null;if(cache.has(+id))return cache.get(+id);const r=await api({op:'object-info',id:+id});if(r.ok&&r.object){cache.set(+id,r.object);return r.object}return null}
 function migrate(t){if(t.type==='variable')return{type:'symcon',object:+t.variable,value:t.value};if(t.type==='script')return{type:'symcon',object:+t.script};return t}
 async function pick(t,done){const m=mk('div');m.className='modal';const b=mk('div');b.className='modalbox';const head=mk('div');head.className='modalHead';head.append(mk('h3','Symcon-Objekt auswählen'));const x=mk('button','Schliessen');x.className='close';x.onclick=()=>m.remove();head.append(x);const q=mk('input');q.className='search';q.placeholder='Objekt suchen …';const tree=mk('div');tree.className='tree';b.append(head,q,tree);m.append(b);document.body.append(m);
-async function choose(item){if(!item.selectable)return;t.object=+item.id;t.objectInfo=item;t.value=item.defaultValue??'';cache.set(+item.id,item);m.remove();done()}
+async function choose(item){if(!item.selectable)return;const full=await api({op:'object-info',id:+item.id});if(!full.ok||!full.object){msg('Objektinformationen konnten nicht geladen werden.');return}t.object=+item.id;t.objectInfo=full.object;t.value=full.object.defaultValue??'';cache.set(+item.id,full.object);m.remove();done()}
 async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
 async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
