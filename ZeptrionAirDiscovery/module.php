@@ -1,55 +1,59 @@
 <?php
 declare(strict_types=1);
+
 class ZeptrionAirDiscovery extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
+    private const SPLITTER_MODULE_ID = '{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}';
     private const ZEROCONF_MODULE_ID = '{780B2D48-916C-4D59-AD35-5A429B2355A5}';
+
     public function Create(): void
     {
         parent::Create();
     }
+
+    public function GetCompatibleParents(): string
+    {
+        return json_encode([
+            'type' => 'connect',
+            'moduleIDs' => [self::SPLITTER_MODULE_ID]
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
     public function GetConfigurationForm(): string
     {
-        // Configurator = aktuell entdeckte Geräte UNION bereits vorhandene Instanzen.
-        // Discovery liest bestehende Instanzen nur für die Anzeige/Zuordnung. Es schreibt
-        // niemals Properties oder Namen einer bestehenden Device-Instanz zurück.
         $discovered = $this->DiscoverDevices();
         $existing = $this->GetExistingInstanceData();
         $rows = [];
-        // 1) Aktuell per mDNS gefundene Geräte. Nur ein erfolgreiches /zrap/id mit
-        // sys=ZEPTRION berechtigt zur Erstellung einer neuen Instanz.
+
         foreach ($discovered as $device) {
             $host = $device['host'];
             $instance = $existing[$host] ?? null;
             $reachable = (bool)($device['reachable'] ?? false);
             if ($instance !== null && !$reachable) {
-                // Gerät ist noch per mDNS sichtbar, die API antwortet aber nicht.
-                // Für eine vorhandene Instanz zeigen wir deren gespeicherte Daten an.
                 $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar');
                 continue;
             }
             $rows[$host] = [
-                'Host'         => $host,
-                'IP'           => $device['ip'],
-                'RSSI'         => $device['rssi'],
-                'Type'         => $device['type'],
+                'Host' => $host,
+                'IP' => $device['ip'],
+                'RSSI' => $device['rssi'],
+                'Type' => $device['type'],
                 'SerialNumber' => $device['serial'],
-                'Software'     => $device['sw'],
-                'Channels'     => $device['channels'],
-                'ChannelInfo'  => $reachable ? $device['channelInfo'] : 'Nicht erreichbar',
-                'instanceID'   => $instance['instanceID'] ?? 0
+                'Software' => $device['sw'],
+                'Channels' => $device['channels'],
+                'ChannelInfo' => $reachable ? $device['channelInfo'] : 'Nicht erreichbar',
+                'instanceID' => $instance['instanceID'] ?? 0
             ];
             if ($reachable && $instance === null) {
-                // Noch nicht angelegt: vollständige Startkonfiguration für die
-                // neu zu erstellende Geräteinstanz.
                 $rows[$host]['create'] = [
-                    'moduleID'      => self::DEVICE_MODULE_ID,
+                    'moduleID' => self::DEVICE_MODULE_ID,
                     'configuration' => [
-                        'Host'         => $host,
-                        'DeviceName'   => $device['name'],
-                        'DeviceType'   => $device['type'],
+                        'Host' => $host,
+                        'DeviceName' => $device['name'],
+                        'DeviceType' => $device['type'],
                         'SerialNumber' => $device['serial'],
-                        'Channels'     => $device['channels'],
+                        'Channels' => $device['channels'],
                         'Channel1Name' => $device['channelConfig'][1]['name'] ?? 'Kanal 1',
                         'Channel1Type' => $device['channelConfig'][1]['type'] ?? 'unused',
                         'Channel2Name' => $device['channelConfig'][2]['name'] ?? 'Kanal 2',
@@ -58,18 +62,14 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'Channel3Type' => $device['channelConfig'][3]['type'] ?? 'unused',
                         'Channel4Name' => $device['channelConfig'][4]['name'] ?? 'Kanal 4',
                         'Channel4Type' => $device['channelConfig'][4]['type'] ?? 'unused',
-                        // Der Configurator übergibt die Startwerte explizit. So
-                        // beginnen Rollo mit 27000 ms und Markise mit 25000 ms; andere Typen bleiben bei 4000 ms,
-                        // unabhängig davon, welche alten Defaults eine frühere
-                        // Modulversion beim Erstellen der Instanz gespeichert hat.
-                        'Channel1UpTimeMs' => (($device['channelConfig'][1]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][1]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel1DownTimeMs' => (($device['channelConfig'][1]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][1]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel2UpTimeMs' => (($device['channelConfig'][2]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][2]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel2DownTimeMs' => (($device['channelConfig'][2]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][2]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel3UpTimeMs' => (($device['channelConfig'][3]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][3]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel3DownTimeMs' => (($device['channelConfig'][3]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][3]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel4UpTimeMs' => (($device['channelConfig'][4]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][4]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
-                        'Channel4DownTimeMs' => (($device['channelConfig'][4]['type'] ?? 'unused') === 'shutter' ? 27000 : (($device['channelConfig'][4]['type'] ?? 'unused') === 'awning' ? 25000 : 4000)),
+                        'Channel1UpTimeMs' => $this->DefaultTime($device['channelConfig'][1]['type'] ?? 'unused'),
+                        'Channel1DownTimeMs' => $this->DefaultTime($device['channelConfig'][1]['type'] ?? 'unused'),
+                        'Channel2UpTimeMs' => $this->DefaultTime($device['channelConfig'][2]['type'] ?? 'unused'),
+                        'Channel2DownTimeMs' => $this->DefaultTime($device['channelConfig'][2]['type'] ?? 'unused'),
+                        'Channel3UpTimeMs' => $this->DefaultTime($device['channelConfig'][3]['type'] ?? 'unused'),
+                        'Channel3DownTimeMs' => $this->DefaultTime($device['channelConfig'][3]['type'] ?? 'unused'),
+                        'Channel4UpTimeMs' => $this->DefaultTime($device['channelConfig'][4]['type'] ?? 'unused'),
+                        'Channel4DownTimeMs' => $this->DefaultTime($device['channelConfig'][4]['type'] ?? 'unused'),
                         'ShowOnline' => true,
                         'ShowRSSI' => true,
                         'ShowScenes' => false,
@@ -82,21 +82,13 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     'name' => $host
                 ];
             } elseif ($reachable && $instance !== null) {
-                // Vorhandene + aktuell erreichbare Instanz: "create" dient dem
-                // Configurator nur zum Abgleich. Nur Host prüfen, damit bewusst
-                // vom Benutzer geänderte Kanal-/Zeitwerte NICHT als abweichend
-                // markiert und vor allem niemals überschrieben werden.
                 $rows[$host]['create'] = [
-                    'moduleID'      => self::DEVICE_MODULE_ID,
-                    'configuration' => [
-                        'Host' => $host
-                    ]
+                    'moduleID' => self::DEVICE_MODULE_ID,
+                    'configuration' => ['Host' => $host]
                 ];
             }
         }
-        // 2) Bereits vorhandene Instanzen, die aktuell überhaupt nicht entdeckt wurden,
-        // bleiben im Configurator sichtbar. Wird die Instanz gelöscht und das Gerät ist
-        // weiterhin nicht erreichbar, verschwindet die Zeile automatisch.
+
         foreach ($existing as $host => $instance) {
             if (!isset($rows[$host])) {
                 $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar / nicht entdeckt');
@@ -105,33 +97,34 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         $values = array_values($rows);
         usort($values, static fn(array $a, array $b): int => strnatcasecmp($a['Host'], $b['Host']));
         return json_encode([
-            'actions' => [
-                [
-                    'type'    => 'Configurator',
-                    'name'    => 'Devices',
-                    'caption' => 'Gefundene zeptrionAIR WLAN-Module',
-                    'rowCount' => 15,
-                    'add'     => false,
-                    'delete'  => false,
-                    'sort'    => [
-                        'column'    => 'Host',
-                        'direction' => 'ascending'
-                    ],
-                    'columns' => [
-                        ['caption' => 'Host',       'name' => 'Host',        'width' => '145px'],
-                        ['caption' => 'IP-Adresse', 'name' => 'IP',          'width' => '125px'],
-                        ['caption' => 'RSSI',       'name' => 'RSSI',        'width' => '80px'],
-                        ['caption' => 'Gerätetyp',  'name' => 'Type',        'width' => '140px'],
-                        ['caption' => 'Seriennr.',  'name' => 'SerialNumber','width' => '130px'],
-                        ['caption' => 'SW',         'name' => 'Software',    'width' => '90px'],
-                        ['caption' => 'Kanäle',     'name' => 'Channels',    'width' => '70px'],
-                        ['caption' => 'Verbraucher / Kanäle', 'name' => 'ChannelInfo', 'width' => 'auto']
-                    ],
-                    'values' => $values
-                ]
-            ]
+            'actions' => [[
+                'type' => 'Configurator',
+                'name' => 'Devices',
+                'caption' => 'Gefundene zeptrionAIR WLAN-Module',
+                'rowCount' => 15,
+                'add' => false,
+                'delete' => false,
+                'sort' => ['column' => 'Host', 'direction' => 'ascending'],
+                'columns' => [
+                    ['caption' => 'Host', 'name' => 'Host', 'width' => '145px'],
+                    ['caption' => 'IP-Adresse', 'name' => 'IP', 'width' => '125px'],
+                    ['caption' => 'RSSI', 'name' => 'RSSI', 'width' => '80px'],
+                    ['caption' => 'Gerätetyp', 'name' => 'Type', 'width' => '140px'],
+                    ['caption' => 'Seriennr.', 'name' => 'SerialNumber', 'width' => '130px'],
+                    ['caption' => 'SW', 'name' => 'Software', 'width' => '90px'],
+                    ['caption' => 'Kanäle', 'name' => 'Channels', 'width' => '70px'],
+                    ['caption' => 'Verbraucher / Kanäle', 'name' => 'ChannelInfo', 'width' => 'auto']
+                ],
+                'values' => $values
+            ]]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
+
+    private function DefaultTime(string $type): int
+    {
+        return $type === 'shutter' ? 27000 : ($type === 'awning' ? 25000 : 4000);
+    }
+
     private function DiscoverDevices(): array
     {
         $found = [];
@@ -141,32 +134,19 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             return [];
         }
         $zcID = $zcIDs[0];
-        $this->SendDebug('Discovery', 'DNS-SD Control ID: ' . $zcID, 0);
-        // API Kap. 4: aktuelle Firmware annonciert \_zapp.\_tcp.
-        // Nur wenn dort nichts gefunden wird, suchen wir als Fallback über \_http.\_tcp.
-        // Die zeptrionAIR WLAN-Module antworten auf mDNS nicht immer alle im
-        // selben Query-Lauf. Mehrere kurze Läufe zusammenführen; vorhandene Hosts
-        // werden durch den Hostnamen als Array-Key automatisch dedupliziert.
         $previousCount = -1;
         for ($attempt = 1; $attempt <= 3; $attempt++) {
             $this->CollectServices($zcID, '_zapp._tcp', false, $found);
             $count = count($found);
-            $this->SendDebug('Discovery', '\_zapp.\_tcp Lauf ' . $attempt . ': insgesamt ' . $count . ' Geräte', 0);
-            if ($attempt > 1 && $count === $previousCount) {
-                break;
-            }
+            if ($attempt > 1 && $count === $previousCount) break;
             $previousCount = $count;
-            if ($attempt < 3) {
-                usleep(250000);
-            }
+            if ($attempt < 3) usleep(250000);
         }
-        // Legacy-Ankündigungen immer ergänzend abfragen. Bisher wurde \_http.\_tcp
-        // übersprungen, sobald auch nur ein einziges \_zapp.\_tcp Gerät gefunden war.
-        // Dadurch konnten einzelne Geräte zeitweise aus der Liste fehlen.
         $this->CollectServices($zcID, '_http._tcp', true, $found);
         $this->EnrichDevicesParallel($found);
         return array_values($found);
     }
+
     private function CollectServices(int $zcID, string $type, bool $legacyOnly, array &$found): void
     {
         try {
@@ -175,47 +155,30 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $this->SendDebug('mDNS ' . $type, $e->getMessage(), 0);
             return;
         }
-        $this->SendDebug('mDNS ' . $type . ' RAW', json_encode($services, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-        if (!is_array($services)) {
-            $this->SendDebug('mDNS ' . $type, 'Antwort ist kein Array', 0);
-            return;
-        }
-        $this->SendDebug('mDNS ' . $type, 'Gefundene Services: ' . count($services), 0);
+        if (!is_array($services)) return;
         foreach ($services as $service) {
-            $this->SendDebug('mDNS ' . $type . ' Service RAW', json_encode($service, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
             $name = (string)($service['Name'] ?? '');
-            if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) {
-                continue;
-            }
-            // Der mDNS-Service-Name ist zugleich der funktionierende HTTP-Hostname.
-            // Eine zusätzliche ZC_QueryService()-Auflösung ist nicht nötig und kostet
-            // bei den zeptrionAIR-Modulen etwa eine Sekunde pro Gerät.
+            if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) continue;
             $host = rtrim($name, '.');
-            $this->SendDebug('mDNS ' . $name, 'Verwende Host direkt: ' . $host, 0);
-            // ZC_QueryServiceType liefert bei diesen Geräten keine TXT-Daten.
-            $txt = [];
-            $deviceType = '';
-            $channels = $this->ChannelsFromType($deviceType);
+            if ($host === '') continue;
             $found[$host] = [
-                'host'        => $host,
-                'ip'          => '',
-                'rssi'        => '',
-                'name'        => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
-                'type'        => $deviceType,
-                'serial'      => '',
-                'sw'          => (string)($txt['sw'] ?? ''),
-                'channels'    => $channels,
+                'host' => $host,
+                'ip' => '',
+                'rssi' => '',
+                'name' => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
+                'type' => '',
+                'serial' => '',
+                'sw' => '',
+                'channels' => 2,
                 'channelInfo' => '',
                 'channelConfig' => []
             ];
         }
     }
+
     private function EnrichDevicesParallel(array &$devices): void
     {
-        if ($devices === []) {
-            return;
-        }
-        $started = microtime(true);
+        if ($devices === []) return;
         $requests = [];
         foreach ($devices as $host => $device) {
             $requests[$host . '|id'] = ['host' => $host, 'path' => '/zrap/id'];
@@ -223,70 +186,45 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $requests[$host . '|rssi'] = ['host' => $host, 'path' => '/zrap/rssi'];
         }
         $responses = $this->HttpXmlGetMulti($requests);
-        // Einzelne WLAN-Module reagieren gelegentlich nicht innerhalb des ersten kurzen
-        // Parallel-Laufs. Nur die fehlgeschlagenen Requests einmal gemeinsam wiederholen.
         $retry = [];
-        foreach ($requests as $key => $request) {
-            if (($responses[$key] ?? null) === null) {
-                $retry[$key] = $request;
-            }
-        }
+        foreach ($requests as $key => $request) if (($responses[$key] ?? null) === null) $retry[$key] = $request;
         if ($retry !== []) {
-            $this->SendDebug('Discovery', 'Wiederhole ' . count($retry) . ' fehlgeschlagene API-Abfragen einmalig', 0);
-            $retryResponses = $this->HttpXmlGetMulti($retry, 2500, 5000);
-            foreach ($retryResponses as $key => $response) {
-                if ($response !== null) {
-                    $responses[$key] = $response;
-                }
+            foreach ($this->HttpXmlGetMulti($retry, 2500, 5000) as $key => $response) {
+                if ($response !== null) $responses[$key] = $response;
             }
         }
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
-            $des = $responses[$host . '|chdes'] ?? null;
-            $rssi = $responses[$host . '|rssi'] ?? null;
             $device['ip'] = $this->ResolveIPv4($host);
-            $device['rssi'] = $this->ExtractRssi($rssi);
+            $device['rssi'] = $this->ExtractRssi($responses[$host . '|rssi'] ?? null);
             $device['reachable'] = $id !== null && strtoupper((string)($id['sys'] ?? '')) === 'ZEPTRION';
-            $this->ApplyApiData($device, $id, $des);
+            $this->ApplyApiData($device, $id, $responses[$host . '|chdes'] ?? null);
         }
         unset($device);
-        $this->SendDebug(
-            'Discovery',
-            sprintf('API-Daten für %d Geräte parallel geladen in %.2f s', count($devices), microtime(true) - $started),
-            0
-        );
     }
+
     private function ResolveIPv4(string $host): string
     {
         $ip = gethostbyname($host);
-        if ($ip === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
-            return '';
-        }
         return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? $ip : '';
     }
+
     private function ExtractRssi(?array $data): string
     {
-        if ($data === null) {
-            return '';
-        }
+        if ($data === null) return '';
         foreach (['rssi', 'val', 'value'] as $key) {
-            if (isset($data[$key]) && is_numeric($data[$key])) {
-                return (string)((int)$data[$key]) . ' dBm';
-            }
+            if (isset($data[$key]) && is_numeric($data[$key])) return (string)((int)$data[$key]) . ' dBm';
         }
         foreach ($data as $value) {
-            if (is_numeric($value)) {
-                return (string)((int)$value) . ' dBm';
-            }
+            if (is_numeric($value)) return (string)((int)$value) . ' dBm';
             if (is_array($value)) {
                 $nested = $this->ExtractRssi($value);
-                if ($nested !== '') {
-                    return $nested;
-                }
+                if ($nested !== '') return $nested;
             }
         }
         return '';
     }
+
     private function HttpXmlGetMulti(array $requests, int $connectTimeoutMs = 1500, int $timeoutMs = 3500): array
     {
         $multi = curl_multi_init();
@@ -307,9 +245,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         do {
             $status = curl_multi_exec($multi, $running);
-            if ($running > 0) {
-                curl_multi_select($multi, 0.25);
-            }
+            if ($running > 0) curl_multi_select($multi, 0.25);
         } while ($running > 0 && $status === CURLM_OK);
         $result = [];
         foreach ($handles as $key => $entry) {
@@ -317,170 +253,55 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $body = curl_multi_getcontent($curl);
             $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
             $error = curl_error($curl);
-            if ($error !== '' || $httpCode < 200 || $httpCode >= 400 || !is_string($body) || trim($body) === '') {
-                $this->SendDebug(
-                    'HTTP Parallel Fehler',
-                    $entry['url'] . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''),
-                    0
-                );
-                $result[$key] = null;
-            } else {
-                $result[$key] = $this->ParseXml($body);
-            }
+            $result[$key] = ($error === '' && $httpCode >= 200 && $httpCode < 400 && is_string($body) && trim($body) !== '') ? $this->ParseXml($body) : null;
             curl_multi_remove_handle($multi, $curl);
             curl_close($curl);
         }
         curl_multi_close($multi);
         return $result;
     }
+
     private function ApplyApiData(array &$device, ?array $id, ?array $des): void
     {
         if ($id !== null) {
             $sys = strtoupper((string)($id['sys'] ?? ''));
-            if ($sys !== '' && $sys !== 'ZEPTRION') {
-                return;
-            }
+            if ($sys !== '' && $sys !== 'ZEPTRION') return;
             $device['type'] = (string)($id['type'] ?? $device['type']);
             $device['serial'] = (string)($id['sn'] ?? '');
             $device['sw'] = (string)($id['sw'] ?? $device['sw']);
             $device['name'] = trim((string)($id['oen'] ?? $id['name'] ?? $device['name']));
             $device['channels'] = $this->ChannelsFromType($device['type'], $device['channels']);
         }
-        if ($des === null) {
-            return;
-        }
+        if ($des === null) return;
         $parts = [];
         for ($channel = 1; $channel <= $device['channels']; $channel++) {
             $key = 'ch' . $channel;
-            if (!isset($des[$key]) || !is_array($des[$key])) {
-                continue;
-            }
+            if (!isset($des[$key]) || !is_array($des[$key])) continue;
             $ch = $des[$key];
             $label = trim((string)($ch['name'] ?? ''));
             $type = trim((string)($ch['type'] ?? ''));
             $cat = trim((string)($ch['cat'] ?? ''));
-            // Kategorie -1 ist über /zrap/chdes nicht eindeutig. Für den Vergleich
-            // zwischen tatsächlich leerem Kanal und Smart-/Szenentaster geben wir
-            // deshalb den vollständigen Kanal-Datensatz aus, ohne etwas am Gerät zu ändern.
-            if ($cat === '-1') {
-                $this->SendDebug(
-                    'Kanal -1 RAW',
-                    $device['host'] . ' / K' . $channel . ' => ' .
-                    json_encode($ch, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                    0
-                );
-            }
+            if ($cat === '-1') $this->SendDebug('Kanal -1 RAW', $device['host'] . ' / K' . $channel . ' => ' . json_encode($ch, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
             $mapped = $this->MapChannelCategory($cat, $label);
-            $device['channelConfig'][$channel] = [
-                'name' => $label !== '' ? $label : 'Kanal ' . $channel,
-                'type' => $mapped['type'],
-                'scenes' => $mapped['scenes']
-            ];
-            $text = 'K' . $channel;
-            if ($label !== '') {
-                $text .= ': ' . $label;
-            }
-            if ($type !== '' || $cat !== '') {
-                $text .= ' [' . trim($type . '/' . $cat, '/') . ']';
-            }
-            $text .= ' – ' . $mapped['label'];
-            $parts[] = $text;
+            $device['channelConfig'][$channel] = ['name' => $label !== '' ? $label : 'Kanal ' . $channel, 'type' => $mapped['type'], 'scenes' => false];
+            $text = 'K' . $channel . ($label !== '' ? ': ' . $label : '');
+            if ($type !== '' || $cat !== '') $text .= ' [' . trim($type . '/' . $cat, '/') . ']';
+            $parts[] = $text . ' – ' . $mapped['label'];
         }
         $device['channelInfo'] = implode(' | ', $parts);
     }
-    private function EnrichFromApi(array &$device): void
-    {
-        $this->SendDebug('API', 'Prüfe ' . $device['host'] . ' /zrap/id', 0);
-        $id = $this->HttpXmlGet($device['host'], '/zrap/id');
-        if ($id !== null) {
-            $this->SendDebug('API /zrap/id RAW', json_encode($id, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-            $sys = strtoupper((string)($id['sys'] ?? ''));
-            if ($sys !== '' && $sys !== 'ZEPTRION') {
-                return;
-            }
-            $device['type'] = (string)($id['type'] ?? $device['type']);
-            $device['serial'] = (string)($id['sn'] ?? '');
-            $device['sw'] = (string)($id['sw'] ?? $device['sw']);
-            $device['name'] = trim((string)($id['oen'] ?? $id['name'] ?? $device['name']));
-            $device['channels'] = $this->ChannelsFromType($device['type'], $device['channels']);
-        } else {
-            $this->SendDebug('API', $device['host'] . ' liefert keine verwertbare Antwort auf /zrap/id', 0);
-        }
-        $this->SendDebug('API', 'Prüfe ' . $device['host'] . ' /zrap/chdes', 0);
-        $des = $this->HttpXmlGet($device['host'], '/zrap/chdes');
-        if ($des === null) {
-            $this->SendDebug('API', $device['host'] . ' liefert keine verwertbare Antwort auf /zrap/chdes', 0);
-            return;
-        }
-        $this->SendDebug('API /zrap/chdes RAW', json_encode($des, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-        $parts = [];
-        for ($channel = 1; $channel <= $device['channels']; $channel++) {
-            $key = 'ch' . $channel;
-            if (!isset($des[$key]) || !is_array($des[$key])) {
-                continue;
-            }
-            $ch = $des[$key];
-            $label = trim((string)($ch['name'] ?? ''));
-            $type = trim((string)($ch['type'] ?? ''));
-            $cat = trim((string)($ch['cat'] ?? ''));
-            $mapped = $this->MapChannelCategory($cat, $label);
-            $device['channelConfig'][$channel] = [
-                'name' => $label !== '' ? $label : 'Kanal ' . $channel,
-                'type' => $mapped['type'],
-                'scenes' => $mapped['scenes']
-            ];
-            $text = 'K' . $channel;
-            if ($label !== '') {
-                $text .= ': ' . $label;
-            }
-            if ($type !== '' || $cat !== '') {
-                $text .= ' [' . trim($type . '/' . $cat, '/') . ']';
-            }
-            $text .= ' – ' . $mapped['label'];
-            $parts[] = $text;
-        }
-        $device['channelInfo'] = implode(' | ', $parts);
-    }
+
     private function MapChannelCategory(string $cat, string $name): array
     {
-        // Zuordnung aus den realen /zrap/chdes Antworten dieser Installation.
-        // Unbekannte Kategorien bleiben bewusst "Nicht erkannt".
         return match ($cat) {
-            '1' => ['type' => 'light',   'label' => 'Licht', 'scenes' => false],
-            '3' => ['type' => 'dimmer',  'label' => 'Dimmer',    'scenes' => false],
-            '5' => ['type' => 'shutter', 'label' => 'Rollo',    'scenes' => false],
-            '6' => ['type' => 'awning', 'label' => 'Markise', 'scenes' => false],
-            default => $this->MapChannelByName($name)
+            '1' => ['type' => 'light', 'label' => 'Licht'],
+            '3' => ['type' => 'dimmer', 'label' => 'Dimmer'],
+            '5' => ['type' => 'shutter', 'label' => 'Rollo'],
+            '6' => ['type' => 'awning', 'label' => 'Markise'],
+            default => ['type' => 'unused', 'label' => 'Leer / Smart-Taster']
         };
     }
-    private function MapChannelByName(string $name): array
-    {
-        // /zrap/chdes kennzeichnet Smart-Taster und leere Kanäle nicht eindeutig.
-        // Deshalb werden alle Kanäle ohne erkannte Verbraucher-Kategorie neutral
-        // als "Leer / Smart-Taster" angezeigt – unabhängig vom vergebenen Namen.
-        return ['type' => 'unused', 'label' => 'Leer / Smart-Taster', 'scenes' => false];
-    }
-    private function HttpXmlGet(string $host, string $path): ?array
-    {
-        $url = 'http://' . $host . $path;
-        $context = stream_context_create([
-            'http' => [
-                'method'        => 'GET',
-                'timeout'       => 2.0,
-                'ignore_errors' => true,
-                'header'        => "Connection: close\r\n"
-            ]
-        ]);
-        $this->SendDebug('HTTP GET', $url, 0);
-        $xml = @file_get_contents($url, false, $context);
-        if (!is_string($xml) || trim($xml) === '') {
-            $error = error_get_last();
-            $this->SendDebug('HTTP GET Fehler', $url . ' / ' . ($error['message'] ?? 'keine Antwort'), 0);
-            return null;
-        }
-        $this->SendDebug('HTTP GET RAW', $url . ' => ' . $xml, 0);
-        return $this->ParseXml($xml);
-    }
+
     private function ParseXml(string $xml): ?array
     {
         libxml_use_internal_errors(true);
@@ -489,65 +310,22 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             libxml_clear_errors();
             return null;
         }
-        $json = json_encode($node, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $data = json_decode((string)$json, true);
+        $data = json_decode((string)json_encode($node, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), true);
         return is_array($data) ? $data : null;
     }
-    private function ExtractIPv4(array $detail): string
-    {
-        foreach (['IPv4', 'Address', 'IP', 'Host'] as $key) {
-            $value = $detail[$key] ?? null;
-            if (is_string($value) && filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                return $value;
-            }
-            if (is_array($value)) {
-                foreach ($value as $entry) {
-                    if (is_string($entry) && filter_var($entry, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                        return $entry;
-                    }
-                }
-            }
-        }
-        foreach ($detail as $value) {
-            if (is_string($value) && filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                return $value;
-            }
-        }
-        return '';
-    }
-    private function NormalizeTxt(mixed $raw): array
-    {
-        if (!is_array($raw)) {
-            return [];
-        }
-        $result = [];
-        foreach ($raw as $key => $value) {
-            if (is_string($key) && !is_int($key)) {
-                $result[strtolower($key)] = is_scalar($value) ? (string)$value : '';
-                continue;
-            }
-            if (is_string($value) && str_contains($value, '=')) {
-                [$k, $v] = explode('=', $value, 2);
-                $result[strtolower(trim($k))] = trim($v);
-            }
-        }
-        return $result;
-    }
+
     private function ChannelsFromType(string $type, int $fallback = 2): int
     {
-        if (preg_match('/^3340-(\d)-/i', $type, $m)) {
-            return max(1, min(4, (int)$m[1]));
-        }
+        if (preg_match('/^3340-(\d)-/i', $type, $m)) return max(1, min(4, (int)$m[1]));
         return $fallback;
     }
+
     private function GetExistingInstanceData(): array
     {
         $result = [];
         foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $instanceID) {
             $host = trim((string)IPS_GetProperty($instanceID, 'Host'));
-            if ($host === '') {
-                continue;
-            }
+            if ($host === '') continue;
             $channels = max(1, min(4, (int)IPS_GetProperty($instanceID, 'Channels')));
             $channelConfig = [];
             $parts = [];
@@ -559,6 +337,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     'light' => 'Licht',
                     'dimmer' => 'Dimmer',
                     'shutter' => 'Rollo',
+                    'awning' => 'Markise',
                     default => 'Leer / Smart-Taster'
                 };
                 $parts[] = 'K' . $channel . ': ' . ($name !== '' ? $name : 'Kanal ' . $channel) . ' – ' . $label;
@@ -575,6 +354,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         return $result;
     }
+
     private function BuildExistingInstanceRow(string $host, array $instance, string $state): array
     {
         return [
