@@ -13,5 +13,6 @@
   "implemented": [
     "{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}"
   ],
-  "prefix": "ZEPAS"
+  "prefix": "ZEPAS",
+  "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAirSplitter"
 }
