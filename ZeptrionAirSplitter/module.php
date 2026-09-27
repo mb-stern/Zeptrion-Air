@@ -48,70 +48,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         return implode(', ', array_values(array_unique($names)));
     }
 
-    public function GetSmartButtonAssignments(int $deviceInstance): string
-    {
-        $result = [];
-        foreach ($this->ReadScenes() as $scene) {
-            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
-                continue;
-            }
-            $targets = [];
-            foreach (($scene['targets'] ?? []) as $target) {
-                if (!is_array($target)) {
-                    continue;
-                }
-                $type = (string)($target['type'] ?? '');
-                if ($type === 'zeptrion') {
-                    $instance = (int)($target['instance'] ?? 0);
-                    $channel = (int)($target['channel'] ?? 0);
-                    $memory = (int)($target['memory'] ?? 0);
-                    if ($this->IsDeviceInstance($instance)) {
-                        $channelName = trim((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Name'));
-                        $deviceName = trim(IPS_GetName($instance));
-                        $caption = $channelName !== '' ? $channelName : ($deviceName . ' / Kanal ' . $channel);
-                    } else {
-                        $caption = 'zeptrionAIR';
-                    }
-                    $targets[] = $caption . ' → S' . $memory;
-                } elseif ($type === 'symcon') {
-                    $objectID = (int)($target['object'] ?? 0);
-                    if (IPS_VariableExists($objectID)) {
-                        $targets[] = $this->ObjectPath($objectID) . ' → ' . $this->FormatSmartButtonValue($objectID, $target['value'] ?? null);
-                    } elseif (IPS_ScriptExists($objectID)) {
-                        $targets[] = $this->ObjectPath($objectID) . ' → Script ausführen';
-                    }
-                }
-            }
-            $result[] = [
-                'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
-                'targets' => $targets
-            ];
-            if (count($result) >= 2) {
-                break;
-            }
-        }
-        return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-
-    private function FormatSmartButtonValue(int $variableID, mixed $value): string
-    {
-        $variable = IPS_GetVariable($variableID);
-        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
-        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
-            $profile = IPS_GetVariableProfile($profileName);
-            foreach (($profile['Associations'] ?? []) as $association) {
-                if ((string)($association['Value'] ?? '') === (string)$value) {
-                    return (string)($association['Name'] ?? $value);
-                }
-            }
-            return (string)$value . (string)($profile['Suffix'] ?? '');
-        }
-        if ((int)$variable['VariableType'] === 0) {
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
-        }
-        return (string)$value;
-    }
-
     protected function ProcessHookData(): void
     {
         if ((string)($_GET['action'] ?? '') === 'run') {
@@ -330,7 +266,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             }
             foreach (($scene['targets'] ?? []) as $target) {
                 try {
-                    $type = (string)($target['type'] ?? 'zeptrion');
+                    $type = (string)($target['type'] ?? 'symcon');
                     if ($type === 'zeptrion') {
                         $instance = (int)($target['instance'] ?? 0);
                         if ($this->IsDeviceInstance($instance)) {
@@ -388,7 +324,7 @@ async function choose(item){if(!item.selectable)return;const full=await api({op:
 async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
 async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Aus Splitter entfernen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';const typ=mk('select');opts(typ,[{value:'zeptrion',caption:'zeptrionAIR'},{value:'symcon',caption:'Symcon-Objekt'}],t.type||'zeptrion');typ.onchange=()=>{t.type=typ.value;if(t.type==='symcon'){delete t.instance;delete t.channel;delete t.memory}else{delete t.object;delete t.objectInfo}render()};r.append(typ);if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const p=mk('button',o?o.path:'Objekt auswählen …');p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const add=mk('button','+ Ziel hinzufügen');add.onclick=()=>{const z=Z[0];s.targets.push(z?{type:'zeptrion',instance:z.instance,channel:z.channel,memory:1}:{type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(add,p);c.append(a);root.append(c)}}
+async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate).filter(t=>t.type==='symcon');const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Aus Splitter entfernen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const p=mk('button',o?o.path:'Objekt auswählen …');p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const add=mk('button','+ Objekt hinzufügen');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(add,p);c.append(a);root.append(c)}}
 function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
 async function program(s){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die gewünschte blinkende Smart-Taste am Schalter drücken.'))return;msg('Smart-Tasten werden aktiviert. Bitte gewünschte blinkende Smart-Taste drücken …');busy(true);const clean=(s.targets||[]).map(t=>{const x={...t};delete x.objectInfo;return x});const r=await api({op:'program',scene:s.id,name:s.name,targets:clean});busy(false);if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
 async function forget(id){const r=await api({op:'forget',scene:id});if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
