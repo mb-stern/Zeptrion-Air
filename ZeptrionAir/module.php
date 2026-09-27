@@ -177,7 +177,7 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $elements[] = [
                 'type' => 'ExpansionPanel',
-                'caption' => 'Kanal ' . $channel,
+                'caption' => ($type === 'unused' ? 'Smart-Taster' : 'Kanal ' . $channel),
                 'items' => $items
             ];
         }
