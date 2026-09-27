@@ -200,7 +200,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'host'        => $host,
                 'ip'          => '',
                 'rssi'        => '',
-                'name'        => preg_replace('/**\\.**&#x6C;oca&#x6C;**\\.**?$/i', '', $name) ?: $name,
+                'name'        => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
                 'type'        => $deviceType,
                 'serial'      => '',
                 'sw'          => (string)($txt['sw'] ?? ''),
