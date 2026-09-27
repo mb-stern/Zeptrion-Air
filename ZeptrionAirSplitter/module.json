@@ -1,11 +1,17 @@
 {
-    "id": "{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}",
-    "name": "ZeptrionAir Splitter",
-    "type": 2,
-    "vendor": "Feller",
-    "aliases": ["zeptrionAIR Splitter"],
-    "parentRequirements": [],
-    "childRequirements": [],
-    "implemented": [],
-    "prefix": "ZEPAS"
+  "id": "{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}",
+  "name": "ZeptrionAir Splitter",
+  "type": 2,
+  "vendor": "Feller",
+  "aliases": [
+    "zeptrionAIR Splitter"
+  ],
+  "parentRequirements": [],
+  "childRequirements": [
+    "{B13D5C24-91F2-4D38-A08C-2C6A9E45F710}"
+  ],
+  "implemented": [
+    "{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}"
+  ],
+  "prefix": "ZEPAS"
 }
