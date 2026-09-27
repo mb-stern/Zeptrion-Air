@@ -1,6 +1,5 @@
 <?php
 declare(strict_types=1);
-
 class ZeptrionAirDiscovery extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
@@ -25,7 +24,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         $discovered = $this->DiscoverDevices();
         $existing = $this->GetExistingInstanceData();
         $rows = [];
-
         foreach ($discovered as $device) {
             $host = $device['host'];
             $instance = $existing[$host] ?? null;
@@ -88,7 +86,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 ];
             }
         }
-
         foreach ($existing as $host => $instance) {
             if (!isset($rows[$host])) {
                 $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar / nicht entdeckt');
@@ -158,14 +155,14 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         if (!is_array($services)) return;
         foreach ($services as $service) {
             $name = (string)($service['Name'] ?? '');
-            if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) continue;
+            if ($legacyOnly && !preg_match('/^zapp-**\d**{8}$/i', $name)) continue;
             $host = rtrim($name, '.');
             if ($host === '') continue;
             $found[$host] = [
                 'host' => $host,
                 'ip' => '',
                 'rssi' => '',
-                'name' => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
+                'name' => preg_replace('/**\\.**&#x6C;oca&#x6C;**\\.**?$/i', '', $name) ?: $name,
                 'type' => '',
                 'serial' => '',
                 'sw' => '',
@@ -191,6 +188,34 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         if ($retry !== []) {
             foreach ($this->HttpXmlGetMulti($retry, 2500, 5000) as $key => $response) {
                 if ($response !== null) $responses[$key] = $response;
+            }
+        }
+        // Wenn nur /zrap/chdes fehlt, obwohl /zrap/id erfolgreich war,
+        // die Kanaldaten dieses zApps gezielt noch zweimal einzeln nachladen.
+        foreach ($devices as $host => $device) {
+            $idKey = $host . '|id';
+            $chdesKey = $host . '|chdes';
+            $id = $responses[$idKey] ?? null;
+            if ($id === null || strtoupper((string)($id['sys'] ?? '')) !== 'ZEPTRION') {
+                continue;
+            }
+            if (($responses[$chdesKey] ?? null) !== null) {
+                continue;
+            }
+            for ($attempt = 2; $attempt <= 3; $attempt++) {
+                $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/3', 0);
+                usleep(200000);
+                $single = $this->HttpXmlGetMulti([
+                    $chdesKey => ['host' => $host, 'path' => '/zrap/chdes']
+                ], 2500, 5000);
+                if (($single[$chdesKey] ?? null) !== null) {
+                    $responses[$chdesKey] = $single[$chdesKey];
+                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - erfolgreich bei Versuch ' . $attempt . '/3', 0);
+                    break;
+                }
+                if ($attempt === 3) {
+                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - nach 3 Versuchen keine Antwort', 0);
+                }
             }
         }
         foreach ($devices as $host => &$device) {
@@ -316,7 +341,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
 
     private function ChannelsFromType(string $type, int $fallback = 2): int
     {
-        if (preg_match('/^3340-(\d)-/i', $type, $m)) return max(1, min(4, (int)$m[1]));
+        if (preg_match('/^3340-(**\d**)-/i', $type, $m)) return max(1, min(4, (int)$m[1]));
         return $fallback;
     }
 
