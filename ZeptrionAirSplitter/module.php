@@ -1,4 +1,4 @@
-<?php
+\<?php
 
 declare(strict_types=1);
 
@@ -6,755 +6,755 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 
 {
 
-    private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
+    private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
 
 
 
-    public function Create(): void
+    public function Create(): void
 
-    {
+    {
 
-        parent::Create();
+        parent::Create();
 
-        $this->RegisterAttributeString('SmartButtonScenes', '[]');
+        $this->RegisterAttributeString('SmartButtonScenes', '[]');
 
-        $this->RegisterAttributeString('SmartButtonToken', '');
+        $this->RegisterAttributeString('SmartButtonToken', '');
 
-        $this->RegisterHook('zeptrionair');
+        $this->RegisterHook('zeptrionair');
 
-    }
+    }
 
 
 
-    public function ApplyChanges(): void
+    public function ApplyChanges(): void
 
-    {
+    {
 
-        parent::ApplyChanges();
+        parent::ApplyChanges();
 
-        if ($this->ReadAttributeString('SmartButtonToken') === '') {
+        if ($this->ReadAttributeString('SmartButtonToken') === '') {
 
-            $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
+            $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
 
-        }
+        }
 
-        $this->RegisterHook('zeptrionair');
+        $this->RegisterHook('zeptrionair');
 
-        $this->SetStatus(102);
+        $this->SetStatus(102);
 
-    }
+    }
 
 
 
-    public function GetConfigurationForm(): string
+    public function GetConfigurationForm(): string
 
-    {
+    {
 
-        return json_encode([
+        return json_encode([
 
-            'elements' => [
+            'elements' => [
 
-                ['type' => 'Label', 'caption' => 'Zentraler Dienst für zeptrionAIR Smart-Taster.'],
+                ['type' => 'Label', 'caption' => 'Zentraler Dienst für zeptrionAIR Smart-Taster.'],
 
-                ['type' => 'Label', 'caption' => 'WebHook: /hook/zeptrionair']
+                ['type' => 'Label', 'caption' => 'WebHook: /hook/zeptrionair']
 
-            ],
+            ],
 
-            'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
+            'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
 
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-    }
+    }
 
 
 
-    public function GetSmartButtonAssignment(int $deviceInstance): string
+    public function GetSmartButtonAssignment(int $deviceInstance): string
 
-    {
+    {
 
-        $names = [];
+        $names = [];
 
-        foreach ($this->ReadScenes() as $scene) {
+        foreach ($this->ReadScenes() as $scene) {
 
-            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
+            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            $name = trim((string)($scene['name'] ?? ''));
+            $name = trim((string)($scene['name'] ?? ''));
 
-            if ($name !== '') {
+            if ($name !== '') {
 
-                $names[] = $name;
+                $names[] = $name;
 
-            }
+            }
 
-        }
+        }
 
-        return implode(', ', array_values(array_unique($names)));
+        return implode(', ', array_values(array_unique($names)));
 
-    }
+    }
 
 
 
-    public function GetSmartButtonAssignments(int $deviceInstance): string
+    public function GetSmartButtonAssignments(int $deviceInstance): string
 
-    {
+    {
 
-        $result = [];
+        $result = [];
 
-        foreach ($this->ReadScenes() as $scene) {
+        foreach ($this->ReadScenes() as $scene) {
 
-            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
+            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            $targets = [];
+            $targets = [];
 
-            foreach (($scene['targets'] ?? []) as $target) {
+            foreach (($scene['targets'] ?? []) as $target) {
 
-                if (!is_array($target)) {
+                if (!is_array($target)) {
 
-                    continue;
+                    continue;
 
-                }
+                }
 
-                $type = (string)($target['type'] ?? '');
+                $type = (string)($target['type'] ?? '');
 
-                if ($type === 'zeptrion') {
+                if ($type === 'zeptrion') {
 
-                    $instance = (int)($target['instance'] ?? 0);
+                    $instance = (int)($target['instance'] ?? 0);
 
-                    $channel = (int)($target['channel'] ?? 0);
+                    $channel = (int)($target['channel'] ?? 0);
 
-                    $memory = (int)($target['memory'] ?? 0);
+                    $memory = (int)($target['memory'] ?? 0);
 
-                    if ($this->IsDeviceInstance($instance)) {
+                    if ($this->IsDeviceInstance($instance)) {
 
-                        $channelName = trim((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Name'));
+                        $channelName = trim((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Name'));
 
-                        $deviceName = trim(IPS_GetName($instance));
+                        $deviceName = trim(IPS_GetName($instance));
 
-                        $caption = $channelName !== '' ? $channelName : ($deviceName . ' / Kanal ' . $channel);
+                        $caption = $channelName !== '' ? $channelName : ($deviceName . ' / Kanal ' . $channel);
 
-                    } else {
+                    } else {
 
-                        $caption = 'zeptrionAIR';
+                        $caption = 'zeptrionAIR';
 
-                    }
+                    }
 
-                    $targets[] = $caption . ' → S' . $memory;
+                    $targets[] = $caption . ' → S' . $memory;
 
-                } elseif ($type === 'symcon') {
+                } elseif ($type === 'symcon') {
 
-                    $objectID = (int)($target['object'] ?? 0);
+                    $objectID = (int)($target['object'] ?? 0);
 
-                    if (IPS_VariableExists($objectID)) {
+                    if (IPS_VariableExists($objectID)) {
 
-                        $targets[] = $this->ObjectPath($objectID) . ' → ' . $this->FormatSmartButtonValue($objectID, $target['value'] ?? null);
+                        $targets[] = $this->ObjectPath($objectID) . ' → ' . $this->FormatSmartButtonValue($objectID, $target['value'] ?? null);
 
-                    } elseif (IPS_ScriptExists($objectID)) {
+                    } elseif (IPS_ScriptExists($objectID)) {
 
-                        $targets[] = $this->ObjectPath($objectID) . ' → Script ausführen';
+                        $targets[] = $this->ObjectPath($objectID) . ' → Script ausführen';
 
-                    }
+                    }
 
-                }
+                }
 
-            }
+            }
 
-            $result[] = [
+            $result[] = [
 
-                'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
+                'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
 
-                'targets' => $targets
+                'targets' => $targets
 
-            ];
+            ];
 
-            if (count($result) >= 2) {
+            if (count($result) >= 2) {
 
-                break;
+                break;
 
-            }
+            }
 
-        }
+        }
 
-        return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-    }
+    }
 
 
 
-    private function FormatSmartButtonValue(int $variableID, mixed $value): string
+    private function FormatSmartButtonValue(int $variableID, mixed $value): string
 
-    {
+    {
 
-        $variable = IPS_GetVariable($variableID);
+        $variable = IPS_GetVariable($variableID);
 
-        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
+        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
 
-        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
+        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
 
-            $profile = IPS_GetVariableProfile($profileName);
+            $profile = IPS_GetVariableProfile($profileName);
 
-            foreach (($profile['Associations'] ?? []) as $association) {
+            foreach (($profile['Associations'] ?? []) as $association) {
 
-                if ((string)($association['Value'] ?? '') === (string)$value) {
+                if ((string)($association['Value'] ?? '') === (string)$value) {
 
-                    return (string)($association['Name'] ?? $value);
+                    return (string)($association['Name'] ?? $value);
 
-                }
+                }
 
-            }
+            }
 
-            return (string)$value . (string)($profile['Suffix'] ?? '');
+            return (string)$value . (string)($profile['Suffix'] ?? '');
 
-        }
+        }
 
-        if ((int)$variable['VariableType'] === 0) {
+        if ((int)$variable['VariableType'] === 0) {
 
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
 
-        }
+        }
 
-        return (string)$value;
+        return (string)$value;
 
-    }
+    }
 
 
 
-    protected function ProcessHookData(): void
+    protected function ProcessHookData(): void
 
-    {
+    {
 
-        if ((string)($_GET['action'] ?? '') === 'run') {
+        if ((string)($\_GET['action'] ?? '') === 'run') {
 
-            $this->RunScene((string)($_GET['scene'] ?? ''), (string)($_GET['token'] ?? ''));
+            $this->RunScene((string)($\_GET['scene'] ?? ''), (string)($\_GET['token'] ?? ''));
 
-            return;
+            return;
 
-        }
+        }
 
-        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
+        if (strtoupper((string)($\_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
 
-            header('Content-Type: application/json; charset=utf-8');
+            header('Content-Type: application/json; charset=utf-8');
 
-            $in = json_decode((string)file_get_contents('php://input'), true);
+            $in = json_decode((string)file_get_contents('php\://input'), true);
 
-            if (!is_array($in)) {
+            if (!is_array($in)) {
 
-                echo json_encode(['ok' => false, 'message' => 'Ungültige Anfrage']);
+                echo json_encode(['ok' => false, 'message' => 'Ungültige Anfrage']);
 
-                return;
+                return;
 
-            }
+            }
 
-            switch ((string)($in['op'] ?? '')) {
+            switch ((string)($in['op'] ?? '')) {
 
-                case 'program':
+                case 'program':
 
-                    echo json_encode($this->ProgramScene($in), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    echo json_encode($this->ProgramScene($in), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                    return;
+                    return;
 
-                case 'forget':
+                case 'forget':
 
-                    echo json_encode($this->ForgetScene((string)($in['scene'] ?? '')), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    echo json_encode($this->ForgetScene((string)($in['scene'] ?? '')), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                    return;
+                    return;
 
-                case 'select-delete':
+                case 'select-delete':
 
-                    echo json_encode($this->SelectDelete(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    echo json_encode($this->SelectDelete(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                    return;
+                    return;
 
-                case 'tree-children':
+                case 'tree-children':
 
-                    echo json_encode(['ok' => true, 'items' => $this->GetObjectTreeChildren((int)($in['parent'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    echo json_encode(['ok' => true, 'items' => $this->GetObjectTreeChildren((int)($in['parent'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                    return;
+                    return;
 
-                case 'tree-search':
+                case 'tree-search':
 
-                    echo json_encode(['ok' => true, 'items' => $this->SearchObjectTree((string)($in['query'] ?? ''))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    echo json_encode(['ok' => true, 'items' => $this->SearchObjectTree((string)($in['query'] ?? ''))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                    return;
+                    return;
 
-                case 'object-info':
+                case 'object-info':
 
-                    echo json_encode(['ok' => true, 'object' => $this->GetSelectableObjectInfo((int)($in['id'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    echo json_encode(['ok' => true, 'object' => $this->GetSelectableObjectInfo((int)($in['id'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                    return;
+                    return;
 
-            }
+            }
 
-            echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion']);
+            echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion']);
 
-            return;
+            return;
 
-        }
+        }
 
-        header('Content-Type: text/html; charset=utf-8');
+        header('Content-Type: text/html; charset=utf-8');
 
-        echo $this->BuildInterface();
+        echo $this->BuildInterface();
 
-    }
+    }
 
 
 
-    private function ProgramScene(array $in): array
+    private function ProgramScene(array $in): array
 
-    {
+    {
 
-        $name = trim((string)($in['name'] ?? '')) ?: 'Szene';
+        $name = trim((string)($in['name'] ?? '')) ?: 'Szene';
 
-        $targets = $this->NormalizeTargets(is_array($in['targets'] ?? null) ? $in['targets'] : []);
+        $targets = $this->NormalizeTargets(is_array($in['targets'] ?? null) ? $in['targets'] : []);
 
-        if ($targets === []) {
+        if ($targets === []) {
 
-            return ['ok' => false, 'message' => 'Bitte mindestens ein Ziel auswählen.'];
+            return ['ok' => false, 'message' => 'Bitte mindestens ein Ziel auswählen.'];
 
-        }
+        }
 
-        $id = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($in['scene'] ?? '')) ?: bin2hex(random_bytes(6));
+        $id = preg_replace('/[^a-zA-Z0-9\_-]/', '', (string)($in['scene'] ?? '')) ?: bin2hex(random_bytes(6));
 
-        $sel = $this->SelectSmartButton();
+        $sel = $this->SelectSmartButton();
 
-        if (!$sel['success']) {
+        if (!$sel['success']) {
 
-            return ['ok' => false, 'message' => $sel['message']];
+            return ['ok' => false, 'message' => $sel['message']];
 
-        }
+        }
 
-        $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
+        $hh = (string)($\_SERVER['HTTP_HOST'] ?? '');
 
-        if ($hh === '') {
+        if ($hh === '') {
 
-            return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
+            return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
 
-        }
+        }
 
-        $p = explode(':', $hh, 2);
+        $p = explode(':', $hh, 2);
 
-        $token = $this->ReadAttributeString('SmartButtonToken');
+        $token = $this->ReadAttributeString('SmartButtonToken');
 
-        $payload = [
+        $payload = [
 
-            'req' => 'GET',
+            'req' => 'GET',
 
-            'typ' => 'application/x-www-form-urlencoded',
+            'typ' => 'application/x-www-form-urlencoded',
 
-            'loc' => $p[0],
+            'loc' => $p[0],
 
-            'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
+            'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
 
-            'pth' => '/hook/zeptrionair?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
+            'pth' => '/hook/zeptrionair?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
 
-            'bdy' => ''
+            'bdy' => ''
 
-        ];
+        ];
 
-        $r = $this->SmartButtonRequest((string)$sel['host'], 'POST', '/zapi/smartbt/prgs', $payload, 5000);
+        $r = $this->SmartButtonRequest((string)$sel['host'], 'POST', '/zapi/smartbt/prgs', $payload, 5000);
 
-        if (!$r['success']) {
+        if (!$r['success']) {
 
-            return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
+            return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
 
-        }
+        }
 
-        $scenes = $this->ReadScenes();
+        $scenes = $this->ReadScenes();
 
-        $entry = [
+        $entry = [
 
-            'id' => $id,
+            'id' => $id,
 
-            'name' => $name,
+            'name' => $name,
 
-            'targets' => $targets,
+            'targets' => $targets,
 
-            'smartButtonHost' => $sel['host'],
+            'smartButtonHost' => $sel['host'],
 
-            'smartButtonName' => $sel['name'],
+            'smartButtonName' => $sel['name'],
 
-            'smartButtonInstance' => $sel['instance']
+            'smartButtonInstance' => $sel['instance']
 
-        ];
+        ];
 
-        $found = false;
+        $found = false;
 
-        foreach ($scenes as &$scene) {
+        foreach ($scenes as &$scene) {
 
-            if ((string)($scene['id'] ?? '') === $id) {
+            if ((string)($scene['id'] ?? '') === $id) {
 
-                $scene = $entry;
+                $scene = $entry;
 
-                $found = true;
+                $found = true;
 
-                break;
+                break;
 
-            }
+            }
 
-        }
+        }
 
-        unset($scene);
+        unset($scene);
 
-        if (!$found) {
+        if (!$found) {
 
-            $scenes[] = $entry;
+            $scenes[] = $entry;
 
-        }
+        }
 
-        $this->WriteScenes($scenes);
+        $this->WriteScenes($scenes);
 
-        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
+        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
 
-    }
+    }
 
 
 
-    private function SelectDelete(): array
+    private function SelectDelete(): array
 
-    {
+    {
 
-        $s = $this->SelectSmartButton();
+        $s = $this->SelectSmartButton();
 
-        if (!$s['success']) {
+        if (!$s['success']) {
 
-            return ['ok' => false, 'message' => $s['message']];
+            return ['ok' => false, 'message' => $s['message']];
 
-        }
+        }
 
-        return ['ok' => true, 'message' => 'Smart-Taste auf „' . $s['name'] . '“ wurde erkannt und zum Löschen ausgewählt.'];
+        return ['ok' => true, 'message' => 'Smart-Taste auf „' . $s['name'] . '“ wurde erkannt und zum Löschen ausgewählt.'];
 
-    }
+    }
 
 
 
-    private function SelectSmartButton(): array
+    private function SelectSmartButton(): array
 
-    {
+    {
 
-        $devices = $this->GetDeviceHosts();
+        $devices = $this->GetDeviceHosts();
 
-        if ($devices === []) {
+        if ($devices === []) {
 
-            return ['success' => false, 'message' => 'Keine zeptrionAIR-Geräte mit Host gefunden.'];
+            return ['success' => false, 'message' => 'Keine zeptrionAIR-Geräte mit Host gefunden.'];
 
-        }
+        }
 
-        $active = [];
+        $active = [];
 
-        foreach ($devices as $host => $device) {
+        foreach ($devices as $host => $device) {
 
-            $r = $this->SmartButtonRequest($host, 'POST', '/zapi/smartbt/prgm', ['on' => true, 'ntm' => 60], 4000);
+            $r = $this->SmartButtonRequest($host, 'POST', '/zapi/smartbt/prgm', ['on' => true, 'ntm' => 60], 4000);
 
-            if ($r['success']) {
+            if ($r['success']) {
 
-                $active[$host] = $device;
+                $active[$host] = $device;
 
-            }
+            }
 
-        }
+        }
 
-        if ($active === []) {
+        if ($active === []) {
 
-            return ['success' => false, 'message' => 'Programmiermodus konnte auf keinem zApp gestartet werden.'];
+            return ['success' => false, 'message' => 'Programmiermodus konnte auf keinem zApp gestartet werden.'];
 
-        }
+        }
 
-        $this->SendDebug('Smart-Taster', 'Warte auf Tastendruck auf ' . count($active) . ' zApp(s): ' . implode(', ', array_keys($active)), 0);
+        $this->SendDebug('Smart-Taster', 'Warte auf Tastendruck auf ' . count($active) . ' zApp(s): ' . implode(', ', array_keys($active)), 0);
 
-        $multi = curl_multi_init();
+        $multi = curl_multi_init();
 
-        $handles = [];
+        $handles = [];
 
-        foreach ($active as $host => $device) {
+        foreach ($active as $host => $device) {
 
-            $ch = curl_init();
+            $ch = curl_init();
 
-            curl_setopt_array($ch, [
+            curl_setopt_array($ch, [
 
-                CURLOPT_URL => 'http://' . $host . '/zapi/smartbt/prgn',
+                CURLOPT_URL => 'http\://' . $host . '/zapi/smartbt/prgn',
 
-                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_RETURNTRANSFER => true,
 
-                CURLOPT_CONNECTTIMEOUT_MS => 2500,
+                CURLOPT_CONNECTTIMEOUT_MS => 2500,
 
-                CURLOPT_TIMEOUT_MS => 65000,
+                CURLOPT_TIMEOUT_MS => 65000,
 
-                CURLOPT_HTTPHEADER => ['Connection: close']
+                CURLOPT_HTTPHEADER => ['Connection: close']
 
-            ]);
+            ]);
 
-            curl_multi_add_handle($multi, $ch);
+            curl_multi_add_handle($multi, $ch);
 
-            $handles[$host] = $ch;
+            $handles[$host] = $ch;
 
-        }
+        }
 
-        $selected = '';
+        $selected = '';
 
-        $deadline = microtime(true) + 66;
+        $deadline = microtime(true) + 66;
 
-        do {
+        do {
 
-            do {
+            do {
 
-                $status = curl_multi_exec($multi, $running);
+                $status = curl_multi_exec($multi, $running);
 
-            } while ($status === CURLM_CALL_MULTI_PERFORM);
+            } while ($status === CURLM_CALL_MULTI_PERFORM);
 
-            foreach ($handles as $host => $ch) {
+            foreach ($handles as $host => $ch) {
 
-                if ((int)(curl_getinfo($ch)['http_code'] ?? 0) === 200) {
+                if ((int)(curl_getinfo($ch)['http_code'] ?? 0) === 200) {
 
-                    $body = (string)curl_multi_getcontent($ch);
+                    $body = (string)curl_multi_getcontent($ch);
 
-                    if ($body !== '') {
+                    if ($body !== '') {
 
-                        $this->SendDebug('Smart-Taster prgn RAW', $host . ' / HTTP 200 / Antwort: ' . $body, 0);
+                        $this->SendDebug('Smart-Taster prgn RAW', $host . ' / HTTP 200 / Antwort: ' . $body, 0);
 
-                        $json = json_decode($body, true);
+                        $json = json_decode($body, true);
 
-                        if (is_array($json) && ($json['prg'] ?? false) === true) {
+                        if (is_array($json) && ($json['prg'] ?? false) === true) {
 
-                            $selected = $host;
+                            $selected = $host;
 
-                            break 2;
+                            break 2;
 
-                        }
+                        }
 
-                    }
+                    }
 
-                }
+                }
 
-            }
+            }
 
-            if ($running > 0) {
+            if ($running > 0) {
 
-                curl_multi_select($multi, .2);
+                curl_multi_select($multi, .2);
 
-            }
+            }
 
-        } while ($running > 0 && microtime(true) < $deadline);
+        } while ($running > 0 && microtime(true) < $deadline);
 
-        foreach ($handles as $ch) {
+        foreach ($handles as $ch) {
 
-            curl_multi_remove_handle($multi, $ch);
+            curl_multi_remove_handle($multi, $ch);
 
-            curl_close($ch);
+            curl_close($ch);
 
-        }
+        }
 
-        curl_multi_close($multi);
+        curl_multi_close($multi);
 
-        if ($selected === '') {
+        if ($selected === '') {
 
-            return ['success' => false, 'message' => 'Keine Smart-Taste erkannt.'];
+            return ['success' => false, 'message' => 'Keine Smart-Taste erkannt.'];
 
-        }
+        }
 
-        $device = $active[$selected];
+        $device = $active[$selected];
 
-        $this->SendDebug('Smart-Taster erkannt', 'zApp: ' . $selected . ' / Gerät: ' . $device['name'] . ' / Instanz: ' . $device['instance'], 0);
+        $this->SendDebug('Smart-Taster erkannt', 'zApp: ' . $selected . ' / Gerät: ' . $device['name'] . ' / Instanz: ' . $device['instance'], 0);
 
-        return ['success' => true, 'host' => $selected, 'name' => $device['name'], 'instance' => $device['instance']];
+        return ['success' => true, 'host' => $selected, 'name' => $device['name'], 'instance' => $device['instance']];
 
-    }
+    }
 
 
 
-    private function SmartButtonRequest(string $host, string $method, string $path, ?array $payload = null, int $timeoutMs = 4000): array
+    private function SmartButtonRequest(string $host, string $method, string $path, ?array $payload = null, int $timeoutMs = 4000): array
 
-    {
+    {
 
-        $url = 'http://' . $host . $path;
+        $url = 'http\://' . $host . $path;
 
-        $ch = curl_init();
+        $ch = curl_init();
 
-        $options = [
+        $options = [
 
-            CURLOPT_URL => $url,
+            CURLOPT_URL => $url,
 
-            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_RETURNTRANSFER => true,
 
-            CURLOPT_CONNECTTIMEOUT_MS => 2000,
+            CURLOPT_CONNECTTIMEOUT_MS => 2000,
 
-            CURLOPT_TIMEOUT_MS => $timeoutMs,
+            CURLOPT_TIMEOUT_MS => $timeoutMs,
 
-            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_CUSTOMREQUEST => $method,
 
-            CURLOPT_HTTPHEADER => ['Connection: close']
+            CURLOPT_HTTPHEADER => ['Connection: close']
 
-        ];
+        ];
 
-        if ($payload !== null) {
+        if ($payload !== null) {
 
-            $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-            $options[CURLOPT_POSTFIELDS] = $body;
+            $options[CURLOPT_POSTFIELDS] = $body;
 
-            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close'];
+            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close'];
 
-        }
+        }
 
-        curl_setopt_array($ch, $options);
+        curl_setopt_array($ch, $options);
 
-        $response = curl_exec($ch);
+        $response = curl_exec($ch);
 
-        $error = curl_error($ch);
+        $error = curl_error($ch);
 
-        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
-        curl_close($ch);
+        curl_close($ch);
 
-        $raw = is_string($response) ? $response : '';
+        $raw = is_string($response) ? $response : '';
 
-        $this->SendDebug('Smart-Taster RAW', $method . ' ' . $url . ' / HTTP ' . $code . ' / Antwort: ' . $raw . ($error !== '' ? ' / Fehler: ' . $error : ''), 0);
+        $this->SendDebug('Smart-Taster RAW', $method . ' ' . $url . ' / HTTP ' . $code . ' / Antwort: ' . $raw . ($error !== '' ? ' / Fehler: ' . $error : ''), 0);
 
-        return ['success' => $error === '' && $code >= 200 && $code < 300, 'message' => $error !== '' ? $error : 'HTTP ' . $code . ($raw !== '' ? ' / ' . $raw : ''), 'raw' => $raw, 'httpCode' => $code];
+        return ['success' => $error === '' && $code >= 200 && $code < 300, 'message' => $error !== '' ? $error : 'HTTP ' . $code . ($raw !== '' ? ' / ' . $raw : ''), 'raw' => $raw, 'httpCode' => $code];
 
-    }
+    }
 
 
 
-    private function ForgetScene(string $id): array
+    private function ForgetScene(string $id): array
 
-    {
+    {
 
-        $scenes = array_values(array_filter($this->ReadScenes(), static fn(array $scene): bool => (string)($scene['id'] ?? '') !== $id));
+        $scenes = array_values(array_filter($this->ReadScenes(), static fn(array $scene): bool => (string)($scene['id'] ?? '') !== $id));
 
-        $this->WriteScenes($scenes);
+        $this->WriteScenes($scenes);
 
-        return ['ok' => true, 'message' => 'Eintrag wurde aus dem zeptrionAIR-Splitter entfernt.', 'scenes' => $scenes];
+        return ['ok' => true, 'message' => 'Eintrag wurde aus dem zeptrionAIR-Splitter entfernt.', 'scenes' => $scenes];
 
-    }
+    }
 
 
 
-    private function RunScene(string $id, string $token): void
+    private function RunScene(string $id, string $token): void
 
-    {
+    {
 
-        if ($token === '' || !hash_equals($this->ReadAttributeString('SmartButtonToken'), $token)) {
+        if ($token === '' || !hash_equals($this->ReadAttributeString('SmartButtonToken'), $token)) {
 
-            http_response_code(403);
+            http_response_code(403);
 
-            echo 'Forbidden';
+            echo 'Forbidden';
 
-            return;
+            return;
 
-        }
+        }
 
-        foreach ($this->ReadScenes() as $scene) {
+        foreach ($this->ReadScenes() as $scene) {
 
-            if ((string)($scene['id'] ?? '') !== $id) {
+            if ((string)($scene['id'] ?? '') !== $id) {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            foreach (($scene['targets'] ?? []) as $target) {
+            foreach (($scene['targets'] ?? []) as $target) {
 
-                try {
+                try {
 
-                    $type = (string)($target['type'] ?? 'zeptrion');
+                    $type = (string)($target['type'] ?? 'zeptrion');
 
-                    if ($type === 'zeptrion') {
+                    if ($type === 'zeptrion') {
 
-                        $instance = (int)($target['instance'] ?? 0);
+                        $instance = (int)($target['instance'] ?? 0);
 
-                        if ($this->IsDeviceInstance($instance)) {
+                        if ($this->IsDeviceInstance($instance)) {
 
-                            ZEPA_RecallScene($instance, (int)$target['channel'], (int)$target['memory']);
+                            ZEPA_RecallScene($instance, (int)$target['channel'], (int)$target['memory']);
 
-                        }
+                        }
 
-                    } elseif ($type === 'symcon') {
+                    } elseif ($type === 'symcon') {
 
-                        $objectID = (int)($target['object'] ?? 0);
+                        $objectID = (int)($target['object'] ?? 0);
 
-                        if (IPS_VariableExists($objectID)) {
+                        if (IPS_VariableExists($objectID)) {
 
-                            RequestAction($objectID, $target['value'] ?? null);
+                            RequestAction($objectID, $target['value'] ?? null);
 
-                        } elseif (IPS_ScriptExists($objectID)) {
+                        } elseif (IPS_ScriptExists($objectID)) {
 
-                            IPS_RunScript($objectID);
+                            IPS_RunScript($objectID);
 
-                        }
+                        }
 
-                    } elseif ($type === 'variable') {
+                    } elseif ($type === 'variable') {
 
-                        $objectID = (int)($target['variable'] ?? 0);
+                        $objectID = (int)($target['variable'] ?? 0);
 
-                        if (IPS_VariableExists($objectID)) {
+                        if (IPS_VariableExists($objectID)) {
 
-                            RequestAction($objectID, $target['value'] ?? null);
+                            RequestAction($objectID, $target['value'] ?? null);
 
-                        }
+                        }
 
-                    } elseif ($type === 'script') {
+                    } elseif ($type === 'script') {
 
-                        $objectID = (int)($target['script'] ?? 0);
+                        $objectID = (int)($target['script'] ?? 0);
 
-                        if (IPS_ScriptExists($objectID)) {
+                        if (IPS_ScriptExists($objectID)) {
 
-                            IPS_RunScript($objectID);
+                            IPS_RunScript($objectID);
 
-                        }
+                        }
 
-                    }
+                    }
 
-                } catch (Throwable $e) {
+                } catch (Throwable $e) {
 
-                    $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
+                    $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
 
-                }
+                }
 
-            }
+            }
 
-            echo 'OK';
+            echo 'OK';
 
-            return;
+            return;
 
-        }
+        }
 
-        http_response_code(404);
+        http_response_code(404);
 
-        echo 'Scene not found';
+        echo 'Scene not found';
 
-    }
+    }
 
 
 
-    private function BuildInterface(): string
+    private function BuildInterface(): string
 
-    {
+    {
 
-        $data = json_encode([
+        $data = json_encode([
 
-            'scenes' => $this->ReadScenes(),
+            'scenes' => $this->ReadScenes(),
 
-            'zeptrionTargets' => $this->GetTargets()
+            'zeptrionTargets' => $this->GetTargets()
 
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
-        $html = <<<'HTML'
+        $html = <<<'HTML'
 
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Taster</title>
+\<!doctype html>\<html>\<head>\<meta charset="utf-8">\<meta name="viewport" content="width=device-width,initial-scale=1">\<title>Smart-Taster\</title>
 
-<style>
+\<style>
 
 body{font-family:system-ui,sans-serif;max-width:1000px;margin:28px auto;padding:0 16px;background:#f5f5f5;color:#222}h1{font-size:24px}.card{background:#fff;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 1px 4px #0002}.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}input,select,button{font:inherit;padding:8px;border:1px solid #bbb;border-radius:6px}input{min-width:150px}select{min-width:180px}button{cursor:pointer}.name{flex:1}.danger{margin-left:auto}.status{padding:12px 0;min-height:24px;font-weight:600}.target{padding-left:12px;border-left:3px solid #ddd}.busy{opacity:.55;pointer-events:none}.hint,.source{color:#666;font-size:14px}.objfield{min-width:330px;text-align:left}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:99}.modalbox{background:#fff;width:min(760px,92vw);height:min(650px,84vh);border-radius:10px;padding:14px;display:flex;flex-direction:column}.tree{overflow:auto;flex:1;border:1px solid #ddd;border-radius:6px;padding:6px}.node{margin:1px 0}.nodeRow{display:flex;align-items:center;min-height:30px;border-radius:4px}.nodeRow:hover{background:#eee}.twisty{width:28px;border:0;background:transparent;padding:4px}.nodeLabel{border:0;background:transparent;text-align:left;flex:1;padding:5px}.nodeLabel.selectable{font-weight:500}.children{margin-left:22px}.search{box-sizing:border-box;width:100%;margin:8px 0}.close{margin-left:auto}.modalHead{display:flex;align-items:center;gap:10px}.typeTag{font-size:12px;color:#777;margin-left:8px}.searchResult{display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px;border-radius:4px}.searchResult:hover{background:#eee}
 
-</style></head><body><h1>Smart-Taster konfigurieren</h1><p class="hint">Szene benennen, Ziele hinzufügen und danach direkt programmieren.</p><div id="scenes"></div><button id="addScene">+ Szene hinzufügen</button> <button id="clearButton">Smart-Taster löschen</button><div class="status" id="status"></div><script>
+\</style>\</head>\<body>\<h1>Smart-Taster konfigurieren\</h1>\<p class="hint">Szene benennen, Ziele hinzufügen und danach direkt programmieren.\</p>\<div id="scenes">\</div>\<button id="addScene">+ Szene hinzufügen\</button> \<button id="clearButton">Smart-Taster löschen\</button>\<div class="status" id="status">\</div>\<script>
 
-const D=__DATA__;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptrionTargets||[];const cache=new Map();
+const D=\_\_DATA\_\_;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptrionTargets||[];const cache=new Map();
 
 const el=id=>document.getElementById(id),mk=(t,x)=>{const e=document.createElement(t);if(x!==undefined)e.textContent=x;return e};
 
@@ -776,9 +776,9 @@ async function load(parent,container){container.textContent='Lade …';const r=a
 
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
 
-async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
+async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i\<count;i++){let v=min+i\*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v\*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
 
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Aus Splitter entfernen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';const typ=mk('select');opts(typ,[{value:'symcon',caption:'Symcon-Objekt'}],t.type||'symcon');typ.onchange=()=>{t.type=typ.value;if(t.type==='symcon'){delete t.instance;delete t.channel;delete t.memory}else{delete t.object;delete t.objectInfo}render()};r.append(typ);if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const p=mk('button',o?o.path:'Objekt auswählen …');p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const add=mk('button','+ Ziel hinzufügen');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(add,p);c.append(a);root.append(c)}}
+async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Aus Splitter entfernen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j\<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';const typ=mk('select');opts(typ,[{value:'zeptrion',caption:'zeptrionAIR'},{value:'symcon',caption:'Symcon-Objekt'}],t.type||'zeptrion');typ.onchange=()=>{t.type=typ.value;if(t.type==='symcon'){delete t.instance;delete t.channel;delete t.memory}else{delete t.object;delete t.objectInfo}render()};r.append(typ);if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const p=mk('button',o?o.path:'Objekt auswählen …');p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const add=mk('button','+ Ziel hinzufügen');add.onclick=()=>{const z=Z[0];s.targets.push(z?{type:'zeptrion',instance:z.instance,channel:z.channel,memory:1}:{type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(add,p);c.append(a);root.append(c)}}
 
 function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
 
@@ -790,490 +790,490 @@ async function clearButton(){if(!confirm('Die Smart-Tasten beginnen jetzt zu bli
 
 el('addScene').onclick=addScene;el('clearButton').onclick=clearButton;render();
 
-</script></body></html>
+\</script>\</body>\</html>
 
 HTML;
 
-        return str_replace('__DATA__', $data, $html);
+        return str_replace('\_\_DATA\_\_', $data, $html);
 
-    }
+    }
 
 
 
-    private function GetDeviceHosts(): array
+    private function GetDeviceHosts(): array
 
-    {
+    {
 
-        $result = [];
+        $result = [];
 
-        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $id) {
+        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $id) {
 
-            $host = trim((string)IPS_GetProperty($id, 'Host'));
+            $host = trim((string)IPS_GetProperty($id, 'Host'));
 
-            if ($host === '') {
+            if ($host === '') {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            $name = trim(IPS_GetName($id));
+            $name = trim(IPS_GetName($id));
 
-            $result[$host] = ['instance' => $id, 'name' => $name !== '' ? $name : $host];
+            $result[$host] = ['instance' => $id, 'name' => $name !== '' ? $name : $host];
 
-        }
+        }
 
-        ksort($result, SORT_NATURAL);
+        ksort($result, SORT_NATURAL);
 
-        return $result;
+        return $result;
 
-    }
+    }
 
 
 
-    private function GetTargets(): array
+    private function GetTargets(): array
 
-    {
+    {
 
-        $result = [];
+        $result = [];
 
-        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $id) {
+        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $id) {
 
-            $count = max(1, min(4, (int)IPS_GetProperty($id, 'Channels')));
+            $count = max(1, min(4, (int)IPS_GetProperty($id, 'Channels')));
 
-            for ($channel = 1; $channel <= $count; $channel++) {
+            for ($channel = 1; $channel <= $count; $channel++) {
 
-                if (strtolower((string)IPS_GetProperty($id, 'Channel' . $channel . 'Type')) === 'unused') {
+                if (strtolower((string)IPS_GetProperty($id, 'Channel' . $channel . 'Type')) === 'unused') {
 
-                    continue;
+                    continue;
 
-                }
+                }
 
-                $name = trim((string)IPS_GetProperty($id, 'Channel' . $channel . 'Name'));
+                $name = trim((string)IPS_GetProperty($id, 'Channel' . $channel . 'Name'));
 
-                if ($name === '') {
+                if ($name === '') {
 
-                    $name = IPS_GetName($id) . ' / Kanal ' . $channel;
+                    $name = IPS_GetName($id) . ' / Kanal ' . $channel;
 
-                }
+                }
 
-                $result[] = ['value' => $id . ':' . $channel, 'caption' => $name, 'instance' => $id, 'channel' => $channel];
+                $result[] = ['value' => $id . ':' . $channel, 'caption' => $name, 'instance' => $id, 'channel' => $channel];
 
-            }
+            }
 
-        }
+        }
 
-        usort($result, static fn($a, $b) => strnatcasecmp($a['caption'], $b['caption']));
+        usort($result, static fn($a, $b) => strnatcasecmp($a['caption'], $b['caption']));
 
-        return $result;
+        return $result;
 
-    }
+    }
 
 
 
-    private function GetObjectTreeChildren(int $parentID): array
+    private function GetObjectTreeChildren(int $parentID): array
 
-    {
+    {
 
-        $ids = $parentID === 0 ? IPS_GetChildrenIDs(0) : (IPS_ObjectExists($parentID) ? IPS_GetChildrenIDs($parentID) : []);
+        $ids = $parentID === 0 ? IPS_GetChildrenIDs(0) : (IPS_ObjectExists($parentID) ? IPS_GetChildrenIDs($parentID) : []);
 
-        $items = [];
+        $items = [];
 
-        foreach ($ids as $id) {
+        foreach ($ids as $id) {
 
-            $info = $this->GetTreeObjectInfo((int)$id);
+            $info = $this->GetTreeObjectInfo((int)$id);
 
-            if ($info !== null) {
+            if ($info !== null) {
 
-                $items[] = $info;
+                $items[] = $info;
 
-            }
+            }
 
-        }
+        }
 
-        usort($items, static function (array $a, array $b): int {
+        usort($items, static function (array $a, array $b): int {
 
-            $rank = static function (array $item): int {
+            $rank = static function (array $item): int {
 
-                $id = (int)($item['id'] ?? 0);
+                $id = (int)($item['id'] ?? 0);
 
-                if ($id > 0 && IPS_ObjectExists($id)) {
+                if ($id > 0 && IPS_ObjectExists($id)) {
 
-                    $object = IPS_GetObject($id);
+                    $object = IPS_GetObject($id);
 
-                    $objectType = (int)($object['ObjectType'] ?? -1);
+                    $objectType = (int)($object['ObjectType'] ?? -1);
 
-                    if ($objectType === 0) {
+                    if ($objectType === 0) {
 
-                        return 0; // Kategorien / Ordner
+                        return 0; // Kategorien / Ordner
 
-                    }
+                    }
 
-                    if ($objectType === 1) {
+                    if ($objectType === 1) {
 
-                        return 1; // Instanzen
+                        return 1; // Instanzen
 
-                    }
+                    }
 
-                }
+                }
 
-                return 2; // Variablen, Skripte und übrige Objekte
+                return 2; // Variablen, Skripte und übrige Objekte
 
-            };
+            };
 
-            $ra = $rank($a);
+            $ra = $rank($a);
 
-            $rb = $rank($b);
+            $rb = $rank($b);
 
-            return $ra === $rb
+            return $ra === $rb
 
-                ? strnatcasecmp((string)$a['name'], (string)$b['name'])
+                ? strnatcasecmp((string)$a['name'], (string)$b['name'])
 
-                : ($ra <=> $rb);
+                : ($ra <=> $rb);
 
-        });
+        });
 
-        return $items;
+        return $items;
 
-    }
+    }
 
 
 
-    private function SearchObjectTree(string $query): array
+    private function SearchObjectTree(string $query): array
 
-    {
+    {
 
-        $query = trim($query);
+        $query = trim($query);
 
-        if ($query === '') {
+        if ($query === '') {
 
-            return [];
+            return [];
 
-        }
+        }
 
-        $needle = mb_strtolower($query);
+        $needle = mb_strtolower($query);
 
-        $items = [];
+        $items = [];
 
-        foreach (IPS_GetObjectList() as $id) {
+        foreach (IPS_GetObjectList() as $id) {
 
-            if (!IPS_VariableExists($id) && !IPS_ScriptExists($id)) {
+            if (!IPS_VariableExists($id) && !IPS_ScriptExists($id)) {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            $path = $this->ObjectPath($id);
+            $path = $this->ObjectPath($id);
 
-            if (mb_strpos(mb_strtolower($path), $needle) === false) {
+            if (mb_strpos(mb_strtolower($path), $needle) === false) {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            $info = $this->GetSelectableObjectInfo($id);
+            $info = $this->GetSelectableObjectInfo($id);
 
-            if ($info !== null) {
+            if ($info !== null) {
 
-                $items[] = $info;
+                $items[] = $info;
 
-            }
+            }
 
-            if (count($items) >= 100) {
+            if (count($items) >= 100) {
 
-                break;
+                break;
 
-            }
+            }
 
-        }
+        }
 
-        usort($items, static fn(array $a, array $b): int => strnatcasecmp((string)$a['path'], (string)$b['path']));
+        usort($items, static fn(array $a, array $b): int => strnatcasecmp((string)$a['path'], (string)$b['path']));
 
-        return $items;
+        return $items;
 
-    }
+    }
 
 
 
-    private function GetTreeObjectInfo(int $id): ?array
+    private function GetTreeObjectInfo(int $id): ?array
 
-    {
+    {
 
-        if (!IPS_ObjectExists($id)) {
+        if (!IPS_ObjectExists($id)) {
 
-            return null;
+            return null;
 
-        }
+        }
 
-        $object = IPS_GetObject($id);
+        $object = IPS_GetObject($id);
 
-        $selectable = IPS_VariableExists($id) || IPS_ScriptExists($id);
+        $selectable = IPS_VariableExists($id) || IPS_ScriptExists($id);
 
-        $type = IPS_VariableExists($id) ? 'variable' : (IPS_ScriptExists($id) ? 'script' : 'container');
+        $type = IPS_VariableExists($id) ? 'variable' : (IPS_ScriptExists($id) ? 'script' : 'container');
 
-        return [
+        return [
 
-            'id' => $id,
+            'id' => $id,
 
-            'name' => IPS_GetName($id),
+            'name' => IPS_GetName($id),
 
-            'path' => $this->ObjectPath($id),
+            'path' => $this->ObjectPath($id),
 
-            'type' => $type,
+            'type' => $type,
 
-            'selectable' => $selectable,
+            'selectable' => $selectable,
 
-            'hasChildren' => count(IPS_GetChildrenIDs($id)) > 0,
+            'hasChildren' => count(IPS_GetChildrenIDs($id)) > 0,
 
-            'icon' => $type === 'variable' ? '●' : ($type === 'script' ? '▶' : '▸')
+            'icon' => $type === 'variable' ? '●' : ($type === 'script' ? '▶' : '▸')
 
-        ];
+        ];
 
-    }
+    }
 
 
 
-    private function GetSelectableObjectInfo(int $id): ?array
+    private function GetSelectableObjectInfo(int $id): ?array
 
-    {
+    {
 
-        if (IPS_VariableExists($id)) {
+        if (IPS_VariableExists($id)) {
 
-            $variable = IPS_GetVariable($id);
+            $variable = IPS_GetVariable($id);
 
-            $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
+            $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
 
-            $associations = [];
+            $associations = [];
 
-            $profileMin = null;
+            $profileMin = null;
 
-            $profileMax = null;
+            $profileMax = null;
 
-            $profileStep = null;
+            $profileStep = null;
 
-            $profileSuffix = '';
+            $profileSuffix = '';
 
-            if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
+            if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
 
-                $profile = IPS_GetVariableProfile($profileName);
+                $profile = IPS_GetVariableProfile($profileName);
 
-                foreach (($profile['Associations'] ?? []) as $association) {
+                foreach (($profile['Associations'] ?? []) as $association) {
 
-                    $associations[] = ['value' => $association['Value'], 'name' => $association['Name']];
+                    $associations[] = ['value' => $association['Value'], 'name' => $association['Name']];
 
-                }
+                }
 
-                $profileMin = $profile['MinValue'] ?? null;
+                $profileMin = $profile['MinValue'] ?? null;
 
-                $profileMax = $profile['MaxValue'] ?? null;
+                $profileMax = $profile['MaxValue'] ?? null;
 
-                $profileStep = $profile['StepSize'] ?? null;
+                $profileStep = $profile['StepSize'] ?? null;
 
-                $profileSuffix = (string)($profile['Suffix'] ?? '');
+                $profileSuffix = (string)($profile['Suffix'] ?? '');
 
-            }
+            }
 
-            return [
+            return [
 
-                'id' => $id,
+                'id' => $id,
 
-                'name' => IPS_GetName($id),
+                'name' => IPS_GetName($id),
 
-                'path' => $this->ObjectPath($id),
+                'path' => $this->ObjectPath($id),
 
-                'type' => 'variable',
+                'type' => 'variable',
 
-                'selectable' => true,
+                'selectable' => true,
 
-                'varType' => (int)$variable['VariableType'],
+                'varType' => (int)$variable['VariableType'],
 
-                'associations' => $associations,
+                'associations' => $associations,
 
-                'profileMin' => $profileMin,
+                'profileMin' => $profileMin,
 
-                'profileMax' => $profileMax,
+                'profileMax' => $profileMax,
 
-                'profileStep' => $profileStep,
+                'profileStep' => $profileStep,
 
-                'profileSuffix' => $profileSuffix,
+                'profileSuffix' => $profileSuffix,
 
-                'defaultValue' => (int)$variable['VariableType'] === 0 ? 'false' : ($profileMin ?? '')
+                'defaultValue' => (int)$variable['VariableType'] === 0 ? 'false' : ($profileMin ?? '')
 
-            ];
+            ];
 
-        }
+        }
 
-        if (IPS_ScriptExists($id)) {
+        if (IPS_ScriptExists($id)) {
 
-            return [
+            return [
 
-                'id' => $id,
+                'id' => $id,
 
-                'name' => IPS_GetName($id),
+                'name' => IPS_GetName($id),
 
-                'path' => $this->ObjectPath($id),
+                'path' => $this->ObjectPath($id),
 
-                'type' => 'script',
+                'type' => 'script',
 
-                'selectable' => true
+                'selectable' => true
 
-            ];
+            ];
 
-        }
+        }
 
-        return null;
+        return null;
 
-    }
+    }
 
 
 
-    private function ObjectPath(int $id): string
+    private function ObjectPath(int $id): string
 
-    {
+    {
 
-        $parts = [];
+        $parts = [];
 
-        $current = $id;
+        $current = $id;
 
-        for ($i = 0; $i < 20 && $current > 0; $i++) {
+        for ($i = 0; $i < 20 && $current > 0; $i++) {
 
-            $parts[] = IPS_GetName($current);
+            $parts[] = IPS_GetName($current);
 
-            $current = IPS_GetParent($current);
+            $current = IPS_GetParent($current);
 
-        }
+        }
 
-        return implode(' / ', array_reverse($parts));
+        return implode(' / ', array_reverse($parts));
 
-    }
+    }
 
 
 
-    private function NormalizeTargets(array $targets): array
+    private function NormalizeTargets(array $targets): array
 
-    {
+    {
 
-        $out = [];
+        $out = [];
 
-        foreach ($targets as $target) {
+        foreach ($targets as $target) {
 
-            if (!is_array($target)) {
+            if (!is_array($target)) {
 
-                continue;
+                continue;
 
-            }
+            }
 
-            $type = (string)($target['type'] ?? 'zeptrion');
+            $type = (string)($target['type'] ?? 'zeptrion');
 
-            if ($type === 'zeptrion') {
+            if ($type === 'zeptrion') {
 
-                $instance = (int)($target['instance'] ?? 0);
+                $instance = (int)($target['instance'] ?? 0);
 
-                $channel = (int)($target['channel'] ?? 0);
+                $channel = (int)($target['channel'] ?? 0);
 
-                $memory = (int)($target['memory'] ?? 0);
+                $memory = (int)($target['memory'] ?? 0);
 
-                if ($this->IsDeviceInstance($instance) && $channel >= 1 && $channel <= 4 && $memory >= 1 && $memory <= 4) {
+                if ($this->IsDeviceInstance($instance) && $channel >= 1 && $channel <= 4 && $memory >= 1 && $memory <= 4) {
 
-                    $out[] = ['type' => 'zeptrion', 'instance' => $instance, 'channel' => $channel, 'memory' => $memory];
+                    $out[] = ['type' => 'zeptrion', 'instance' => $instance, 'channel' => $channel, 'memory' => $memory];
 
-                }
+                }
 
-            } elseif ($type === 'symcon') {
+            } elseif ($type === 'symcon') {
 
-                $id = (int)($target['object'] ?? 0);
+                $id = (int)($target['object'] ?? 0);
 
-                if (IPS_VariableExists($id)) {
+                if (IPS_VariableExists($id)) {
 
-                    $variable = IPS_GetVariable($id);
+                    $variable = IPS_GetVariable($id);
 
-                    $value = $target['value'] ?? '';
+                    $value = $target['value'] ?? '';
 
-                    switch ((int)$variable['VariableType']) {
+                    switch ((int)$variable['VariableType']) {
 
-                        case 0: $value = filter_var($value, FILTER_VALIDATE_BOOLEAN); break;
+                        case 0: $value = filter_var($value, FILTER_VALIDATE_BOOLEAN); break;
 
-                        case 1: $value = (int)$value; break;
+                        case 1: $value = (int)$value; break;
 
-                        case 2: $value = (float)$value; break;
+                        case 2: $value = (float)$value; break;
 
-                        default: $value = (string)$value;
+                        default: $value = (string)$value;
 
-                    }
+                    }
 
-                    $out[] = ['type' => 'symcon', 'object' => $id, 'value' => $value];
+                    $out[] = ['type' => 'symcon', 'object' => $id, 'value' => $value];
 
-                } elseif (IPS_ScriptExists($id)) {
+                } elseif (IPS_ScriptExists($id)) {
 
-                    $out[] = ['type' => 'symcon', 'object' => $id];
+                    $out[] = ['type' => 'symcon', 'object' => $id];
 
-                }
+                }
 
-            } elseif ($type === 'variable') {
+            } elseif ($type === 'variable') {
 
-                $id = (int)($target['variable'] ?? 0);
+                $id = (int)($target['variable'] ?? 0);
 
-                if (IPS_VariableExists($id)) {
+                if (IPS_VariableExists($id)) {
 
-                    $out[] = ['type' => 'symcon', 'object' => $id, 'value' => $target['value'] ?? ''];
+                    $out[] = ['type' => 'symcon', 'object' => $id, 'value' => $target['value'] ?? ''];
 
-                }
+                }
 
-            } elseif ($type === 'script') {
+            } elseif ($type === 'script') {
 
-                $id = (int)($target['script'] ?? 0);
+                $id = (int)($target['script'] ?? 0);
 
-                if (IPS_ScriptExists($id)) {
+                if (IPS_ScriptExists($id)) {
 
-                    $out[] = ['type' => 'symcon', 'object' => $id];
+                    $out[] = ['type' => 'symcon', 'object' => $id];
 
-                }
+                }
 
-            }
+            }
 
-        }
+        }
 
-        return $out;
+        return $out;
 
-    }
+    }
 
 
 
-    private function IsDeviceInstance(int $id): bool
+    private function IsDeviceInstance(int $id): bool
 
-    {
+    {
 
-        if ($id <= 0 || !IPS_InstanceExists($id)) {
+        if ($id <= 0 || !IPS_InstanceExists($id)) {
 
-            return false;
+            return false;
 
-        }
+        }
 
-        $instance = IPS_GetInstance($id);
+        $instance = IPS_GetInstance($id);
 
-        return (string)($instance['ModuleInfo']['ModuleID'] ?? '') === self::DEVICE_MODULE_ID;
+        return (string)($instance['ModuleInfo']['ModuleID'] ?? '') === self::DEVICE_MODULE_ID;
 
-    }
+    }
 
 
 
-    private function ReadScenes(): array
+    private function ReadScenes(): array
 
-    {
+    {
 
-        $data = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
+        $data = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
 
-        return is_array($data) ? $data : [];
+        return is_array($data) ? $data : [];
 
-    }
+    }
 
 
 
-    private function WriteScenes(array $scenes): void
+    private function WriteScenes(array $scenes): void
 
-    {
+    {
 
-        $this->WriteAttributeString('SmartButtonScenes', json_encode(array_values($scenes), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->WriteAttributeString('SmartButtonScenes', json_encode(array_values($scenes), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
-    }
+    }
 
 }
