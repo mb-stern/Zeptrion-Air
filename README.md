@@ -263,6 +263,11 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 
 Das IP-Symcon Modul dient anschließend zur Integration, Steuerung und Erweiterung der bestehenden zeptrionAIR Anlage.
 
+## HVersionen
+
+Version 1.0
+- Initiale Version
+
 ## Lizenz
 
 Siehe `LICENSE`.
