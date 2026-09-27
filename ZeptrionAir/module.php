@@ -929,6 +929,28 @@ class ZeptrionAir extends IPSModuleStrict
             ];
         }
         $prefix = 'Channel' . $smartChannel . 'Smart';
+        $selectedTarget = $this->ReadPropertyInteger($prefix . 'TargetInstance');
+        $channelOptions = [];
+        if ($selectedTarget > 0 && IPS_InstanceExists($selectedTarget)) {
+            $targetChannelCount = max(1, min(4, (int)IPS_GetProperty($selectedTarget, 'Channels')));
+            for ($targetChannel = 1; $targetChannel <= $targetChannelCount; $targetChannel++) {
+                $targetType = strtolower((string)IPS_GetProperty($selectedTarget, 'Channel' . $targetChannel . 'Type'));
+                if ($targetType === 'unused') {
+                    continue;
+                }
+                $targetName = trim((string)IPS_GetProperty($selectedTarget, 'Channel' . $targetChannel . 'Name'));
+                if ($targetName === '') {
+                    $targetName = 'Kanal ' . $targetChannel;
+                }
+                $channelOptions[] = [
+                    'caption' => $targetName,
+                    'value' => $targetChannel
+                ];
+            }
+        }
+        if ($channelOptions === []) {
+            $channelOptions[] = ['caption' => 'Zuerst Zielgerät wählen und übernehmen', 'value' => 1];
+        }
         return [
             ['type' => 'Label', 'caption' => 'Art: Smart-Taster'],
             [
@@ -938,7 +960,7 @@ class ZeptrionAir extends IPSModuleStrict
             ],
             ['type' => 'Label', 'caption' => '2. Gewünschte blinkende Smart-Taste am Schalter drücken.'],
             ['type' => 'Select', 'name' => $prefix . 'TargetInstance', 'caption' => 'Zielgerät', 'options' => $targetOptions],
-            ['type' => 'NumberSpinner', 'name' => $prefix . 'TargetChannel', 'caption' => 'Zielkanal', 'minimum' => 1, 'maximum' => 4],
+            ['type' => 'Select', 'name' => $prefix . 'TargetChannel', 'caption' => 'Ziel', 'options' => $channelOptions],
             [
                 'type' => 'Select',
                 'name' => $prefix . 'TargetScene',
