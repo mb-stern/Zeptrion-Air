@@ -718,7 +718,7 @@ class ZeptrionAir extends IPSModuleStrict
 
                 // variable enthält weiterhin die zuletzt gewählte Dimmstufe.
 
-                $levelID = @$this->GetIDForIdent($levelIdent);
+                $levelID = $this->FindManagedVariableID($levelIdent);
 
                 $target = $levelID > 0 ? (int)GetValue($levelID) : 0;
 
@@ -750,68 +750,61 @@ class ZeptrionAir extends IPSModuleStrict
 
             case 'Level':
 
-                // Die Helligkeitsvariable bestimmt nur die Dimmstufe. Ein/Aus
-
-                // wird ausschließlich über ChXDimmerSwitch bedient.
-
+                // Lichtkachel: 0 % bedeutet AUS, 1..100 % bedeutet EIN mit
+                // entsprechender Intensität. Der Slider darf deshalb bis 0 gehen.
                 $target = max(0, min(100, (int)$Value));
-
                 $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-
-                $target = max($step, min(100, (int)round($target / $step) * $step));
-
-                $ident = 'Ch' . $channel . 'Level';
-
-                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
-
-                $id = @$this->GetIDForIdent($ident);
-
-                $current = $id > 0 ? (int)GetValue($id) : $step;
-
-
-
-                $switchID = @$this->GetIDForIdent($switchIdent);
-
-                $isOn = $switchID > 0 ? (bool)GetValue($switchID) : false;
-
-
-
-                if (!$isOn) {
-
-                    // Im ausgeschalteten Zustand nur die gewünschte Dimmstufe
-
-                    // speichern. Die Lampe bleibt aus.
-
-                    $this->SetValueIfChanged($ident, $target);
-
-                    return;
-
+                if ($target > 0) {
+                    $target = max($step, min(100, (int)round($target / $step) * $step));
                 }
 
+                $ident = 'Ch' . $channel . 'Level';
+                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
 
+                // Die Dimmer-Variablen liegen für die kombinierte Lichtdarstellung
+                // unter einem Dummy. Deshalb nicht GetIDForIdent() direkt auf der
+                // Modulinstanz verwenden.
+                $id = $this->FindManagedVariableID($ident);
+                $current = $id > 0 ? (int)GetValue($id) : 0;
+                $switchID = $this->FindManagedVariableID($switchIdent);
+                $isOn = $switchID > 0 ? (bool)GetValue($switchID) : false;
+
+                // 0 % ist ein echter AUS-Befehl und wird auch als Status 0/false
+                // zurückgemeldet.
+                if ($target === 0) {
+                    if ($this->SendCommand($channel, 'off')) {
+                        $this->SetValueIfChanged($ident, 0);
+                        $this->SetValueIfChanged($switchIdent, false);
+                    }
+                    return;
+                }
+
+                // Wird die Intensität bei ausgeschaltetem Licht auf >0 gesetzt,
+                // fährt der Dimmer aus AUS/0 direkt auf den gewünschten Wert.
+                if (!$isOn) {
+                    $time = (int)round($target * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
+                    $time = max(100, min(32000, $time));
+                    if ($this->SendCommand($channel, 'dim_up_' . $time)) {
+                        $this->SetValueIfChanged($ident, $target);
+                        $this->SetValueIfChanged($switchIdent, true);
+                    }
+                    return;
+                }
 
                 if ($target === $current) {
-
                     return;
-
                 }
 
                 $time = $target > $current
-
                     ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100)
-
                     : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100);
-
                 $time = max(100, min(32000, $time));
-
                 $command = $target > $current ? 'dim_up_' . $time : 'dim_down_' . $time;
 
                 if ($this->SendCommand($channel, $command)) {
-
                     $this->SetValueIfChanged($ident, $target);
-
+                    $this->SetValueIfChanged($switchIdent, true);
                 }
-
                 return;
 
 
@@ -1680,16 +1673,84 @@ class ZeptrionAir extends IPSModuleStrict
         if ($id !== false && IPS_VariableExists($id)) {
             return $id;
         }
-        for ($channel = 1; $channel <= 4; $channel++) {
-            $dummyID = @IPS_GetObjectIDByIdent('Ch' . $channel . 'Shutter', $this->InstanceID);
-            if ($dummyID !== false && IPS_InstanceExists($dummyID)) {
-                $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
-                if ($id !== false && IPS_VariableExists($id)) {
-                    return $id;
-                }
+
+        // Statusvariablen für zusammengefasste Darstellungen können unter einer
+        // Dummy-Instanz liegen. Alle direkten Child-Instanzen durchsuchen, damit
+        // Dimmer und Rollo unabhängig vom Parent zuverlässig gefunden werden.
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $childID) {
+            if (!IPS_InstanceExists($childID)) {
+                continue;
+            }
+            $id = @IPS_GetObjectIDByIdent($ident, $childID);
+            if ($id !== false && IPS_VariableExists($id)) {
+                return $id;
             }
         }
         return 0;
+    }
+
+    private function EnsureDimmerDummy(int $channel, string $name): int
+    {
+        $ident = 'Ch' . $channel . 'Dimmer';
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if ($id === false || !IPS_InstanceExists($id)) {
+            $id = IPS_CreateInstance('{485D0419-BE97-4548-AA9C-C083EB82E61E}');
+            IPS_SetParent($id, $this->InstanceID);
+            IPS_SetIdent($id, $ident);
+            IPS_ApplyChanges($id);
+        }
+        IPS_SetName($id, $name);
+        IPS_SetPosition($id, $channel * 10);
+        return $id;
+    }
+
+    private function EnsureDimmerVariable(int $dummyID, string $ident, string $name, int $type, array $presentation, int $position): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
+
+        if ($id === false || !IPS_VariableExists($id)) {
+            // Bestehende Modulvariable (auch aus einem manuell angelegten Dummy)
+            // übernehmen, damit beim Update keine zweite Variable entsteht.
+            $existingID = $this->FindManagedVariableID($ident);
+            if ($existingID > 0) {
+                $id = $existingID;
+            } else {
+                if ($type === VARIABLETYPE_BOOLEAN) {
+                    $this->RegisterVariableBoolean($ident, $name, '', $position);
+                } else {
+                    $this->RegisterVariableInteger($ident, $name, '', $position);
+                }
+                $this->EnableAction($ident);
+                $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+            }
+
+            if ($id !== false && IPS_VariableExists($id)) {
+                IPS_SetParent($id, $dummyID);
+            }
+        }
+
+        if ($id === false || !IPS_VariableExists($id)) {
+            throw new Exception('Dimmer-Variable konnte nicht angelegt werden: ' . $ident);
+        }
+
+        IPS_SetName($id, $name);
+        IPS_SetPosition($id, $position);
+        IPS_SetVariableCustomPresentation($id, $presentation);
+        return $id;
+    }
+
+    private function RemoveDimmerDummy(int $channel): void
+    {
+        $id = @IPS_GetObjectIDByIdent('Ch' . $channel . 'Dimmer', $this->InstanceID);
+        if ($id === false || !IPS_InstanceExists($id)) {
+            return;
+        }
+        foreach (IPS_GetChildrenIDs($id) as $childID) {
+            if (IPS_VariableExists($childID)) {
+                IPS_DeleteVariable($childID);
+            }
+        }
+        IPS_DeleteInstance($id);
     }
 
     private function EnsureShutterDummy(int $channel, string $name): int
@@ -1907,67 +1968,26 @@ class ZeptrionAir extends IPSModuleStrict
 
             } elseif ($active && $type === 'dimmer') {
 
+                // Für die native Symcon-Lichtdarstellung müssen Status und
+                // Intensität gemeinsam unter einer Instanz liegen.
+                $dummyID = $this->EnsureDimmerDummy($channel, $name);
+
                 $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
-
-                $this->RegisterVariableBoolean($switchIdent, $name, ['PRESENTATION' => VARIABLE_PRESENTATION_SWITCH], $channel * 10);
-
-                $this->SetVariableName($switchIdent, $name);
-
-                $this->EnableAction($switchIdent);
-
-
+                $this->EnsureDimmerVariable($dummyID, $switchIdent, $name, VARIABLETYPE_BOOLEAN, [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_SWITCH,
+                    'USAGE_TYPE' => 0
+                ], 10);
 
                 $ident = 'Ch' . $channel . 'Level';
-
-                // Native Symcon-Darstellung statt Legacy-%-Profil: Bei einem
-
-                // Legacy-Profil mit Suffix "%" skaliert Symcon Min..Max immer
-
-                // auf 0..100 %. Dadurch wurden 10..100 als 0,11,22,...100
-
-                // angezeigt. Der absolute Slider zeigt die echten Werte.
-
-                $this->RegisterVariableInteger($ident, $name . ' Helligkeit', [
-
+                $this->EnsureDimmerVariable($dummyID, $ident, $name . ' Helligkeit', VARIABLETYPE_INTEGER, [
                     'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
-
-                    'MIN' => 10,
-
+                    'MIN' => 0,
                     'MAX' => 100,
-
                     'STEP_SIZE' => 10,
-
+                    'USAGE_TYPE' => 2,
                     'PERCENTAGE' => false,
-
                     'SUFFIX' => ' %'
-
-                ], $channel * 10 + 1);
-
-                $this->SetVariableName($ident, $name . ' Helligkeit');
-
-                $this->EnableAction($ident);
-
-
-
-                // ChXLevel ist ausschließlich unser eigener Soll-/Merkwert.
-
-                // Die 0/100 aus chscan werden nur für ChXDimmerSwitch verwendet
-
-                // und dürfen die Helligkeit nie verändern. Eine neu angelegte
-
-                // Integer-Variable startet in Symcon mit 0; diesen ungültigen
-
-                // Startwert einmalig auf die konfigurierte Mindeststufe anheben.
-
-                $levelID = @$this->GetIDForIdent($ident);
-
-                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-
-                if ($levelID > 0 && (int)GetValue($levelID) < $step) {
-
-                    $this->SetValueIfChanged($ident, $step);
-
-                }
+                ], 20);
 
             } elseif ($active && $type === 'shutter') {
 
@@ -2047,7 +2067,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
 
                 $oldIdent = 'Ch' . $channel . $suffix;
-                if ($suffix === 'Position' || $suffix === 'Lamella') {
+                if (in_array($suffix, ['DimmerSwitch', 'Level', 'Position', 'Lamella'], true)) {
                     $oldID = $this->FindManagedVariableID($oldIdent);
                     if ($oldID > 0 && IPS_VariableExists($oldID)) {
                         IPS_DeleteVariable($oldID);
@@ -2057,6 +2077,9 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             }
 
+            if (!($active && $type === 'dimmer')) {
+                $this->RemoveDimmerDummy($channel);
+            }
             if (!($active && $type === 'shutter')) {
                 $this->RemoveShutterDummy($channel);
             }
