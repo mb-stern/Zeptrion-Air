@@ -508,7 +508,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             '1' => ['type' => 'light',   'label' => 'Licht', 'scenes' => false],
             '3' => ['type' => 'dimmer',  'label' => 'Dimmer',    'scenes' => false],
             '5' => ['type' => 'shutter', 'label' => 'Rollo',    'scenes' => false],
-            '6' => ['type' => 'shutter', 'label' => 'Markise',          'scenes' => false],
+            '6' => ['type' => 'awning', 'label' => 'Markise', 'scenes' => false],
             default => $this->MapChannelByName($name)
         };
     }
