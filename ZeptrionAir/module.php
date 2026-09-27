@@ -94,7 +94,7 @@ class ZeptrionAir extends IPSModuleStrict
                     'type' => 'Button',
                     'caption' => 'Smart-Taster konfigurieren',
                     'link' => true,
-                    'onClick' => "echo '/hook/zeptrionair-smartbutton-' . $id;"
+                    'onClick' => "echo '/hook/zeptrionair-smartbutton-' . \$id;"
                 ];
             }
             $sceneItems = [];
