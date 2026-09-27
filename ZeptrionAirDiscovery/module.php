@@ -507,7 +507,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         return match ($cat) {
             '1' => ['type' => 'light',   'label' => 'Licht / Schalter', 'scenes' => false],
             '3' => ['type' => 'dimmer',  'label' => 'Dimmer / DALI',    'scenes' => false],
-            '5' => ['type' => 'shutter', 'label' => 'Store / Rollo',    'scenes' => false],
+            '5' => ['type' => 'shutter', 'label' => 'Rollo',    'scenes' => false],
             '6' => ['type' => 'shutter', 'label' => 'Markise',          'scenes' => false],
             default => $this->MapChannelByName($name)
         };
@@ -632,7 +632,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 $label = match ($type) {
                     'light' => 'Licht / Schalter',
                     'dimmer' => 'Dimmer / DALI',
-                    'shutter' => 'Store / Rollo',
+                    'shutter' => 'Rollo',
                     default => 'Leer / Smart-Taster'
                 };
                 $parts[] = 'K' . $channel . ': ' . ($name !== '' ? $name : 'Kanal ' . $channel) . ' – ' . $label;
