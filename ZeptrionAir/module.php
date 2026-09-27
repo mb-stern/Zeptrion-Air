@@ -141,6 +141,18 @@ class ZeptrionAir extends IPSModuleStrict
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'LamellaTimeMs', 'caption' => 'Lamellenzeit geschlossen → offen (ms)', 'minimum' => 100, 'maximum' => 32000]
                     ]
                 ];
+            } elseif ($type === 'awning') {
+                $items[] = [
+                    'type' => 'ExpansionPanel',
+                    'name' => 'Channel' . $channel . 'AwningConfig',
+                    'caption' => 'Markise konfigurieren',
+                    'expanded' => false,
+                    'items' => [
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'UpTimeMs', 'caption' => 'Fahrzeit ganz eingefahren → ganz ausgefahren (ms)', 'minimum' => 100, 'maximum' => 32000],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'DownTimeMs', 'caption' => 'Fahrzeit ganz ausgefahren → ganz eingefahren (ms)', 'minimum' => 100, 'maximum' => 32000],
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'StepPercent', 'caption' => 'Schrittweite Position (%)', 'minimum' => 1, 'maximum' => 100]
+                    ]
+                ];
             }
             $elements[] = [
                 'type' => 'ExpansionPanel',
