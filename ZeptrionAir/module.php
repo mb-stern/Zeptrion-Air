@@ -237,7 +237,7 @@ class ZeptrionAir extends IPSModuleStrict
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'IP-Adresse / Hostname fehlt'],
                 ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler'],
-                ['code' => 203, 'icon' => 'error', 'caption' => 'ZeptrionAir Splitter nicht verbunden']
+                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Warte auf ZeptrionAir Splitter']
             ]
         ];
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -261,9 +261,9 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         if (!$this->HasActiveParent()) {
-            $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->SetStatus(203);
+            $this->SetTimerInterval('PollTimer', 1000);
+            $this->SetStatus(104);
             return;
         }
         // Polling wird vollständig automatisch geregelt:
@@ -303,6 +303,17 @@ class ZeptrionAir extends IPSModuleStrict
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
             return;
+        }
+        if (!$this->HasActiveParent()) {
+            $this->SetTimerInterval('PollTimer', 1000);
+            return;
+        }
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['InstanceStatus'] ?? 0) === 104) {
+            $this->WriteAttributeInteger('CommunicationFailures', 0);
+            $this->SetTimerInterval('InfoTimer', 60000);
+            $this->SetStatus(102);
+            $this->SendDebug('Lifecycle', 'ZeptrionAir Splitter verbunden – Kommunikation gestartet', 0);
         }
         // Reine Motoraktoren liefern über chscan keine verwertbare Position.
         if ($this->IsMotorOnlyDevice()) {
@@ -1144,7 +1155,7 @@ class ZeptrionAir extends IPSModuleStrict
     private function EnsureShutterVariable(int $dummyID, string $ident, string $name, array $presentation, int $position): int
     {
         $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
-        if ($id === false || !IPS_InstanceExists($dummyID)) {
+        if ($id === false || !IPS_VariableExists($id)) {
             // Die Variable zuerst als echte Modulvariable registrieren und mit
             // EnableAction() an RequestAction() anbinden. Keine CustomAction.
             $oldID = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
