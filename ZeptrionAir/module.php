@@ -371,29 +371,15 @@ class ZeptrionAir extends IPSModuleStrict
         }
         // Laut zrap-API startet cmd=reboot nur das WLAN-Gerät neu und behält
         // dessen Konfiguration. Factory-/Network-Reset werden hier bewusst
-        // NICHT angeboten.
+        // NICHT angeboten. Die Wiedererreichbarkeit wird vom regulären Polling
+        // erkannt; hier wird weder blockierend gewartet noch ein Verzögerungstimer angelegt.
         $result = $this->SendHttpRequest('POST', '/zrap/sys', ['cmd' => 'reboot'], 3000);
         if (!$result['success']) {
             $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
             return 'Neustart konnte nicht ausgelöst werden. Das Gerät antwortet nicht auf die API.';
         }
         $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $result['httpCode'], 0);
-        // Ein erfolgreicher POST bestätigt zunächst nur die Annahme des Befehls.
-        // Für eine echte Erfolgsmeldung warten wir, bis /zrap/id nach dem Neustart
-        // wieder erreichbar ist.
-        usleep(1500000);
-        for ($attempt = 1; $attempt <= 12; $attempt++) {
-            $id = $this->HttpXmlGet('/zrap/id');
-            if ($id !== null) {
-                $this->SetStatus(102);
-                $this->Poll();
-                $this->RefreshDeviceInfo();
-                $this->SendDebug('Geräte-Neustart', 'Gerät wieder erreichbar', 0);
-                return 'Neustart erfolgreich: Das zeptrionAIR-Gerät ist wieder erreichbar.';
-            }
-            usleep(1000000);
-        }
-        return 'Neustart wurde ausgelöst, aber das Gerät war nach ca. 14 Sekunden noch nicht wieder erreichbar.';
+        return 'Neustart wurde ausgelöst. Die Wiedererreichbarkeit wird automatisch über das reguläre Polling erkannt.';
     }
     public function RefreshRuntimeInfo(): void
     {
