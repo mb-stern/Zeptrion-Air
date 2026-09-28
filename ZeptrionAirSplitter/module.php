@@ -72,7 +72,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
                     } else {
                         $caption = 'zeptrionAIR';
                     }
-                    $targets[] = $caption . ' → S' . $memory;
+                    $targets[] = $caption . ' → S' . $memory . ' (direkt)';
                 } elseif ($type === 'symcon') {
                     $objectID = (int)($target['object'] ?? 0);
                     if (IPS_VariableExists($objectID)) {
@@ -164,20 +164,58 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         if (!$sel['success']) {
             return ['ok' => false, 'message' => $sel['message']];
         }
-        $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
-        if ($hh === '') {
-            return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
+
+        $services = [];
+        $hasSymconTargets = false;
+        foreach ($targets as $target) {
+            if ((string)($target['type'] ?? '') === 'zeptrion') {
+                $instance = (int)($target['instance'] ?? 0);
+                $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
+                if ($host === '') {
+                    return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
+                }
+                $services[] = [
+                    'typ' => 'application/x-www-form-urlencoded',
+                    'req' => 'POST',
+                    'loc' => $host,
+                    'pth' => '/zrap/chctrl',
+                    'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
+                ];
+            } elseif ((string)($target['type'] ?? '') === 'symcon') {
+                $hasSymconTargets = true;
+            }
         }
-        $p = explode(':', $hh, 2);
-        $token = $this->ReadAttributeString('SmartButtonToken');
-        $payload = [
-            'req' => 'GET',
-            'typ' => 'application/x-www-form-urlencoded',
-            'loc' => $p[0],
-            'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
-            'pth' => '/hook/zeptrionair?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
-            'bdy' => ''
-        ];
+
+        if ($hasSymconTargets) {
+            $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
+            if ($hh === '') {
+                return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
+            }
+            $p = explode(':', $hh, 2);
+            $token = $this->ReadAttributeString('SmartButtonToken');
+            $services[] = [
+                'req' => 'GET',
+                'typ' => 'application/x-www-form-urlencoded',
+                'loc' => $p[0],
+                'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
+                'pth' => '/hook/zeptrionair?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
+                'bdy' => ''
+            ];
+        }
+
+        if ($services === []) {
+            return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
+        }
+        $payload = count($services) === 1 ? $services[0] : $services;
+        $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($encoded)) {
+            return ['ok' => false, 'message' => 'Smart-Taster-Programm konnte nicht erzeugt werden.'];
+        }
+        $estimatedBytes = strlen($encoded) + strlen('Content-Type: application/json\r\nContent-Length: ' . strlen($encoded) . '\r\nConnection: close\r\n');
+        if ($estimatedBytes > 730) {
+            return ['ok' => false, 'message' => 'Die Smart-Taster-Szene ist zu gross. zeptrionAIR erlaubt für /zapi/smartbt/prgs maximal 730 Byte inklusive HTTP-Header.'];
+        }
+
         $r = $this->SmartButtonRequest((string)$sel['host'], 'POST', '/zapi/smartbt/prgs', $payload, 5000);
         if (!$r['success']) {
             return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
@@ -204,7 +242,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             $scenes[] = $entry;
         }
         $this->WriteScenes($scenes);
-        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
+        $mode = $hasSymconTargets ? 'direkten zeptrionAIR- und Symcon-Zielen' : 'direkten zeptrionAIR-Zielen';
+        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ (' . $mode . ') programmiert.', 'scenes' => $scenes];
     }
 
     private function SelectDelete(): array
@@ -283,7 +322,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         return ['success' => true, 'host' => $selected, 'name' => $device['name'], 'instance' => $device['instance']];
     }
 
-    private function SmartButtonRequest(string $host, string $method, string $path, ?array $payload = null, int $timeoutMs = 4000): array
+    private function SmartButtonRequest(string $host, string $method, string $path, mixed $payload = null, int $timeoutMs = 4000): array
     {
         $url = 'http://' . $host . $path;
         $ch = curl_init();
@@ -331,12 +370,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             foreach (($scene['targets'] ?? []) as $target) {
                 try {
                     $type = (string)($target['type'] ?? 'zeptrion');
-                    if ($type === 'zeptrion') {
-                        $instance = (int)($target['instance'] ?? 0);
-                        if ($this->IsDeviceInstance($instance)) {
-                            ZEPA_RecallScene($instance, (int)$target['channel'], (int)$target['memory']);
-                        }
-                    } elseif ($type === 'symcon') {
+                    if ($type === 'symcon') {
                         $objectID = (int)($target['object'] ?? 0);
                         if (IPS_VariableExists($objectID)) {
                             RequestAction($objectID, $target['value'] ?? null);
@@ -375,7 +409,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Taster</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:1000px;margin:28px auto;padding:0 16px;background:#f5f5f5;color:#222}h1{font-size:24px}.card{background:#fff;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 1px 4px #0002}.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}input,select,button{font:inherit;padding:8px;border:1px solid #bbb;border-radius:6px}input{min-width:150px}select{min-width:180px}button{cursor:pointer}.name{flex:1}.danger{margin-left:auto}.status{padding:12px 0;min-height:24px;font-weight:600}.target{padding-left:12px;border-left:3px solid #ddd}.busy{opacity:.55;pointer-events:none}.hint,.source{color:#666;font-size:14px}.objfield{min-width:330px;text-align:left}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:99}.modalbox{background:#fff;width:min(760px,92vw);height:min(650px,84vh);border-radius:10px;padding:14px;display:flex;flex-direction:column}.tree{overflow:auto;flex:1;border:1px solid #ddd;border-radius:6px;padding:6px}.node{margin:1px 0}.nodeRow{display:flex;align-items:center;min-height:30px;border-radius:4px}.nodeRow:hover{background:#eee}.twisty{width:28px;border:0;background:transparent;padding:4px}.nodeLabel{border:0;background:transparent;text-align:left;flex:1;padding:5px}.nodeLabel.selectable{font-weight:500}.children{margin-left:22px}.search{box-sizing:border-box;width:100%;margin:8px 0}.close{margin-left:auto}.modalHead{display:flex;align-items:center;gap:10px}.typeTag{font-size:12px;color:#777;margin-left:8px}.searchResult{display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px;border-radius:4px}.searchResult:hover{background:#eee}
-</style></head><body><h1>Smart-Taster konfigurieren</h1><p class="hint">Szene benennen, Ziele hinzufügen und danach direkt programmieren.</p><div id="scenes"></div><button id="addScene">+ Szene hinzufügen</button> <button id="clearButton">Smart-Taster löschen</button><div class="status" id="status"></div><script>
+</style></head><body><h1>Smart-Taster konfigurieren</h1><p class="hint">Szene benennen, zeptrionAIR-Ziele direkt oder Symcon-Objekte hinzufügen und danach programmieren.</p><div id="scenes"></div><button id="addScene">+ Szene hinzufügen</button> <button id="clearButton">Smart-Taster löschen</button><div class="status" id="status"></div><script>
 const D=__DATA__;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptrionTargets||[];const cache=new Map();
 const el=id=>document.getElementById(id),mk=(t,x)=>{const e=document.createElement(t);if(x!==undefined)e.textContent=x;return e};
 function msg(x){el('status').textContent=x||''}function busy(v){document.body.classList.toggle('busy',!!v)}
@@ -388,7 +422,7 @@ async function choose(item){if(!item.selectable)return;const full=await api({op:
 async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
 async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Aus Splitter entfernen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const p=mk('button',o?o.path:'Objekt auswählen …');p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const add=mk('button','+ Objekt hinzufügen');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(add,p);c.append(a);root.append(c)}}
+async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Aus Splitter entfernen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const p=mk('button',o?o.path:'Objekt auswählen …');p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
 function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
 async function program(s){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die gewünschte blinkende Smart-Taste am Schalter drücken.'))return;msg('Smart-Tasten werden aktiviert. Bitte gewünschte blinkende Smart-Taste drücken …');busy(true);const clean=(s.targets||[]).map(t=>{const x={...t};delete x.objectInfo;return x});const r=await api({op:'program',scene:s.id,name:s.name,targets:clean});busy(false);if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
 async function forget(id){const r=await api({op:'forget',scene:id});if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
@@ -451,19 +485,17 @@ HTML;
                     $object = IPS_GetObject($id);
                     $objectType = (int)($object['ObjectType'] ?? -1);
                     if ($objectType === 0) {
-                        return 0; // Kategorien / Ordner
+                        return 0;
                     }
                     if ($objectType === 1) {
-                        return 1; // Instanzen
+                        return 1;
                     }
                 }
-                return 2; // Variablen, Skripte und übrige Objekte
+                return 2;
             };
             $ra = $rank($a);
             $rb = $rank($b);
-            return $ra === $rb
-                ? strnatcasecmp((string)$a['name'], (string)$b['name'])
-                : ($ra <=> $rb);
+            return $ra === $rb ? strnatcasecmp((string)$a['name'], (string)$b['name']) : ($ra <=> $rb);
         });
         return $items;
     }
@@ -501,7 +533,6 @@ HTML;
         if (!IPS_ObjectExists($id)) {
             return null;
         }
-        $object = IPS_GetObject($id);
         $selectable = IPS_VariableExists($id) || IPS_ScriptExists($id);
         $type = IPS_VariableExists($id) ? 'variable' : (IPS_ScriptExists($id) ? 'script' : 'container');
         return [
