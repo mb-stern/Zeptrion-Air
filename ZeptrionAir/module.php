@@ -253,16 +253,20 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetTimerInterval('SceneResetTimer', 0);
         $this->ApplyChannelVariables();
         $this->ApplyInfoVariables();
+        $instance = IPS_GetInstance($this->InstanceID);
         if (trim($this->ReadPropertyString('Host')) === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
+            if ((int)($instance['InstanceStatus'] ?? 0) !== 201) {
+                $this->RegisterOnceTimer('DeferredApply', 1000, 'IPS_ApplyChanges($_IPS["TARGET"]);');
+            }
             $this->SetStatus(201);
             return;
         }
-        $instance = IPS_GetInstance($this->InstanceID);
         if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
+            $this->RegisterOnceTimer('DeferredApply', 1000, 'IPS_ApplyChanges($_IPS["TARGET"]);');
             return;
         }
         $this->WriteAttributeInteger('CommunicationFailures', 0);
