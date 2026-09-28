@@ -44,7 +44,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                 'instanceID' => $instance['instanceID'] ?? 0
             ];
             if ($reachable && $instance === null) {
-                $rows[$host]['create'] = [
+                $rows[$host]['create'] = [[
                     'moduleID' => self::DEVICE_MODULE_ID,
                     'configuration' => [
                         'Host' => $host,
@@ -78,12 +78,18 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'ShowChannelActualValues' => false
                     ],
                     'name' => $host
-                ];
+                ], [
+                    'moduleID' => self::SPLITTER_MODULE_ID,
+                    'configuration' => []
+                ]];
             } elseif ($reachable && $instance !== null) {
-                $rows[$host]['create'] = [
+                $rows[$host]['create'] = [[
                     'moduleID' => self::DEVICE_MODULE_ID,
                     'configuration' => ['Host' => $host]
-                ];
+                ], [
+                    'moduleID' => self::SPLITTER_MODULE_ID,
+                    'configuration' => []
+                ]];
             }
         }
         foreach ($existing as $host => $instance) {
