@@ -265,6 +265,8 @@ class ZeptrionAir extends IPSModuleStrict
             $this->SetTimerInterval('InfoTimer', 0);
             return;
         }
+        $this->WriteAttributeInteger('CommunicationFailures', 0);
+        $this->SetStatus(102);
         // Polling wird vollständig automatisch geregelt:
         // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
         $this->WriteAttributeInteger('CommunicationFailures', 0);
