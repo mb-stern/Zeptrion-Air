@@ -6,7 +6,6 @@ class ZeptrionAir extends IPSModuleStrict
     public function Create(): void
     {
         parent::Create();
-        $this->ConnectParent('{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}');
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -241,6 +240,10 @@ class ZeptrionAir extends IPSModuleStrict
             ]
         ];
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+    public function GetCompatibleParents(): array
+    {
+        return ['{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}'];
     }
     public function ApplyChanges(): void
     {
