@@ -236,8 +236,7 @@ class ZeptrionAir extends IPSModuleStrict
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'IP-Adresse / Hostname fehlt'],
-                ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler'],
-                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Warte auf ZeptrionAir Splitter']
+                ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler']
             ]
         ];
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -260,10 +259,10 @@ class ZeptrionAir extends IPSModuleStrict
             $this->SetStatus(201);
             return;
         }
-        if (!$this->HasActiveParent()) {
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->SetTimerInterval('PollTimer', 1000);
-            $this->SetStatus(104);
             return;
         }
         // Polling wird vollständig automatisch geregelt:
@@ -304,16 +303,9 @@ class ZeptrionAir extends IPSModuleStrict
         if ($host === '') {
             return;
         }
-        if (!$this->HasActiveParent()) {
-            $this->SetTimerInterval('PollTimer', 1000);
-            return;
-        }
         $instance = IPS_GetInstance($this->InstanceID);
-        if ((int)($instance['InstanceStatus'] ?? 0) === 104) {
-            $this->WriteAttributeInteger('CommunicationFailures', 0);
-            $this->SetTimerInterval('InfoTimer', 60000);
-            $this->SetStatus(102);
-            $this->SendDebug('Lifecycle', 'ZeptrionAir Splitter verbunden – Kommunikation gestartet', 0);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            return;
         }
         // Reine Motoraktoren liefern über chscan keine verwertbare Position.
         if ($this->IsMotorOnlyDevice()) {
