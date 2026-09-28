@@ -871,6 +871,11 @@ class ZeptrionAir extends IPSModuleStrict
     }
     private function SendHttpRequest(string $method, string $path, ?array $formData, int $timeoutMs): array
     {
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SendDebug('Splitter', 'Noch keine übergeordnete Instanz verbunden – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Noch kein zeptrionAIR-Splitter verbunden'];
+        }
         $payload = json_encode([
             'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
             'Host' => trim($this->ReadPropertyString('Host')),
