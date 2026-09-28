@@ -257,6 +257,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($host === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
+            $this->SetStatus(201);
             return;
         }
         if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
