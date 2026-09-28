@@ -249,43 +249,30 @@ class ZeptrionAir extends IPSModuleStrict
     {
         parent::ApplyChanges();
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
-        // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('SceneResetTimer', 0);
         $this->ApplyChannelVariables();
         $this->ApplyInfoVariables();
+        $host = trim($this->ReadPropertyString('Host'));
         $instance = IPS_GetInstance($this->InstanceID);
-        if (trim($this->ReadPropertyString('Host')) === '') {
+        if ($host === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            if ((int)($instance['InstanceStatus'] ?? 0) !== 201) {
-                $this->RegisterOnceTimer(1000, 'IPS_ApplyChanges($_IPS["TARGET"]);');
-            }
             $this->SetStatus(201);
             return;
         }
         if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->RegisterOnceTimer(1000, 'IPS_ApplyChanges($_IPS["TARGET"]);');
             return;
         }
         $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetStatus(102);
-        // Polling wird vollständig automatisch geregelt:
-        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
-        $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetTimerInterval('InfoTimer', 60000);
-        $this->SetStatus(102);
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
-            $this->RefreshDeviceInfo();
         } else {
             $this->SetTimerInterval('PollTimer', 5000);
-            $this->Poll();
-            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
-                $this->RefreshDeviceInfo();
-            }
         }
     }
     private function IsMotorOnlyDevice(): bool
@@ -900,16 +887,26 @@ class ZeptrionAir extends IPSModuleStrict
             'FormData' => $formData,
             'TimeoutMs' => $timeoutMs
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $parentID = (int)($instance['ConnectionID'] ?? 0);
+        if (!IPS_IsInstanceCompatible($this->InstanceID, $parentID)) {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+            $this->SendDebug('Splitter', 'Parent-Interface ist noch nicht verfügbar – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Parent-Interface noch nicht verfügbar'];
+        }
         $response = $this->SendDataToParent((string)$payload);
         $result = json_decode((string)$response, true);
         if (!is_array($result)) {
             return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Antwort vom zeptrionAIR-Splitter'];
         }
+        $error = (string)($result['error'] ?? '');
+        if ($error === 'Gerätekommunikation ist belegt') {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+        }
         return [
             'success' => (bool)($result['success'] ?? false),
             'raw' => (string)($result['raw'] ?? ''),
             'httpCode' => (int)($result['httpCode'] ?? 0),
-            'error' => (string)($result['error'] ?? '')
+            'error' => $error
         ];
     }
     private function ApplyChannelStates(array $data, string $source): void

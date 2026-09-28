@@ -163,12 +163,16 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
             header('Content-Type: application/json; charset=utf-8');
-            $in = json_decode((string)file_get_contents('php\://input'), true);
-            if (!is_array($in)) {
-                echo json_encode(['ok' => false, 'message' => 'Ungültige Anfrage']);
-                return;
-            }
-            switch ((string)($in['op'] ?? '')) {
+            try {
+                $rawInput = file_get_contents('php://input');
+                if ($rawInput === false) {
+                    throw new RuntimeException('Anfragedaten konnten nicht gelesen werden.');
+                }
+                $in = json_decode($rawInput, true, 512, JSON_THROW_ON_ERROR);
+                if (!is_array($in)) {
+                    throw new RuntimeException('Ungültige Anfrage.');
+                }
+                switch ((string)($in['op'] ?? '')) {
                 case 'program':
                     echo json_encode($this->ProgramScene($in), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                     return;
@@ -184,11 +188,15 @@ class ZeptrionAirSplitter extends IPSModuleStrict
                 case 'tree-search':
                     echo json_encode(['ok' => true, 'items' => $this->SearchObjectTree((string)($in['query'] ?? ''))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                     return;
-                case 'object-info':
-                    echo json_encode(['ok' => true, 'object' => $this->GetSelectableObjectInfo((int)($in['id'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    return;
+                    case 'object-info':
+                        echo json_encode(['ok' => true, 'object' => $this->GetSelectableObjectInfo((int)($in['id'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                        return;
+                }
+                echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            } catch (Throwable $e) {
+                $this->SendDebug('Webinterface', $e->getMessage(), 0);
+                echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             }
-            echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion']);
             return;
         }
         header('Content-Type: text/html; charset=utf-8');
@@ -307,13 +315,25 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         if ($active === []) {
             return ['success' => false, 'message' => 'Programmiermodus konnte auf keinem zApp gestartet werden.'];
         }
+        $locked = [];
+        foreach (array_keys($active) as $host) {
+            $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
+            if (IPS_SemaphoreEnter($lockName, 0)) {
+                $locked[$host] = $lockName;
+            } else {
+                unset($active[$host]);
+            }
+        }
+        if ($active === []) {
+            return ['success' => false, 'message' => 'Gerätekommunikation ist belegt. Smart-Taster-Auswahl konnte nicht gestartet werden.'];
+        }
         $this->SendDebug('Smart-Taster', 'Warte auf Tastendruck auf ' . count($active) . ' zApp(s): ' . implode(', ', array_keys($active)), 0);
         $multi = curl_multi_init();
         $handles = [];
         foreach ($active as $host => $device) {
             $ch = curl_init();
             curl_setopt_array($ch, [
-                CURLOPT_URL => 'http\://' . $host . '/zapi/smartbt/prgn',
+                CURLOPT_URL => 'http://' . $host . '/zapi/smartbt/prgn',
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CONNECTTIMEOUT_MS => 2500,
                 CURLOPT_TIMEOUT_MS => 65000,
@@ -350,6 +370,9 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             curl_close($ch);
         }
         curl_multi_close($multi);
+        foreach ($locked as $lockName) {
+            IPS_SemaphoreLeave($lockName);
+        }
         if ($selected === '') {
             return ['success' => false, 'message' => 'Keine Smart-Taste erkannt.'];
         }
@@ -359,29 +382,40 @@ class ZeptrionAirSplitter extends IPSModuleStrict
     }
     private function SmartButtonRequest(string $host, string $method, string $path, mixed $payload = null, int $timeoutMs = 4000): array
     {
-        $url = 'http\://' . $host . $path;
-        $ch = curl_init();
-        $options = [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 2000,
-            CURLOPT_TIMEOUT_MS => $timeoutMs,
-            CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => ['Connection: close']
-        ];
-        if ($payload !== null) {
-            $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $options[CURLOPT_POSTFIELDS] = $body;
-            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close'];
+        $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
+        if (!IPS_SemaphoreEnter($lockName, $timeoutMs + 1000)) {
+            return ['success' => false, 'message' => 'Gerätekommunikation ist belegt', 'raw' => '', 'httpCode' => 0];
         }
-        curl_setopt_array($ch, $options);
-        $response = curl_exec($ch);
-        $error = curl_error($ch);
-        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        $raw = is_string($response) ? $response : '';
-        $this->SendDebug('Smart-Taster RAW', $method . ' ' . $url . ' / HTTP ' . $code . ' / Antwort: ' . $raw . ($error !== '' ? ' / Fehler: ' . $error : ''), 0);
-        return ['success' => $error === '' && $code >= 200 && $code < 300, 'message' => $error !== '' ? $error : 'HTTP ' . $code . ($raw !== '' ? ' / ' . $raw : ''), 'raw' => $raw, 'httpCode' => $code];
+        try {
+            $url = 'http://' . $host . $path;
+            $ch = curl_init();
+            if ($ch === false) {
+                return ['success' => false, 'message' => 'cURL konnte nicht initialisiert werden', 'raw' => '', 'httpCode' => 0];
+            }
+            $options = [
+                CURLOPT_URL => $url,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT_MS => 2000,
+                CURLOPT_TIMEOUT_MS => $timeoutMs,
+                CURLOPT_CUSTOMREQUEST => $method,
+                CURLOPT_HTTPHEADER => ['Connection: close']
+            ];
+            if ($payload !== null) {
+                $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $options[CURLOPT_POSTFIELDS] = $body;
+                $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close'];
+            }
+            curl_setopt_array($ch, $options);
+            $response = curl_exec($ch);
+            $error = curl_error($ch);
+            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $raw = is_string($response) ? $response : '';
+            $this->SendDebug('Smart-Taster RAW', $method . ' ' . $url . ' / HTTP ' . $code . ' / Antwort: ' . $raw . ($error !== '' ? ' / Fehler: ' . $error : ''), 0);
+            return ['success' => $error === '' && $code >= 200 && $code < 300, 'message' => $error !== '' ? $error : 'HTTP ' . $code . ($raw !== '' ? ' / ' . $raw : ''), 'raw' => $raw, 'httpCode' => $code];
+        } finally {
+            IPS_SemaphoreLeave($lockName);
+        }
     }
     private function ForgetScene(string $id): array
     {
