@@ -236,7 +236,8 @@ class ZeptrionAir extends IPSModuleStrict
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'IP-Adresse / Hostname fehlt'],
-                ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler']
+                ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler'],
+                ['code' => 203, 'icon' => 'error', 'caption' => 'ZeptrionAir Splitter nicht verbunden']
             ]
         ];
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -257,6 +258,12 @@ class ZeptrionAir extends IPSModuleStrict
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
             $this->SetStatus(201);
+            return;
+        }
+        if (!$this->HasActiveParent()) {
+            $this->SetTimerInterval('PollTimer', 0);
+            $this->SetTimerInterval('InfoTimer', 0);
+            $this->SetStatus(203);
             return;
         }
         // Polling wird vollständig automatisch geregelt:
@@ -1137,7 +1144,7 @@ class ZeptrionAir extends IPSModuleStrict
     private function EnsureShutterVariable(int $dummyID, string $ident, string $name, array $presentation, int $position): int
     {
         $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
-        if ($id === false || !IPS_VariableExists($id)) {
+        if ($id === false || !IPS_InstanceExists($dummyID)) {
             // Die Variable zuerst als echte Modulvariable registrieren und mit
             // EnableAction() an RequestAction() anbinden. Keine CustomAction.
             $oldID = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
