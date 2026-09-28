@@ -3,7 +3,6 @@ declare(strict_types=1);
 class ZeptrionAirSplitter extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
-
     public function Create(): void
     {
         parent::Create();
@@ -11,7 +10,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->RegisterAttributeString('SmartButtonToken', '');
         $this->RegisterHook('zeptrionair');
     }
-
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
@@ -21,7 +19,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->RegisterHook('zeptrionair');
         $this->SetStatus(102);
     }
-
     public function GetConfigurationForm(): string
     {
         return json_encode([
@@ -32,7 +29,56 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
-
+    public function ForwardData(string $JSONString): string
+    {
+        $data = json_decode($JSONString, true);
+        if (!is_array($data)) {
+            return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Anfrage']);
+        }
+        $host = trim((string)($data['Host'] ?? ''));
+        $method = strtoupper((string)($data['Method'] ?? 'GET'));
+        $path = (string)($data['Path'] ?? '');
+        $formData = is_array($data['FormData'] ?? null) ? $data['FormData'] : null;
+        $timeoutMs = max(500, min(65000, (int)($data['TimeoutMs'] ?? 4000)));
+        if ($host === '' || !in_array($method, ['GET', 'POST'], true) || $path === '' || $path[0] !== '/') {
+            return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige HTTP-Anfrage']);
+        }
+        $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
+        if (!IPS_SemaphoreEnter($lockName, $timeoutMs + 1000)) {
+            return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Gerätekommunikation ist belegt']);
+        }
+        try {
+            $url = 'http://' . $host . $path;
+            $curl = curl_init();
+            if ($curl === false) {
+                return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'cURL konnte nicht initialisiert werden']);
+            }
+            $options = [
+                CURLOPT_URL => $url,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT_MS => min(2000, $timeoutMs),
+                CURLOPT_TIMEOUT_MS => $timeoutMs,
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_CUSTOMREQUEST => $method,
+                CURLOPT_HTTPHEADER => ['Connection: close']
+            ];
+            if ($method === 'POST' && $formData !== null) {
+                $options[CURLOPT_POSTFIELDS] = http_build_query($formData);
+                $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/x-www-form-urlencoded', 'Connection: close'];
+            }
+            curl_setopt_array($curl, $options);
+            $response = curl_exec($curl);
+            $error = curl_error($curl);
+            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            curl_close($curl);
+            $raw = is_string($response) ? $response : '';
+            $success = $response !== false && $error === '' && $httpCode >= 200 && $httpCode < 400;
+            $this->SendDebug('HTTP Transport', $method . ' ' . $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            return json_encode(['success' => $success, 'raw' => $raw, 'httpCode' => $httpCode, 'error' => $error], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } finally {
+            IPS_SemaphoreLeave($lockName);
+        }
+    }
     public function GetSmartButtonAssignment(int $deviceInstance): string
     {
         $names = [];
@@ -47,7 +93,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         return implode(', ', array_values(array_unique($names)));
     }
-
     public function GetSmartButtonAssignments(int $deviceInstance): string
     {
         $result = [];
@@ -92,7 +137,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
-
     private function FormatSmartButtonValue(int $variableID, mixed $value): string
     {
         $variable = IPS_GetVariable($variableID);
@@ -111,7 +155,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         return (string)$value;
     }
-
     protected function ProcessHookData(): void
     {
         if ((string)($_GET['action'] ?? '') === 'run') {
@@ -120,7 +163,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
             header('Content-Type: application/json; charset=utf-8');
-            $in = json_decode((string)file_get_contents('php://input'), true);
+            $in = json_decode((string)file_get_contents('php\://input'), true);
             if (!is_array($in)) {
                 echo json_encode(['ok' => false, 'message' => 'Ungültige Anfrage']);
                 return;
@@ -151,7 +194,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         header('Content-Type: text/html; charset=utf-8');
         echo $this->BuildInterface();
     }
-
     private function ProgramScene(array $in): array
     {
         $name = trim((string)($in['name'] ?? '')) ?: 'Szene';
@@ -164,7 +206,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         if (!$sel['success']) {
             return ['ok' => false, 'message' => $sel['message']];
         }
-
         $services = [];
         $hasSymconTargets = false;
         foreach ($targets as $target) {
@@ -185,7 +226,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
                 $hasSymconTargets = true;
             }
         }
-
         if ($hasSymconTargets) {
             $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
             if ($hh === '') {
@@ -202,7 +242,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
                 'bdy' => ''
             ];
         }
-
         if ($services === []) {
             return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
         }
@@ -215,7 +254,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         if ($estimatedBytes > 730) {
             return ['ok' => false, 'message' => 'Die Smart-Taster-Szene ist zu gross. zeptrionAIR erlaubt für /zapi/smartbt/prgs maximal 730 Byte inklusive HTTP-Header.'];
         }
-
         $r = $this->SmartButtonRequest((string)$sel['host'], 'POST', '/zapi/smartbt/prgs', $payload, 5000);
         if (!$r['success']) {
             return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
@@ -245,7 +283,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $mode = $hasSymconTargets ? 'direkten zeptrionAIR- und Symcon-Zielen' : 'direkten zeptrionAIR-Zielen';
         return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ (' . $mode . ') programmiert.', 'scenes' => $scenes];
     }
-
     private function SelectDelete(): array
     {
         $s = $this->SelectSmartButton();
@@ -254,7 +291,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         return ['ok' => true, 'message' => 'Smart-Taste auf „' . $s['name'] . '“ wurde erkannt und zum Löschen ausgewählt.'];
     }
-
     private function SelectSmartButton(): array
     {
         $devices = $this->GetDeviceHosts();
@@ -277,7 +313,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         foreach ($active as $host => $device) {
             $ch = curl_init();
             curl_setopt_array($ch, [
-                CURLOPT_URL => 'http://' . $host . '/zapi/smartbt/prgn',
+                CURLOPT_URL => 'http\://' . $host . '/zapi/smartbt/prgn',
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CONNECTTIMEOUT_MS => 2500,
                 CURLOPT_TIMEOUT_MS => 65000,
@@ -321,10 +357,9 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->SendDebug('Smart-Taster erkannt', 'zApp: ' . $selected . ' / Gerät: ' . $device['name'] . ' / Instanz: ' . $device['instance'], 0);
         return ['success' => true, 'host' => $selected, 'name' => $device['name'], 'instance' => $device['instance']];
     }
-
     private function SmartButtonRequest(string $host, string $method, string $path, mixed $payload = null, int $timeoutMs = 4000): array
     {
-        $url = 'http://' . $host . $path;
+        $url = 'http\://' . $host . $path;
         $ch = curl_init();
         $options = [
             CURLOPT_URL => $url,
@@ -348,14 +383,12 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->SendDebug('Smart-Taster RAW', $method . ' ' . $url . ' / HTTP ' . $code . ' / Antwort: ' . $raw . ($error !== '' ? ' / Fehler: ' . $error : ''), 0);
         return ['success' => $error === '' && $code >= 200 && $code < 300, 'message' => $error !== '' ? $error : 'HTTP ' . $code . ($raw !== '' ? ' / ' . $raw : ''), 'raw' => $raw, 'httpCode' => $code];
     }
-
     private function ForgetScene(string $id): array
     {
         $scenes = array_values(array_filter($this->ReadScenes(), static fn(array $scene): bool => (string)($scene['id'] ?? '') !== $id));
         $this->WriteScenes($scenes);
         return ['ok' => true, 'message' => 'Eintrag wurde aus dem zeptrionAIR-Splitter entfernt.', 'scenes' => $scenes];
     }
-
     private function RunScene(string $id, string $token): void
     {
         if ($token === '' || !hash_equals($this->ReadAttributeString('SmartButtonToken'), $token)) {
@@ -398,7 +431,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         http_response_code(404);
         echo 'Scene not found';
     }
-
     private function BuildInterface(): string
     {
         $data = json_encode([
@@ -432,7 +464,6 @@ el('addScene').onclick=addScene;el('clearButton').onclick=clearButton;render();
 HTML;
         return str_replace('__DATA__', $data, $html);
     }
-
     private function GetDeviceHosts(): array
     {
         $result = [];
@@ -447,7 +478,6 @@ HTML;
         ksort($result, SORT_NATURAL);
         return $result;
     }
-
     private function GetTargets(): array
     {
         $result = [];
@@ -467,7 +497,6 @@ HTML;
         usort($result, static fn($a, $b) => strnatcasecmp($a['caption'], $b['caption']));
         return $result;
     }
-
     private function GetObjectTreeChildren(int $parentID): array
     {
         $ids = $parentID === 0 ? IPS_GetChildrenIDs(0) : (IPS_ObjectExists($parentID) ? IPS_GetChildrenIDs($parentID) : []);
@@ -499,7 +528,6 @@ HTML;
         });
         return $items;
     }
-
     private function SearchObjectTree(string $query): array
     {
         $query = trim($query);
@@ -527,7 +555,6 @@ HTML;
         usort($items, static fn(array $a, array $b): int => strnatcasecmp((string)$a['path'], (string)$b['path']));
         return $items;
     }
-
     private function GetTreeObjectInfo(int $id): ?array
     {
         if (!IPS_ObjectExists($id)) {
@@ -545,7 +572,6 @@ HTML;
             'icon' => $type === 'variable' ? '●' : ($type === 'script' ? '▶' : '▸')
         ];
     }
-
     private function GetSelectableObjectInfo(int $id): ?array
     {
         if (IPS_VariableExists($id)) {
@@ -592,7 +618,6 @@ HTML;
         }
         return null;
     }
-
     private function ObjectPath(int $id): string
     {
         $parts = [];
@@ -603,7 +628,6 @@ HTML;
         }
         return implode(' / ', array_reverse($parts));
     }
-
     private function NormalizeTargets(array $targets): array
     {
         $out = [];
@@ -648,7 +672,6 @@ HTML;
         }
         return $out;
     }
-
     private function IsDeviceInstance(int $id): bool
     {
         if ($id <= 0 || !IPS_InstanceExists($id)) {
@@ -657,13 +680,11 @@ HTML;
         $instance = IPS_GetInstance($id);
         return (string)($instance['ModuleInfo']['ModuleID'] ?? '') === self::DEVICE_MODULE_ID;
     }
-
     private function ReadScenes(): array
     {
         $data = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
         return is_array($data) ? $data : [];
     }
-
     private function WriteScenes(array $scenes): void
     {
         $this->WriteAttributeString('SmartButtonScenes', json_encode(array_values($scenes), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));

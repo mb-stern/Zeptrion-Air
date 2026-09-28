@@ -365,30 +365,12 @@ class ZeptrionAir extends IPSModuleStrict
         // Laut zrap-API startet cmd=reboot nur das WLAN-Gerät neu und behält
         // dessen Konfiguration. Factory-/Network-Reset werden hier bewusst
         // NICHT angeboten.
-        $url = 'http://' . $host . '/zrap/sys';
-        $curl = curl_init();
-        if ($curl === false) {
-            return 'Neustart nicht möglich: cURL konnte nicht initialisiert werden.';
-        }
-        curl_setopt_array($curl, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1000,
-            CURLOPT_TIMEOUT_MS => 3000,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CUSTOMREQUEST => 'POST',
-            CURLOPT_POSTFIELDS => http_build_query(['cmd' => 'reboot']),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded']
-        ]);
-        $response = curl_exec($curl);
-        $error = curl_error($curl);
-        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
-        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) {
-            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+        $result = $this->SendHttpRequest('POST', '/zrap/sys', ['cmd' => 'reboot'], 3000);
+        if (!$result['success']) {
+            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
             return 'Neustart konnte nicht ausgelöst werden. Das Gerät antwortet nicht auf die API.';
         }
-        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $httpCode, 0);
+        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $result['httpCode'], 0);
         // Ein erfolgreicher POST bestätigt zunächst nur die Annahme des Befehls.
         // Für eine echte Erfolgsmeldung warten wir, bis /zrap/id nach dem Neustart
         // wieder erreichbar ist.
@@ -731,36 +713,11 @@ class ZeptrionAir extends IPSModuleStrict
             return false;
         }
         try {
-            $url = 'http://' . $host . '/zrap/chctrl/ch' . $Channel;
-            $this->SendDebug('SendCommand', 'POST ' . $url . ' cmd=' . $Command, 0);
-            $curl = curl_init();
-            if ($curl === false) {
-                throw new RuntimeException('cURL konnte nicht initialisiert werden');
-            }
-            curl_setopt_array($curl, [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => http_build_query(['cmd' => $Command]),
-                CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Connection: close']
-            ]);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            $success = $response !== false && $httpCode >= 200 && $httpCode < 400;
-            $this->SendDebug(
-                'SendCommand',
-                'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') . ' / Antwort: ' . (string)$response,
-                0
-            );
-            if (!$success) {
-                return false;
-            }
-            return true;
+            $path = '/zrap/chctrl/ch' . $Channel;
+            $this->SendDebug('SendCommand', 'POST http://' . $host . $path . ' cmd=' . $Command, 0);
+            $result = $this->SendHttpRequest('POST', $path, ['cmd' => $Command], 10000);
+            $this->SendDebug('SendCommand', 'HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : '') . ' / Antwort: ' . $result['raw'], 0);
+            return $result['success'];
         } finally {
             IPS_SemaphoreLeave($lockName);
         }
@@ -889,32 +846,16 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return null;
             }
-            $url = 'http://' . $host . $path;
-            $curl = curl_init();
-            if ($curl === false) {
-                return null;
-            }
-            curl_setopt_array($curl, [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => 1000,
-                CURLOPT_TIMEOUT_MS => 2500,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_HTTPHEADER => ['Connection: close']
-            ]);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
-                $this->SendDebug('HTTP Fehler', $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            $result = $this->SendHttpRequest('GET', $path, null, 2500);
+            if (!$result['success'] || trim($result['raw']) === '') {
+                $this->SendDebug('HTTP Fehler', 'http://' . $host . $path . ' / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
                 return null;
             }
             libxml_use_internal_errors(true);
-            $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
+            $xml = simplexml_load_string($result['raw'], 'SimpleXMLElement', LIBXML_NOCDATA);
             if ($xml === false) {
                 libxml_clear_errors();
-                $this->SendDebug('HTTP Fehler', 'Ungültiges XML von ' . $url, 0);
+                $this->SendDebug('HTTP Fehler', 'Ungültiges XML von http://' . $host . $path, 0);
                 return null;
             }
             $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -923,6 +864,28 @@ class ZeptrionAir extends IPSModuleStrict
         } finally {
             IPS_SemaphoreLeave($lockName);
         }
+    }
+    private function SendHttpRequest(string $method, string $path, ?array $formData, int $timeoutMs): array
+    {
+        $payload = json_encode([
+            'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
+            'Host' => trim($this->ReadPropertyString('Host')),
+            'Method' => strtoupper($method),
+            'Path' => $path,
+            'FormData' => $formData,
+            'TimeoutMs' => $timeoutMs
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $response = $this->SendDataToParent((string)$payload);
+        $result = json_decode((string)$response, true);
+        if (!is_array($result)) {
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Antwort vom zeptrionAIR-Splitter'];
+        }
+        return [
+            'success' => (bool)($result['success'] ?? false),
+            'raw' => (string)($result['raw'] ?? ''),
+            'httpCode' => (int)($result['httpCode'] ?? 0),
+            'error' => (string)($result['error'] ?? '')
+        ];
     }
     private function ApplyChannelStates(array $data, string $source): void
     {
