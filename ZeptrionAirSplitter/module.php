@@ -163,6 +163,12 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
             header('Content-Type: application/json; charset=utf-8');
+            set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+                if (!(error_reporting() & $severity)) {
+                    return false;
+                }
+                throw new ErrorException($message, 0, $severity, $file, $line);
+            });
             try {
                 $rawInput = file_get_contents('php://input');
                 if ($rawInput === false) {
@@ -504,7 +510,7 @@ const D=__DATA__;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptri
 const el=id=>document.getElementById(id),mk=(t,x)=>{const e=document.createElement(t);if(x!==undefined)e.textContent=x;return e};
 function msg(x){el('status').textContent=x||''}function busy(v){document.body.classList.toggle('busy',!!v)}
 function opts(s,l,v){s.replaceChildren();l.forEach(x=>{const o=mk('option',x.caption);o.value=x.value;if(String(x.value)===String(v))o.selected=true;s.append(o)})}
-async function api(x){try{const r=await fetch('/hook/zeptrionair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});return await r.json()}catch(e){return{ok:false,message:e.message}}}
+async function api(x){try{const r=await fetch('/hook/zeptrionair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
 async function objectInfo(id){if(!id)return null;if(cache.has(+id))return cache.get(+id);const r=await api({op:'object-info',id:+id});if(r.ok&&r.object){cache.set(+id,r.object);return r.object}return null}
 function migrate(t){if(t.type==='variable')return{type:'symcon',object:+t.variable,value:t.value};if(t.type==='script')return{type:'symcon',object:+t.script};return t}
 async function pick(t,done){const m=mk('div');m.className='modal';const b=mk('div');b.className='modalbox';const head=mk('div');head.className='modalHead';head.append(mk('h3','Symcon-Objekt auswählen'));const x=mk('button','Schliessen');x.className='close';x.onclick=()=>m.remove();head.append(x);const q=mk('input');q.className='search';q.placeholder='Objekt suchen …';const tree=mk('div');tree.className='tree';b.append(head,q,tree);m.append(b);document.body.append(m);
