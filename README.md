@@ -150,16 +150,18 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 
 ## Versionen
 
+### Version 1.1
+- Umbau nach Store-Richtlinien
+
+### Version 1.0
+- Initiale Version
+
 ### Entwicklung
 
 - Zentrale Kommunikation der Geräteinstanzen über den zeptrionAIR Splitter
 - Smart-Taster-Konfiguration über zentralen WebHook
 - Smart-Taster-Ziele für IP-Symcon Variablen, Skripte und eingebundene zeptrionAIR Geräte
 - Koordinierte Gerätekommunikation bei Polling und Smart-Taster-Programmierung
-
-### Version 1.0
-
-- Initiale Version
 
 ## Lizenz
 
