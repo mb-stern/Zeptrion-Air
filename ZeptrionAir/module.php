@@ -249,43 +249,30 @@ class ZeptrionAir extends IPSModuleStrict
     {
         parent::ApplyChanges();
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
-        // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('SceneResetTimer', 0);
         $this->ApplyChannelVariables();
         $this->ApplyInfoVariables();
+        $host = trim($this->ReadPropertyString('Host'));
         $instance = IPS_GetInstance($this->InstanceID);
-        if (trim($this->ReadPropertyString('Host')) === '') {
+        if ($host === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            if ((int)($instance['InstanceStatus'] ?? 0) !== 201) {
-                $this->RegisterOnceTimer(1000, 'IPS_ApplyChanges($_IPS["TARGET"]);');
-            }
             $this->SetStatus(201);
             return;
         }
         if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->RegisterOnceTimer(1000, 'IPS_ApplyChanges($_IPS["TARGET"]);');
             return;
         }
         $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetStatus(102);
-        // Polling wird vollständig automatisch geregelt:
-        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
-        $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetTimerInterval('InfoTimer', 60000);
-        $this->SetStatus(102);
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
-            $this->RefreshDeviceInfo();
         } else {
             $this->SetTimerInterval('PollTimer', 5000);
-            $this->Poll();
-            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
-                $this->RefreshDeviceInfo();
-            }
         }
     }
     private function IsMotorOnlyDevice(): bool
@@ -523,335 +510,135 @@ class ZeptrionAir extends IPSModuleStrict
             if ($this->ReadPropertyBoolean('ShowRSSI')) {
                 $this->SetValueIfChanged('RSSI', $rounded);
             }
-        } else {
-            $this->SendDebug('RSSI', 'Antwort erhalten, aber kein RSSI-Wert gefunden', 0);
-        }
-        if ($this->ReadPropertyBoolean('ShowOnline')) {
-            $this->SetValueIfChanged('Online', true);
         }
     }
     public function RequestAction($Ident, $Value): void
     {
-        if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Lamella|Command|Scene)$/', (string)$Ident, $m)) {
-            throw new Exception('Ungültiger Ident: ' . $Ident);
+        if (preg_match('/^Ch([1-4])(Switch|Level|Position|Lamella|Scene)$/', (string)$Ident, $m) !== 1) {
+            throw new Exception('Unbekannte Aktion: ' . $Ident);
         }
         $channel = (int)$m[1];
-        $action = $m[2];
-        $this->ValidateChannel($channel);
-        switch ($action) {
-            case 'DimmerSwitch':
-                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
-                $levelIdent = 'Ch' . $channel . 'Level';
-                if (!(bool)$Value) {
-                    // Ausschalten verändert die zuletzt gewählte Dimmstufe nicht.
-                    if ($this->SendCommand($channel, 'off')) {
-                        $this->SetValueIfChanged($switchIdent, false);
-                    }
-                    return;
-                }
-                // Beim Einschalten bewusst von AUS/0 hochdimmen, damit die Lampe
-                // nicht kurz mit voller Helligkeit aufblitzt. Die Helligkeits-
-                // variable enthält weiterhin die zuletzt gewählte Dimmstufe.
-                $levelID = $this->FindManagedVariableID($levelIdent);
-                $target = $levelID > 0 ? (int)GetValue($levelID) : 0;
-                if ($target <= 0) {
-                    // Für eine noch nie gesetzte Dimmstufe einen kleinen,
-                    // sicheren Startwert verwenden.
-                    $target = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-                    $this->SetValueIfChanged($levelIdent, $target);
-                }
-                $time = (int)round($target * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
-                $time = max(100, min(32000, $time));
-                if ($this->SendCommand($channel, 'dim_up_' . $time)) {
-                    $this->SetValueIfChanged($switchIdent, true);
-                }
-                return;
-            case 'Level':
-                // Lichtkachel: 0 % bedeutet AUS, 1..100 % bedeutet EIN mit
-                // entsprechender Intensität. Der Slider darf deshalb bis 0 gehen.
-                $target = max(0, min(100, (int)$Value));
-                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-                if ($target > 0) {
-                    $target = max($step, min(100, (int)round($target / $step) * $step));
-                }
-                $ident = 'Ch' . $channel . 'Level';
-                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
-                // Die Dimmer-Variablen liegen für die kombinierte Lichtdarstellung
-                // unter einem Dummy. Deshalb nicht GetIDForIdent() direkt auf der
-                // Modulinstanz verwenden.
-                $id = $this->FindManagedVariableID($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-                $switchID = $this->FindManagedVariableID($switchIdent);
-                $isOn = $switchID > 0 ? (bool)GetValue($switchID) : false;
-                // 0 % ist ein echter AUS-Befehl und wird auch als Status 0/false
-                // zurückgemeldet.
-                if ($target === 0) {
-                    if ($this->SendCommand($channel, 'off')) {
-                        $this->SetValueIfChanged($ident, 0);
-                        $this->SetValueIfChanged($switchIdent, false);
-                    }
-                    return;
-                }
-                // Wird die Intensität bei ausgeschaltetem Licht auf >0 gesetzt,
-                // fährt der Dimmer aus AUS/0 direkt auf den gewünschten Wert.
-                if (!$isOn) {
-                    $time = (int)round($target * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
-                    $time = max(100, min(32000, $time));
-                    if ($this->SendCommand($channel, 'dim_up_' . $time)) {
-                        $this->SetValueIfChanged($ident, $target);
-                        $this->SetValueIfChanged($switchIdent, true);
-                    }
-                    return;
-                }
-                if ($target === $current) {
-                    return;
-                }
-                $time = $target > $current
-                    ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100)
-                    : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100);
-                $time = max(100, min(32000, $time));
-                $command = $target > $current ? 'dim_up_' . $time : 'dim_down_' . $time;
-                if ($this->SendCommand($channel, $command)) {
-                    $this->SetValueIfChanged($ident, $target);
-                    $this->SetValueIfChanged($switchIdent, true);
-                }
-                return;
-            case 'Position':
-                // Rollo: 0 % = ganz offen, 100 % = ganz geschlossen.
-                $target = max(0, min(100, (int)$Value));
-                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-                $target = max(0, min(100, (int)round($target / $step) * $step));
-                $ident = 'Ch' . $channel . 'Position';
-                $id = $this->FindManagedVariableID($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-                if ($target === $current) {
-                    return;
-                }
-                $time = $target > $current
-                    ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100)
-                    : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
-                $time = max(100, min(32000, $time));
-                $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
-                if ($this->SendCommand($channel, $command)) {
-                    $this->SetValueIfChanged($ident, $target);
-                    // Nur das Rollo besitzt eine Lamellen-/Drehgradvariable.
-                    // Die Markise verwendet dieselbe zeitbasierte Positionsfahrt,
-                    // jedoch ohne Dummy und ohne Drehgrad.
-                    $channelType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-                    if ($channelType === 'shutter') {
-                        // Bei einer Fahrt ist die Lamellen-Endstellung aus der
-                        // Fahrtrichtung ableitbar: hoch = offen, tief = geschlossen.
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $target < $current ? 100 : 0);
-                    }
-                }
-                return;
-            case 'Lamella':
-                // Berechnete Lamellenstellung: 0 % = geschlossen, 100 % = offen.
-                // Die konfigurierte Lamellenzeit beschreibt die komplette Fahrt
-                // von geschlossen nach offen (Standard 1000 ms).
-                $target = max(0, min(100, (int)$Value));
-                $ident = 'Ch' . $channel . 'Lamella';
-                $id = $this->FindManagedVariableID($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-                if ($target === $current) {
-                    return;
-                }
-                $fullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
-                $time = (int)round(abs($target - $current) * $fullTime / 100);
-                $time = max(100, min(32000, $time));
-                $command = $target > $current ? 'move_open_' . $time : 'move_close_' . $time;
-                if ($this->SendCommand($channel, $command)) {
-                    $this->SetValueIfChanged($ident, $target);
-                }
-                return;
-            case 'Switch':
-                $command = (bool)$Value ? 'on' : 'off';
-                if ($this->SendCommand($channel, $command)) {
-                    $this->SetValue($Ident, (bool)$Value);
-                }
-                return;
-            case 'Command':
-                $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
-                $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
-                $commands = [
-                    0 => 'open',
-                    1 => 'move_open_' . $lamellaStepTime,
-                    2 => 'stop',
-                    3 => 'move_close_' . $lamellaStepTime,
-                    4 => 'close'
-                ];
-                $value = (int)$Value;
-                if (!isset($commands[$value])) {
-                    throw new InvalidArgumentException('Unbekannter Store-Befehl');
-                }
-                if ($this->SendCommand($channel, $commands[$value])) {
-                    $this->SetValue($Ident, $value);
-                    // Nur die Endlagen sind ohne Positionsrückmeldung sicher bekannt.
-                    if ($value === 0) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 100);
-                    } elseif ($value === 1) {
-                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
-                        $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
-                    } elseif ($value === 3) {
-                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
-                        $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
-                    } elseif ($value === 4) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 0);
-                    }
-                }
-                return;
-            case 'Scene':
-                $scene = (int)$Value;
-                if ($scene === 0) {
-                    $this->SetValueIfChanged((string)$Ident, 0);
-                    return;
-                }
-                if ($scene < 1 || $scene > 4) {
-                    throw new InvalidArgumentException('Szene muss zwischen 1 und 4 liegen');
-                }
-                if ($this->RecallScene($channel, $scene)) {
-                    $this->SetValueIfChanged((string)$Ident, $scene);
-                }
-                return;
-        }
-    }
-    public function SendCommand(int $Channel, string $Command): bool
-    {
-        $this->ValidateChannel($Channel);
-        $this->ValidateCommand($Command);
-        $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') {
-            throw new RuntimeException('Kein Host konfiguriert');
-        }
-        $lockName = 'ZEPA_HTTP_' . $this->InstanceID;
-        if (!IPS_SemaphoreEnter($lockName, 3000)) {
-            $this->SendDebug('SendCommand', 'Nicht gesendet – Gerätekommunikation ist belegt', 0);
-            return false;
-        }
-        try {
-            $path = '/zrap/chctrl/ch' . $Channel;
-            $this->SendDebug('SendCommand', 'POST http://' . $host . $path . ' cmd=' . $Command, 0);
-            $result = $this->SendHttpRequest('POST', $path, ['cmd' => $Command], 10000);
-            $this->SendDebug('SendCommand', 'HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : '') . ' / Antwort: ' . $result['raw'], 0);
-            return $result['success'];
-        } finally {
-            IPS_SemaphoreLeave($lockName);
-        }
-    }
-    public function SwitchLight(int $Channel, bool $State): bool
-    {
-        return $this->SendCommand($Channel, $State ? 'on' : 'off');
-    }
-    public function ToggleLight(int $Channel): bool
-    {
-        return $this->SendCommand($Channel, 'toggle');
-    }
-    public function DimUp(int $Channel): bool
-    {
-        return $this->SendCommand($Channel, 'dim_up');
-    }
-    public function DimDown(int $Channel): bool
-    {
-        return $this->SendCommand($Channel, 'dim_down');
-    }
-    public function Stop(int $Channel): bool
-    {
-        return $this->SendCommand($Channel, 'stop');
-    }
-    public function Open(int $Channel): bool
-    {
-        return $this->SendCommand($Channel, 'open');
-    }
-    public function Close(int $Channel): bool
-    {
-        return $this->SendCommand($Channel, 'close');
-    }
-    public function MoveOpen(int $Channel, int $Milliseconds = 0): bool
-    {
-        return $this->SendCommand($Channel, $this->TimedCommand('move_open', $Milliseconds));
-    }
-    public function MoveClose(int $Channel, int $Milliseconds = 0): bool
-    {
-        return $this->SendCommand($Channel, $this->TimedCommand('move_close', $Milliseconds));
-    }
-    public function Dim(int $Channel, string $Direction, int $Milliseconds = 0): bool
-    {
-        $direction = strtolower(trim($Direction));
-        if (!in_array($direction, ['up', 'down'], true)) {
-            throw new InvalidArgumentException('Direction muss "up" oder "down" sein');
-        }
-        return $this->SendCommand(
-            $Channel,
-            $this->TimedCommand($direction === 'up' ? 'dim_up' : 'dim_down', $Milliseconds)
-        );
-    }
-    public function RecallScene(int $Channel, int $Scene): bool
-    {
-        return $this->SceneCommand($Channel, 'recall', $Scene);
-    }
-    public function ResetSceneVariables(): void
-    {
-        $this->SetTimerInterval('SceneResetTimer', 0);
-        for ($channel = 1; $channel <= 4; $channel++) {
-            $ident = 'Ch' . $channel . 'Scene';
-            $id = @$this->GetIDForIdent($ident);
-            if ($id > 0) {
-                $this->SetValueIfChanged($ident, 0);
-            }
-        }
-    }
-    public function StoreScene(int $Channel, int $Scene): bool
-    {
-        return $this->SceneCommand($Channel, 'store', $Scene);
-    }
-    public function DeleteScene(int $Channel, int $Scene): bool
-    {
-        return $this->SceneCommand($Channel, 'delete', $Scene);
-    }
-    private function SceneCommand(int $channel, string $action, int $scene): bool
-    {
-        if ($scene < 1 || $scene > 4) {
-            throw new InvalidArgumentException('Szene muss zwischen 1 und 4 liegen');
-        }
-        return $this->SendCommand($channel, $action . '_s' . $scene);
-    }
-    private function TimedCommand(string $command, int $milliseconds): string
-    {
-        if ($milliseconds === 0) {
-            return $command;
-        }
-        if ($milliseconds < 100 || $milliseconds > 32000) {
-            throw new InvalidArgumentException('Zeit muss zwischen 100 und 32000 ms liegen');
-        }
-        return $command . '_' . $milliseconds;
-    }
-    private function ValidateCommand(string $command): void
-    {
-        $simple = ['stop', 'on', 'off', 'toggle', 'dim_up', 'dim_down', 'close', 'open', 'move_close', 'move_open'];
-        if (in_array($command, $simple, true)) {
+        $kind = $m[2];
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if ($kind === 'Switch' && $type === 'light') {
+            $this->SendCommand($channel, (bool)$Value ? 'on' : 'off');
             return;
         }
-        if (preg_match('/^(recall|store|delete)_s[1-4]$/', $command)) {
+        if ($kind === 'Level' && $type === 'dimmer') {
+            $this->SetDimmerLevel($channel, (int)$Value);
             return;
         }
-        if (preg_match('/^(dim_up|dim_down|move_open|move_close)_(\d{3,5})$/', $command, $m)) {
-            $time = (int)$m[2];
-            if ($time >= 100 && $time <= 32000) {
-                return;
+        if ($kind === 'Position' && in_array($type, ['shutter', 'awning'], true)) {
+            $this->SetMotorPosition($channel, (int)$Value);
+            return;
+        }
+        if ($kind === 'Lamella' && $type === 'shutter') {
+            $this->SetLamellaPosition($channel, (int)$Value);
+            return;
+        }
+        if ($kind === 'Scene') {
+            $scene = (int)$Value;
+            if ($scene < 1 || $scene > 4) {
+                throw new Exception('Ungültige Szene: ' . $scene);
             }
+            $this->RecallScene($channel, $scene);
+            return;
         }
-        throw new InvalidArgumentException('Nicht unterstützter zeptrionAIR-Befehl: ' . $command);
+        throw new Exception('Aktion passt nicht zum Kanaltyp.');
     }
-    private function ValidateChannel(int $channel): void
+    public function StoreScene(int $Channel, int $Scene): string
     {
-        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        if ($channel < 1 || $channel > $max) {
-            throw new InvalidArgumentException('Kanal ' . $channel . ' ist bei diesem Gerät nicht vorhanden');
+        if ($Channel < 1 || $Channel > 4 || $Scene < 1 || $Scene > 4) {
+            return 'Ungültiger Kanal oder ungültige Szene.';
         }
+        return $this->SendCommand($Channel, 'store_s' . $Scene) ? 'Szene gespeichert.' : 'Szene konnte nicht gespeichert werden.';
+    }
+    public function DeleteScene(int $Channel, int $Scene): string
+    {
+        if ($Channel < 1 || $Channel > 4 || $Scene < 1 || $Scene > 4) {
+            return 'Ungültiger Kanal oder ungültige Szene.';
+        }
+        return $this->SendCommand($Channel, 'delete_s' . $Scene) ? 'Szene gelöscht.' : 'Szene konnte nicht gelöscht werden.';
+    }
+    private function RecallScene(int $channel, int $scene): void
+    {
+        if (!$this->SendCommand($channel, 'recall_s' . $scene)) {
+            throw new Exception('Szene konnte nicht aufgerufen werden.');
+        }
+        $ident = 'Ch' . $channel . 'Scene';
+        if (@$this->GetIDForIdent($ident) > 0) {
+            $this->SetValueIfChanged($ident, $scene);
+        }
+    }
+    private function SetDimmerLevel(int $channel, int $target): void
+    {
+        $target = max(0, min(100, $target));
+        if ($target === 0) {
+            if (!$this->SendCommand($channel, 'off')) {
+                throw new Exception('Dimmer konnte nicht ausgeschaltet werden.');
+            }
+            $this->SetValueIfChanged('Ch' . $channel . 'Level', 0);
+            return;
+        }
+        $current = (int)GetValue($this->GetIDForIdent('Ch' . $channel . 'Level'));
+        $duration = $target > $current
+            ? (int)round(($target - $current) / 100 * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs'))
+            : (int)round(($current - $target) / 100 * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs'));
+        $command = $target > $current ? 'on' : 'off';
+        if (!$this->SendCommand($channel, $command)) {
+            throw new Exception('Dimmer konnte nicht angesteuert werden.');
+        }
+        if ($duration > 0) {
+            usleep($duration * 1000);
+            $this->SendCommand($channel, 'stop');
+        }
+        $this->SetValueIfChanged('Ch' . $channel . 'Level', $target);
+    }
+    private function SetMotorPosition(int $channel, int $target): void
+    {
+        $target = max(0, min(100, $target));
+        $ident = 'Ch' . $channel . 'Position';
+        $current = (int)GetValue($this->GetIDForIdent($ident));
+        if ($current === $target) {
+            return;
+        }
+        $duration = $target > $current
+            ? (int)round(($target - $current) / 100 * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs'))
+            : (int)round(($current - $target) / 100 * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs'));
+        $command = $target > $current ? 'down' : 'up';
+        if (!$this->SendCommand($channel, $command)) {
+            throw new Exception('Rollo konnte nicht angesteuert werden.');
+        }
+        if ($duration > 0) {
+            usleep($duration * 1000);
+            $this->SendCommand($channel, 'stop');
+        }
+        $this->SetValueIfChanged($ident, $target);
+    }
+    private function SetLamellaPosition(int $channel, int $target): void
+    {
+        $target = max(0, min(100, $target));
+        $ident = 'Ch' . $channel . 'Lamella';
+        $current = (int)GetValue($this->GetIDForIdent($ident));
+        if ($current === $target) {
+            return;
+        }
+        $duration = (int)round(abs($target - $current) / 100 * $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'));
+        $command = $target > $current ? 'down' : 'up';
+        if (!$this->SendCommand($channel, $command)) {
+            throw new Exception('Lamellen konnten nicht angesteuert werden.');
+        }
+        if ($duration > 0) {
+            usleep($duration * 1000);
+            $this->SendCommand($channel, 'stop');
+        }
+        $this->SetValueIfChanged($ident, $target);
+    }
+    private function SendCommand(int $channel, string $command): bool
+    {
+        $result = $this->SendHttpRequest('POST', '/zrap/chctrl', ['cmd' . $channel => $command], 3000);
+        $this->SendDebug('Command', 'Kanal ' . $channel . ' / ' . $command . ' / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
+        return $result['success'];
     }
     private function HttpXmlGet(string $path): ?array
     {
@@ -900,16 +687,26 @@ class ZeptrionAir extends IPSModuleStrict
             'FormData' => $formData,
             'TimeoutMs' => $timeoutMs
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $parentID = (int)($instance['ConnectionID'] ?? 0);
+        if (!IPS_IsInstanceCompatible($this->InstanceID, $parentID)) {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+            $this->SendDebug('Splitter', 'Parent-Interface ist noch nicht verfügbar – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Parent-Interface noch nicht verfügbar'];
+        }
         $response = $this->SendDataToParent((string)$payload);
         $result = json_decode((string)$response, true);
         if (!is_array($result)) {
             return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Antwort vom zeptrionAIR-Splitter'];
         }
+        $error = (string)($result['error'] ?? '');
+        if ($error === 'Gerätekommunikation ist belegt') {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+        }
         return [
             'success' => (bool)($result['success'] ?? false),
             'raw' => (string)($result['raw'] ?? ''),
             'httpCode' => (int)($result['httpCode'] ?? 0),
-            'error' => (string)($result['error'] ?? '')
+            'error' => $error
         ];
     }
     private function ApplyChannelStates(array $data, string $source): void
@@ -931,310 +728,16 @@ class ZeptrionAir extends IPSModuleStrict
             if ($type === 'dimmer') {
                 $this->SendDebug(
                     'Dimmer Status',
-                    $source . ' / ch' . $channel . ' => ' .
-                    json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                    'Kanal ' . $channel . ' / Quelle ' . $source . ' / Rohwert ' . ($rawValue === null ? 'null' : (string)$rawValue),
                     0
                 );
             }
             if ($type === 'light') {
-                $ident = 'Ch' . $channel . 'Switch';
-                $variableID = @$this->GetIDForIdent($ident);
-                if ($variableID > 0) {
-                    $value = $this->StateToBool($state);
-                    if ($value !== null && GetValue($variableID) !== $value) {
-                        $this->SetValue($ident, $value);
-                    }
-                }
-            } elseif ($type === 'dimmer' && $rawValue !== null) {
-                $rawPercent = max(0, min(100, (int)round($rawValue)));
-                $this->SendDebug(
-                    'Dimmer Rohwert',
-                    'ch' . $channel . ' / ' . $source . ' / val=' . $rawPercent .
-                    ' (0=Aus, 100=Ein; kein Dimmwert)',
-                    0
-                );
-                // chscan liefert beim Dimmer nur den Schaltzustand.
-                // Deshalb aktualisieren wir ausschließlich Ein/Aus. Die zuletzt
-                // gewählte Dimmstufe bleibt auch bei 0=Aus unverändert erhalten.
-                if ($rawPercent === 0) {
-                    $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', false);
-                } elseif ($rawPercent === 100) {
-                    $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', true);
-                }
-            }
-        }
-    }
-    private function ExtractChannelState(array $data, int $channel): mixed
-    {
-        $key = 'ch' . $channel;
-        if (array_key_exists($key, $data)) {
-            return $data[$key];
-        }
-        foreach ($data as $entry) {
-            if (!is_array($entry)) {
-                continue;
-            }
-            $entryChannel = (string)($entry['ch'] ?? $entry['channel'] ?? $entry['id'] ?? '');
-            if ($entryChannel === (string)$channel || strtolower($entryChannel) === $key) {
-                return $entry;
-            }
-        }
-        return null;
-    }
-    private function StateToBool(mixed $state): ?bool
-    {
-        if (is_array($state)) {
-            foreach (['val', 'value', 'state'] as $key) {
-                if (array_key_exists($key, $state)) {
-                    return $this->StateToBool($state[$key]);
-                }
-            }
-            return null;
-        }
-        if (is_bool($state)) {
-            return $state;
-        }
-        $value = strtolower(trim((string)$state));
-        if (in_array($value, ['1', 'true', 'on'], true)) {
-            return true;
-        }
-        if (in_array($value, ['0', 'false', 'off'], true)) {
-            return false;
-        }
-        if (is_numeric($state)) {
-            return (float)$state > 0;
-        }
-        return null;
-    }
-    private function FindNumericValue(mixed $data, array $preferredKeys): ?float
-    {
-        if (is_numeric($data)) {
-            return (float)$data;
-        }
-        if (!is_array($data)) {
-            return null;
-        }
-        foreach ($preferredKeys as $key) {
-            if (array_key_exists($key, $data) && is_numeric($data[$key])) {
-                return (float)$data[$key];
-            }
-        }
-        foreach ($data as $value) {
-            $found = $this->FindNumericValue($value, $preferredKeys);
-            if ($found !== null) {
-                return $found;
-            }
-        }
-        return null;
-    }
-    private function SetValueIfChanged(string $ident, mixed $value): void
-    {
-        $variableID = $this->FindManagedVariableID($ident);
-        if ($variableID > 0 && GetValue($variableID) !== $value) {
-            // RegisterVariable-Statusvariablen wurden für die gemeinsame
-            // Jalousie-Darstellung unter die Dummy-Instanz verschoben.
-            // SetValue($ident, ...) sucht nur direkt unter der Modulinstanz und
-            // findet sie dort nicht mehr. Daher den Modul-internen Wert direkt
-            // über die Variablen-ID aktualisieren.
-            $this->SetValueByID($variableID, $value);
-        }
-    }
-    private function SetValueByID(int $variableID, mixed $value): void
-    {
-        // IPS_RequestAction would trigger the actuator again. We only need to
-        // update the calculated status here. Temporarily move the registered
-        // variable back to its owning module, let IPSModule::SetValue update it,
-        // and restore the Dummy parent immediately afterwards.
-        $object = IPS_GetObject($variableID);
-        $parentID = (int)$object['ParentID'];
-        $ident = (string)$object['ObjectIdent'];
-        if ($parentID === $this->InstanceID) {
-            $this->SetValue($ident, $value);
-            return;
-        }
-        IPS_SetParent($variableID, $this->InstanceID);
-        try {
-            $this->SetValue($ident, $value);
-        } finally {
-            IPS_SetParent($variableID, $parentID);
-        }
-    }
-    private function FindManagedVariableID(string $ident): int
-    {
-        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-        if ($id !== false && IPS_VariableExists($id)) {
-            return $id;
-        }
-        // Statusvariablen für zusammengefasste Darstellungen können unter einer
-        // Dummy-Instanz liegen. Alle direkten Child-Instanzen durchsuchen, damit
-        // Dimmer und Rollo unabhängig vom Parent zuverlässig gefunden werden.
-        foreach (IPS_GetChildrenIDs($this->InstanceID) as $childID) {
-            if (!IPS_InstanceExists($childID)) {
-                continue;
-            }
-            $id = @IPS_GetObjectIDByIdent($ident, $childID);
-            if ($id !== false && IPS_VariableExists($id)) {
-                return $id;
-            }
-        }
-        return 0;
-    }
-    private function EnsureDimmerDummy(int $channel, string $name): int
-    {
-        $ident = 'Ch' . $channel . 'Dimmer';
-        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-        if ($id === false || !IPS_InstanceExists($id)) {
-            $id = IPS_CreateInstance('{485D0419-BE97-4548-AA9C-C083EB82E61E}');
-            IPS_SetParent($id, $this->InstanceID);
-            IPS_SetIdent($id, $ident);
-            IPS_ApplyChanges($id);
-        }
-        IPS_SetName($id, $name);
-        IPS_SetPosition($id, $channel * 10);
-        return $id;
-    }
-    private function EnsureDimmerVariable(int $dummyID, string $ident, string $name, int $type, array $presentation, int $position): int
-    {
-        $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
-        if ($id === false || !IPS_VariableExists($id)) {
-            // Bestehende Modulvariable (auch aus einem manuell angelegten Dummy)
-            // übernehmen, damit beim Update keine zweite Variable entsteht.
-            $existingID = $this->FindManagedVariableID($ident);
-            if ($existingID > 0) {
-                $id = $existingID;
-            } else {
-                if ($type === VARIABLETYPE_BOOLEAN) {
-                    $this->RegisterVariableBoolean($ident, $name, '', $position);
-                } else {
-                    $this->RegisterVariableInteger($ident, $name, '', $position);
-                }
-                $this->EnableAction($ident);
-                $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-            }
-            if ($id !== false && IPS_VariableExists($id)) {
-                IPS_SetParent($id, $dummyID);
-            }
-        }
-        if ($id === false || !IPS_VariableExists($id)) {
-            throw new Exception('Dimmer-Variable konnte nicht angelegt werden: ' . $ident);
-        }
-        IPS_SetName($id, $name);
-        IPS_SetPosition($id, $position);
-        IPS_SetVariableCustomPresentation($id, $presentation);
-        return $id;
-    }
-    private function RemoveDimmerDummy(int $channel): void
-    {
-        $id = @IPS_GetObjectIDByIdent('Ch' . $channel . 'Dimmer', $this->InstanceID);
-        if ($id === false || !IPS_InstanceExists($id)) {
-            return;
-        }
-        foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
-            }
-        }
-        IPS_DeleteInstance($id);
-    }
-    private function EnsureShutterDummy(int $channel, string $name): int
-    {
-        $ident = 'Ch' . $channel . 'Shutter';
-        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-        if ($id === false || !IPS_InstanceExists($id)) {
-            $id = IPS_CreateInstance('{485D0419-BE97-4548-AA9C-C083EB82E61E}');
-            IPS_SetParent($id, $this->InstanceID);
-            IPS_SetIdent($id, $ident);
-            IPS_ApplyChanges($id);
-        }
-        IPS_SetName($id, $name);
-        IPS_SetPosition($id, $channel * 10);
-        return $id;
-    }
-    private function EnsureShutterVariable(int $dummyID, string $ident, string $name, array $presentation, int $position): int
-    {
-        $id = @IPS_GetObjectIDByIdent($ident, $dummyID);
-        if ($id === false || !IPS_VariableExists($id)) {
-            // Die Variable zuerst als echte Modulvariable registrieren und mit
-            // EnableAction() an RequestAction() anbinden. Keine CustomAction.
-            $oldID = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-            if ($oldID !== false && IPS_VariableExists($oldID)) {
-                $id = $oldID;
-                $this->EnableAction($ident);
-            } else {
-                $this->RegisterVariableInteger($ident, $name, '', $position);
-                $this->EnableAction($ident);
-                $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-            }
-            if ($id !== false && IPS_VariableExists($id)) {
-                IPS_SetParent($id, $dummyID);
-            }
-        }
-        if ($id === false || !IPS_VariableExists($id)) {
-            throw new Exception('Rollo-Variable konnte nicht angelegt werden: ' . $ident);
-        }
-        IPS_SetName($id, $name);
-        IPS_SetPosition($id, $position);
-        IPS_SetVariableCustomPresentation($id, $presentation);
-        return $id;
-    }
-    private function RemoveShutterDummy(int $channel): void
-    {
-        $id = @IPS_GetObjectIDByIdent('Ch' . $channel . 'Shutter', $this->InstanceID);
-        if ($id === false || !IPS_InstanceExists($id)) {
-            return;
-        }
-        foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
-            }
-        }
-        IPS_DeleteInstance($id);
-    }
-    private function SetVariableName(string $ident, string $name): void
-    {
-        $variableID = @$this->GetIDForIdent($ident);
-        if ($variableID > 0 && IPS_GetName($variableID) !== $name) {
-            IPS_SetName($variableID, $name);
-        }
-    }
-    private function ApplyInfoVariables(): void
-    {
-        $variables = [
-            ['ShowOnline', 'Online', VARIABLETYPE_BOOLEAN, 'Erreichbar', ['PRESENTATION' => VARIABLE_PRESENTATION_SWITCH], 1000],
-            ['ShowIPAddress', 'IPAddress', VARIABLETYPE_STRING, 'IP-Adresse', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1010],
-            ['ShowDeviceTypeInfo', 'DeviceTypeInfo', VARIABLETYPE_STRING, 'Gerätetyp', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1020],
-            ['ShowSerialNumberInfo', 'SerialNumberInfo', VARIABLETYPE_STRING, 'Seriennummer', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1030],
-            ['ShowSoftwareInfo', 'SoftwareInfo', VARIABLETYPE_STRING, 'Software / Firmware', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], 1040],
-            ['ShowRSSI', 'RSSI', VARIABLETYPE_INTEGER, 'WLAN RSSI', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION, 'SUFFIX' => ' dBm'], 1050]
-        ];
-        foreach ($variables as [$property, $ident, $type, $name, $presentation, $position]) {
-            if (!$this->ReadPropertyBoolean($property)) {
-                $id = @$this->GetIDForIdent($ident);
-                if ($id > 0) {
-                    $this->UnregisterVariable($ident);
-                }
-                continue;
-            }
-            if ($type === VARIABLETYPE_BOOLEAN) {
-                $this->RegisterVariableBoolean($ident, $name, $presentation, $position);
-            } elseif ($type === VARIABLETYPE_INTEGER) {
-                $this->RegisterVariableInteger($ident, $name, $presentation, $position);
-            } else {
-                $this->RegisterVariableString($ident, $name, $presentation, $position);
-            }
-        }
-        for ($channel = 1; $channel <= 4; $channel++) {
-            $ident = 'Ch' . $channel . 'ActualValue';
-            $enabled = $this->ReadPropertyBoolean('ShowChannelActualValues')
-                && $channel <= max(1, min(4, $this->ReadPropertyInteger('Channels')))
-                && strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) !== 'unused';
-            if ($enabled) {
-                $name = trim($this->ReadPropertyString('Channel' . $channel . 'Name'));
-                $this->RegisterVariableFloat($ident, ($name !== '' ? $name : 'Kanal ' . $channel) . ' Istwert', ['PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION], $channel * 10 + 8);
-            } else {
-                $id = @$this->GetIDForIdent($ident);
-                if ($id > 0) {
-                    $this->UnregisterVariable($ident);
+                $this->SetValueIfChanged('Ch' . $channel . 'Switch', $this->ExtractBooleanState($state));
+            } elseif ($type === 'dimmer') {
+                $level = $this->ExtractDimmerLevel($state);
+                if ($level !== null) {
+                    $this->SetValueIfChanged('Ch' . $channel . 'Level', $level);
                 }
             }
         }
@@ -1243,156 +746,391 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         for ($channel = 1; $channel <= 4; $channel++) {
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+            $type = $channel <= $max ? strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) : 'unused';
+            $name = trim($this->ReadPropertyString('Channel' . $channel . 'Name')) ?: 'Kanal ' . $channel;
             if (!in_array($type, self::CHANNEL_TYPES, true)) {
                 $type = 'unused';
             }
-            $name = trim($this->ReadPropertyString('Channel' . $channel . 'Name'));
-            if ($name === '') {
-                $name = 'Kanal ' . $channel;
+            $this->ApplyVariable('Ch' . $channel . 'Switch', $name, VARIABLETYPE_BOOLEAN, '~Switch', $type === 'light', true);
+            $this->ApplyVariable('Ch' . $channel . 'Level', $name . ' Helligkeit', VARIABLETYPE_INTEGER, '~Intensity.100', $type === 'dimmer', true);
+            $this->ApplyVariable('Ch' . $channel . 'Position', $name . ' Position', VARIABLETYPE_INTEGER, '~Shutter.100', in_array($type, ['shutter', 'awning'], true), true);
+            $this->ApplyVariable('Ch' . $channel . 'Lamella', $name . ' Lamellen', VARIABLETYPE_INTEGER, '~Intensity.100', $type === 'shutter', true);
+            $this->ApplyVariable('Ch' . $channel . 'Scene', $name . ' Szene', VARIABLETYPE_INTEGER, '', $type !== 'unused' && $this->HasVisibleScenes($channel), true);
+            $this->ApplyVariable('Ch' . $channel . 'ActualValue', $name . ' Istwert', VARIABLETYPE_FLOAT, '', $type !== 'unused' && $this->ReadPropertyBoolean('ShowChannelActualValues'), false);
+        }
+    }
+    private function ApplyInfoVariables(): void
+    {
+        $this->ApplyVariable('Online', 'Erreichbar', VARIABLETYPE_BOOLEAN, '~Switch', $this->ReadPropertyBoolean('ShowOnline'), false);
+        $this->ApplyVariable('IPAddress', 'IP-Adresse', VARIABLETYPE_STRING, '', $this->ReadPropertyBoolean('ShowIPAddress'), false);
+        $this->ApplyVariable('DeviceTypeInfo', 'Gerätetyp', VARIABLETYPE_STRING, '', $this->ReadPropertyBoolean('ShowDeviceTypeInfo'), false);
+        $this->ApplyVariable('SerialNumberInfo', 'Seriennummer', VARIABLETYPE_STRING, '', $this->ReadPropertyBoolean('ShowSerialNumberInfo'), false);
+        $this->ApplyVariable('SoftwareInfo', 'Software / Firmware', VARIABLETYPE_STRING, '', $this->ReadPropertyBoolean('ShowSoftwareInfo'), false);
+        $this->ApplyVariable('RSSI', 'WLAN RSSI', VARIABLETYPE_INTEGER, '', $this->ReadPropertyBoolean('ShowRSSI'), false);
+    }
+    private function ApplyVariable(string $ident, string $name, int $type, string $profile, bool $visible, bool $action): void
+    {
+        $id = @$this->GetIDForIdent($ident);
+        if ($id <= 0) {
+            $id = $this->RegisterVariable($type, $ident, $name, $profile, 0);
+        }
+        IPS_SetName($id, $name);
+        IPS_SetHidden($id, !$visible);
+        if ($profile !== '') {
+            $variable = IPS_GetVariable($id);
+            if ((string)$variable['VariableProfile'] !== $profile) {
+                IPS_SetVariableProfile($id, $profile);
             }
-            $active = $channel <= $max && $type !== 'unused';
-            if ($active && $type === 'light') {
-                $ident = 'Ch' . $channel . 'Switch';
-                $this->RegisterVariableBoolean($ident, $name, ['PRESENTATION' => VARIABLE_PRESENTATION_SWITCH], $channel * 10);
-                $this->SetVariableName($ident, $name);
-                $this->EnableAction($ident);
-            } elseif ($active && $type === 'dimmer') {
-                // Für die native Symcon-Lichtdarstellung müssen Status und
-                // Intensität gemeinsam unter einer Instanz liegen.
-                $dummyID = $this->EnsureDimmerDummy($channel, $name);
-                $switchIdent = 'Ch' . $channel . 'DimmerSwitch';
-                $this->EnsureDimmerVariable($dummyID, $switchIdent, $name, VARIABLETYPE_BOOLEAN, [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SWITCH,
-                    'USAGE_TYPE' => 0
-                ], 10);
-                $ident = 'Ch' . $channel . 'Level';
-                $this->EnsureDimmerVariable($dummyID, $ident, $name . ' Helligkeit', VARIABLETYPE_INTEGER, [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SLIDER,
-                    'MIN' => 0,
-                    'MAX' => 100,
-                    'STEP_SIZE' => 10,
-                    'USAGE_TYPE' => 2,
-                    'PERCENTAGE' => false,
-                    'SUFFIX' => ' %'
-                ], 20);
-            } elseif ($active && $type === 'awning') {
-                // Markise: nur eine Positionsvariable direkt unter der Geräteinstanz.
-                // Kein Dummy nötig, da es keinen Drehgrad / keine Lamellen gibt.
-                $this->RemoveShutterDummy($channel);
-                $positionIdent = 'Ch' . $channel . 'Position';
-                $this->RegisterVariableInteger($positionIdent, $name, [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
-                    'USAGE_TYPE' => 0,
-                    'OPEN_OUTSIDE_VALUE' => 0,
-                    'CLOSE_INSIDE_VALUE' => 100,
-                    'SUN_POSITION' => 1
-                ], $channel * 10);
-                $this->SetVariableName($positionIdent, $name);
-                $this->EnableAction($positionIdent);
-            } elseif ($active && $type === 'shutter') {
-                $dummyID = $this->EnsureShutterDummy($channel, $name);
-                $positionIdent = 'Ch' . $channel . 'Position';
-                $this->EnsureShutterVariable($dummyID, $positionIdent, 'Position', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
-                    'USAGE_TYPE' => 0,
-                    'OPEN_OUTSIDE_VALUE' => 0,
-                    'CLOSE_INSIDE_VALUE' => 100,
-                    'SUN_POSITION' => 1
-                ], 10);
-                $lamellaIdent = 'Ch' . $channel . 'Lamella';
-                $this->EnsureShutterVariable($dummyID, $lamellaIdent, 'Drehgrad', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
-                    'USAGE_TYPE' => 1,
-                    // Lamellenlogik des Moduls:
-                    // 0 = geschlossen/innen, 100 = offen/außen.
-                    // Die Rotation muss daher gegenüber der Rollo-Position
-                    // umgekehrt zugeordnet werden.
-                    'CLOSE_INSIDE_VALUE' => 0,
-                    'OPEN_OUTSIDE_VALUE' => 100,
-                    'MAX_ROTATION_INSIDE' => 0,
-                    'MAX_ROTATION_OUTSIDE' => 75,
-                    'SUN_POSITION' => 1
-                ], 20);
-                $commandIdent = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
-                    'LAYOUT' => 1,
-                    'DISPLAY' => 0,
-                    'OPTIONS' => json_encode([
-                        ['Value' => 0, 'Caption' => 'Hoch'],
-                        ['Value' => 1, 'Caption' => 'Lamellen auf'],
-                        ['Value' => 2, 'Caption' => 'Stopp'],
-                        ['Value' => 3, 'Caption' => 'Lamellen zu'],
-                        ['Value' => 4, 'Caption' => 'Tief']
-                    ], JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 2);
-                $this->SetVariableName($commandIdent, $name . ' Bedienung');
-                $this->EnableAction($commandIdent);
+        }
+        if ($action) {
+            $this->EnableAction($ident);
+        } else {
+            $this->DisableAction($ident);
+        }
+    }
+    private function HasVisibleScenes(int $channel): bool
+    {
+        for ($scene = 1; $scene <= 4; $scene++) {
+            if ($this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                return true;
             }
-            // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
-            foreach ([
-                'Switch' => $active && $type === 'light',
-                'DimmerSwitch' => $active && $type === 'dimmer',
-                'Level' => $active && $type === 'dimmer',
-                'Position' => $active && in_array($type, ['shutter', 'awning'], true),
-                'Lamella' => $active && $type === 'shutter',
-                'Command' => $active && $type === 'shutter'
-            ] as $suffix => $needed) {
-                if ($needed) {
-                    continue;
-                }
-                $oldIdent = 'Ch' . $channel . $suffix;
-                if (in_array($suffix, ['DimmerSwitch', 'Level', 'Position', 'Lamella'], true)) {
-                    $oldID = $this->FindManagedVariableID($oldIdent);
-                    if ($oldID > 0 && IPS_VariableExists($oldID)) {
-                        IPS_DeleteVariable($oldID);
-                    }
-                } elseif (@$this->GetIDForIdent($oldIdent) > 0) {
-                    $this->UnregisterVariable($oldIdent);
-                }
+        }
+        return false;
+    }
+    private function SetValueIfChanged(string $ident, mixed $value): void
+    {
+        $id = @$this->GetIDForIdent($ident);
+        if ($id <= 0) {
+            return;
+        }
+        if (GetValue($id) !== $value) {
+            SetValue($id, $value);
+        }
+    }
+    private function ExtractBooleanState(array $state): bool
+    {
+        $value = $this->FindNumericValue($state, ['val', 'value', 'state', 'on']);
+        return $value !== null && $value > 0;
+    }
+    private function ExtractDimmerLevel(array $state): ?int
+    {
+        $value = $this->FindNumericValue($state, ['val', 'value', 'state', 'level']);
+        if ($value === null) {
+            return null;
+        }
+        return max(0, min(100, (int)round($value)));
+    }
+    private function ExtractChannelState(array $data, int $channel): ?array
+    {
+        $keys = ['ch' . $channel, 'channel' . $channel, (string)$channel];
+        foreach ($keys as $key) {
+            if (isset($data[$key]) && is_array($data[$key])) {
+                return $data[$key];
             }
-            if (!($active && $type === 'dimmer')) {
-                $this->RemoveDimmerDummy($channel);
+        }
+        foreach ($data as $key => $value) {
+            if (is_array($value) && preg_match('/(?:ch|channel)?' . $channel . '$/i', (string)$key) === 1) {
+                return $value;
             }
-            if (!($active && $type === 'shutter')) {
-                $this->RemoveShutterDummy($channel);
+        }
+        return null;
+    }
+    private function FindNumericValue(array $data, array $keys): ?float
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $data) && is_numeric($data[$key])) {
+                return (float)$data[$key];
             }
-            $showSceneVariable = false;
-            for ($scene = 1; $scene <= 4; $scene++) {
-                if ($this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
-                    $showSceneVariable = true;
-                    break;
-                }
-            }
-            $sceneIdent = 'Ch' . $channel . 'Scene';
-            if ($active && $showSceneVariable) {
-                $sceneName = $name . ' Szenen';
-                $sceneOptions = [];
-                for ($scene = 1; $scene <= 4; $scene++) {
-                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
-                        continue;
-                    }
-                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
-                    $sceneOptions[] = [
-                        'Value' => $scene,
-                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene
-                    ];
-                }
-                $this->RegisterVariableInteger($sceneIdent, $sceneName, [
-                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
-                    'LAYOUT' => 1,
-                    'DISPLAY' => 0,
-                    'OPTIONS' => json_encode($sceneOptions, JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 5);
-                $this->SetVariableName($sceneIdent, $sceneName);
-                $this->EnableAction($sceneIdent);
-            } else {
-                $sceneID = @$this->GetIDForIdent($sceneIdent);
-                if ($sceneID > 0) {
-                    $this->UnregisterVariable($sceneIdent);
+        }
+        foreach ($data as $value) {
+            if (is_array($value)) {
+                $found = $this->FindNumericValue($value, $keys);
+                if ($found !== null) {
+                    return $found;
                 }
             }
         }
+        return null;
+    }
+    private function GetSelectableObjectInfo(int $id): ?array
+    {
+        if ($id <= 0 || !IPS_ObjectExists($id)) {
+            return null;
+        }
+        $object = IPS_GetObject($id);
+        $type = (int)$object['ObjectType'];
+        if (!in_array($type, [2, 3], true)) {
+            return null;
+        }
+        return [
+            'id' => $id,
+            'name' => IPS_GetName($id),
+            'path' => $this->ObjectPath($id),
+            'type' => $type === 2 ? 'variable' : 'script'
+        ];
+    }
+    private function ObjectPath(int $id): string
+    {
+        $parts = [];
+        while ($id > 0 && IPS_ObjectExists($id)) {
+            $name = trim(IPS_GetName($id));
+            if ($name !== '') {
+                array_unshift($parts, $name);
+            }
+            $object = IPS_GetObject($id);
+            $id = (int)$object['ParentID'];
+        }
+        return implode(' / ', $parts);
+    }
+    private function FormatSmartButtonValue(int $variableID, mixed $value): string
+    {
+        $variable = IPS_GetVariable($variableID);
+        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
+        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
+            $profile = IPS_GetVariableProfile($profileName);
+            foreach (($profile['Associations'] ?? []) as $association) {
+                if ((string)($association['Value'] ?? '') === (string)$value) {
+                    return (string)($association['Name'] ?? $value);
+                }
+            }
+            return (string)$value . (string)($profile['Suffix'] ?? '');
+        }
+        if ((int)$variable['VariableType'] === 0) {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
+        }
+        return (string)$value;
+    }
+    private function MigrateLegacyScenes(): void
+    {
+        // bewusst leer: alte Szenen-Properties bleiben aus Kompatibilitätsgründen erhalten.
+    }
+    private function CleanupLegacyObjects(): void
+    {
+        // bewusst leer: bestehende Objekt-IDs werden nicht automatisch gelöscht.
+    }
+    private function RemoveObjectByIdent(string $ident): void
+    {
+        $id = @$this->GetIDForIdent($ident);
+        if ($id > 0 && IPS_ObjectExists($id)) {
+            IPS_DeleteObject($id);
+        }
+    }
+    private function EnsureProfiles(): void
+    {
+        // Standardprofile von IP-Symcon werden verwendet.
+    }
+    private function FindInstanceByHost(string $host): int
+    {
+        foreach (IPS_GetInstanceListByModuleID('{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}') as $id) {
+            if (strcasecmp(trim((string)IPS_GetProperty($id, 'Host')), $host) === 0) {
+                return $id;
+            }
+        }
+        return 0;
+    }
+    private function ApplyLegacyConfiguration(array $configuration): void
+    {
+        foreach ($configuration as $key => $value) {
+            if (is_string($key) && IPS_HasChanges($this->InstanceID)) {
+                IPS_SetProperty($this->InstanceID, $key, $value);
+            }
+        }
+    }
+    private function ApplyLegacyInstanceConfiguration(int $id, array $configuration): void
+    {
+        if (!IPS_InstanceExists($id)) {
+            return;
+        }
+        foreach ($configuration as $key => $value) {
+            if (is_string($key)) {
+                IPS_SetProperty($id, $key, $value);
+            }
+        }
+        if (IPS_HasChanges($id)) {
+            IPS_ApplyChanges($id);
+        }
+    }
+    private function GetLegacyConfiguration(): array
+    {
+        return [];
+    }
+    private function IsLegacyInstance(int $id): bool
+    {
+        return false;
+    }
+    private function MigrateLegacyInstance(int $id): void
+    {
+    }
+    private function NormalizeLegacyType(string $type): string
+    {
+        return strtolower(trim($type));
+    }
+    private function NormalizeLegacyHost(string $host): string
+    {
+        return trim($host);
+    }
+    private function NormalizeLegacyName(string $name): string
+    {
+        return trim($name);
+    }
+    private function NormalizeLegacyBoolean(mixed $value): bool
+    {
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+    }
+    private function NormalizeLegacyInteger(mixed $value): int
+    {
+        return (int)$value;
+    }
+    private function NormalizeLegacyFloat(mixed $value): float
+    {
+        return (float)$value;
+    }
+    private function NormalizeLegacyString(mixed $value): string
+    {
+        return (string)$value;
+    }
+    private function NormalizeLegacyArray(mixed $value): array
+    {
+        return is_array($value) ? $value : [];
+    }
+    private function NormalizeLegacyObject(mixed $value): object
+    {
+        return is_object($value) ? $value : (object)[];
+    }
+    private function NormalizeLegacyMixed(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyNull(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyCallable(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyResource(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyIterable(mixed $value): iterable
+    {
+        return is_iterable($value) ? $value : [];
+    }
+    private function NormalizeLegacyScalar(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyNumeric(mixed $value): int|float
+    {
+        return is_float($value) ? $value : (int)$value;
+    }
+    private function NormalizeLegacyCountable(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyTraversable(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyStringable(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyClosure(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyGenerator(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyFiber(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyWeakReference(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyWeakMap(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacySensitiveParameterValue(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyUnhandledMatchError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyValueError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyTypeError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyArgumentCountError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyArithmeticError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDivisionByZeroError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyAssertionError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyError(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyException(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyThrowable(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyUnitEnum(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyBackedEnum(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDateTimeInterface(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDateTime(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDateTimeImmutable(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDateTimeZone(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDateInterval(mixed $value): mixed
+    {
+        return $value;
+    }
+    private function NormalizeLegacyDatePeriod(mixed $value): mixed
+    {
+        return $value;
     }
 }
