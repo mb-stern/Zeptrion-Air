@@ -6,9 +6,13 @@
   "aliases": [
     "zeptrionAIR Gerät"
   ],
-  "parentRequirements": [],
+  "parentRequirements": [
+    "{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}"
+  ],
   "childRequirements": [],
-  "implemented": [],
+  "implemented": [
+    "{B13D5C24-91F2-4D38-A08C-2C6A9E45F710}"
+  ],
   "prefix": "ZEPA",
   "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAir"
 }
