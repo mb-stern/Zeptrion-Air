@@ -151,7 +151,7 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 ## Versionen
 
 ### Version 1.1
-- Umbau nach Store-Richtlinien
+- Der Modulcode wurde überarbeitet und auf Store-Kompatibilität geprüft.
 
 ### Version 1.0
 - Initiale Version
