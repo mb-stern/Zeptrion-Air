@@ -143,7 +143,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $count = count($found);
             if ($attempt > 1 && $count === $previousCount) break;
             $previousCount = $count;
-            if ($attempt < 3) usleep(250000);
         }
         $this->CollectServices($zcID, '_http._tcp', true, $found);
         $this->EnrichDevicesParallel($found);
@@ -210,7 +209,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             }
             for ($attempt = 2; $attempt <= 3; $attempt++) {
                 $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/3', 0);
-                usleep(200000);
                 $single = $this->HttpXmlGetMulti([
                     $chdesKey => ['host' => $host, 'path' => '/zrap/chdes']
                 ], 2500, 5000);
