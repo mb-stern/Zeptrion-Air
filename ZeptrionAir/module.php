@@ -232,20 +232,6 @@ class ZeptrionAir extends IPSModuleStrict
                     'caption' => 'zeptrionAIR neu starten',
                     'onClick' => 'echo ZEPA_RebootDevice($id);'
                 ],
-                [
-                    'type' => 'RowLayout',
-                    'items' => [
-                          [
-                                'type'   => 'Image',
-                                'onClick'=> "echo 'https://paypal.me/mbstern';",
-                                'image'=> "data:image/jpeg;base64,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"
-                        ],
-                        [
-                            'type'    => 'Label',
-                            'caption' => "Sag danke und unterstütze den Modulentwickler: paypal.me/mbstern"
-                        ]
-                    ]
-                ]
             ],
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
@@ -255,35 +241,37 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
+    public function GetCompatibleParents(): string
+    {
+        return '{"type":"connect","moduleIDs":["{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}"]}';
+    }
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
-        // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('SceneResetTimer', 0);
         $this->ApplyChannelVariables();
         $this->ApplyInfoVariables();
-        if (trim($this->ReadPropertyString('Host')) === '') {
+        $host = trim($this->ReadPropertyString('Host'));
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ($host === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->SetStatus(201);
             return;
         }
-        // Polling wird vollständig automatisch geregelt:
-        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SetTimerInterval('PollTimer', 0);
+            $this->SetTimerInterval('InfoTimer', 0);
+            return;
+        }
         $this->WriteAttributeInteger('CommunicationFailures', 0);
-        $this->SetTimerInterval('InfoTimer', 60000);
         $this->SetStatus(102);
+        $this->SetTimerInterval('InfoTimer', 60000);
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
-            $this->RefreshDeviceInfo();
         } else {
             $this->SetTimerInterval('PollTimer', 5000);
-            $this->Poll();
-            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
-                $this->RefreshDeviceInfo();
-            }
         }
     }
     private function IsMotorOnlyDevice(): bool
@@ -305,6 +293,10 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
+            return;
+        }
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
             return;
         }
         // Reine Motoraktoren liefern über chscan keine verwertbare Position.
@@ -378,47 +370,15 @@ class ZeptrionAir extends IPSModuleStrict
         }
         // Laut zrap-API startet cmd=reboot nur das WLAN-Gerät neu und behält
         // dessen Konfiguration. Factory-/Network-Reset werden hier bewusst
-        // NICHT angeboten.
-        $url = 'http://' . $host . '/zrap/sys';
-        $curl = curl_init();
-        if ($curl === false) {
-            return 'Neustart nicht möglich: cURL konnte nicht initialisiert werden.';
-        }
-        curl_setopt_array($curl, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1000,
-            CURLOPT_TIMEOUT_MS => 3000,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CUSTOMREQUEST => 'POST',
-            CURLOPT_POSTFIELDS => http_build_query(['cmd' => 'reboot']),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded']
-        ]);
-        $response = curl_exec($curl);
-        $error = curl_error($curl);
-        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
-        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) {
-            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+        // NICHT angeboten. Die Wiedererreichbarkeit wird vom regulären Polling
+        // erkannt; hier wird weder blockierend gewartet noch ein Verzögerungstimer angelegt.
+        $result = $this->SendHttpRequest('POST', '/zrap/sys', ['cmd' => 'reboot'], 3000);
+        if (!$result['success']) {
+            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
             return 'Neustart konnte nicht ausgelöst werden. Das Gerät antwortet nicht auf die API.';
         }
-        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $httpCode, 0);
-        // Ein erfolgreicher POST bestätigt zunächst nur die Annahme des Befehls.
-        // Für eine echte Erfolgsmeldung warten wir, bis /zrap/id nach dem Neustart
-        // wieder erreichbar ist.
-        usleep(1500000);
-        for ($attempt = 1; $attempt <= 12; $attempt++) {
-            $id = $this->HttpXmlGet('/zrap/id');
-            if ($id !== null) {
-                $this->SetStatus(102);
-                $this->Poll();
-                $this->RefreshDeviceInfo();
-                $this->SendDebug('Geräte-Neustart', 'Gerät wieder erreichbar', 0);
-                return 'Neustart erfolgreich: Das zeptrionAIR-Gerät ist wieder erreichbar.';
-            }
-            usleep(1000000);
-        }
-        return 'Neustart wurde ausgelöst, aber das Gerät war nach ca. 14 Sekunden noch nicht wieder erreichbar.';
+        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $result['httpCode'], 0);
+        return 'Neustart wurde ausgelöst. Die Wiedererreichbarkeit wird automatisch über das reguläre Polling erkannt.';
     }
     public function RefreshRuntimeInfo(): void
     {
@@ -745,36 +705,11 @@ class ZeptrionAir extends IPSModuleStrict
             return false;
         }
         try {
-            $url = 'http://' . $host . '/zrap/chctrl/ch' . $Channel;
-            $this->SendDebug('SendCommand', 'POST ' . $url . ' cmd=' . $Command, 0);
-            $curl = curl_init();
-            if ($curl === false) {
-                throw new RuntimeException('cURL konnte nicht initialisiert werden');
-            }
-            curl_setopt_array($curl, [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => http_build_query(['cmd' => $Command]),
-                CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Connection: close']
-            ]);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            $success = $response !== false && $httpCode >= 200 && $httpCode < 400;
-            $this->SendDebug(
-                'SendCommand',
-                'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') . ' / Antwort: ' . (string)$response,
-                0
-            );
-            if (!$success) {
-                return false;
-            }
-            return true;
+            $path = '/zrap/chctrl/ch' . $Channel;
+            $this->SendDebug('SendCommand', 'POST http://' . $host . $path . ' cmd=' . $Command, 0);
+            $result = $this->SendHttpRequest('POST', $path, ['cmd' => $Command], 10000);
+            $this->SendDebug('SendCommand', 'HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : '') . ' / Antwort: ' . $result['raw'], 0);
+            return $result['success'];
         } finally {
             IPS_SemaphoreLeave($lockName);
         }
@@ -903,32 +838,16 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return null;
             }
-            $url = 'http://' . $host . $path;
-            $curl = curl_init();
-            if ($curl === false) {
-                return null;
-            }
-            curl_setopt_array($curl, [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => 1000,
-                CURLOPT_TIMEOUT_MS => 2500,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_HTTPHEADER => ['Connection: close']
-            ]);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
-                $this->SendDebug('HTTP Fehler', $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            $result = $this->SendHttpRequest('GET', $path, null, 2500);
+            if (!$result['success'] || trim($result['raw']) === '') {
+                $this->SendDebug('HTTP Fehler', 'http://' . $host . $path . ' / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
                 return null;
             }
             libxml_use_internal_errors(true);
-            $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
+            $xml = simplexml_load_string($result['raw'], 'SimpleXMLElement', LIBXML_NOCDATA);
             if ($xml === false) {
                 libxml_clear_errors();
-                $this->SendDebug('HTTP Fehler', 'Ungültiges XML von ' . $url, 0);
+                $this->SendDebug('HTTP Fehler', 'Ungültiges XML von http://' . $host . $path, 0);
                 return null;
             }
             $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -937,6 +856,43 @@ class ZeptrionAir extends IPSModuleStrict
         } finally {
             IPS_SemaphoreLeave($lockName);
         }
+    }
+    private function SendHttpRequest(string $method, string $path, ?array $formData, int $timeoutMs): array
+    {
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SendDebug('Splitter', 'Noch keine übergeordnete Instanz verbunden – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Noch kein zeptrionAIR-Splitter verbunden'];
+        }
+        $payload = json_encode([
+            'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
+            'Host' => trim($this->ReadPropertyString('Host')),
+            'Method' => strtoupper($method),
+            'Path' => $path,
+            'FormData' => $formData,
+            'TimeoutMs' => $timeoutMs
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $parentID = (int)($instance['ConnectionID'] ?? 0);
+        if (!IPS_IsInstanceCompatible($this->InstanceID, $parentID)) {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+            $this->SendDebug('Splitter', 'Parent-Interface ist noch nicht verfügbar – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Parent-Interface noch nicht verfügbar'];
+        }
+        $response = $this->SendDataToParent((string)$payload);
+        $result = json_decode((string)$response, true);
+        if (!is_array($result)) {
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Antwort vom zeptrionAIR-Splitter'];
+        }
+        $error = (string)($result['error'] ?? '');
+        if ($error === 'Gerätekommunikation ist belegt') {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+        }
+        return [
+            'success' => (bool)($result['success'] ?? false),
+            'raw' => (string)($result['raw'] ?? ''),
+            'httpCode' => (int)($result['httpCode'] ?? 0),
+            'error' => $error
+        ];
     }
     private function ApplyChannelStates(array $data, string $source): void
     {
