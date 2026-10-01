@@ -6,6 +6,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
     public function Create(): void
     {
         parent::Create();
+        $this->SetBuffer('NotifyRxBuffer', '');
+        $this->SetBuffer('NotifyArmed', '0');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
         $this->RegisterHook('zeptrionair');
@@ -26,6 +28,13 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
         $this->RegisterHook('zeptrionair');
         $this->SetStatus(102);
+        $this->SetBuffer('NotifyRxBuffer', '');
+        $this->SetBuffer('NotifyArmed', '0');
+        $parentID = IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0;
+        if ((int)$parentID > 0) {
+            $this->RegisterMessage((int)$parentID, IM_CHANGESTATUS);
+        }
+        $this->ArmNotify();
     }
     public function GetConfigurationForm(): string
     {
@@ -37,6 +46,111 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
+    public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
+    {
+        if ($Message !== IM_CHANGESTATUS) {
+            return;
+        }
+        $parentID = IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0;
+        if ($SenderID !== (int)$parentID) {
+            return;
+        }
+        $this->SetBuffer('NotifyRxBuffer', '');
+        $this->SetBuffer('NotifyArmed', '0');
+        $this->ArmNotify();
+    }
+
+    private function ArmNotify(): void
+    {
+        if ($this->GetBuffer('NotifyArmed') === '1') {
+            return;
+        }
+        $parentID = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
+        if ($parentID <= 0) {
+            return;
+        }
+        $parent = IPS_GetInstance($parentID);
+        if ((int)($parent['InstanceStatus'] ?? 0) !== 102) {
+            return;
+        }
+
+        $request = "GET /zrap/chnotify HTTP/1.1\r\n"
+                 . "Host: zeptrion\r\n"
+                 . "Accept: application/xml,text/xml,*/*\r\n"
+                 . "Cache-Control: no-cache\r\n"
+                 . "Connection: keep-alive\r\n\r\n";
+
+        $ok = $this->SendDataToParent(json_encode([
+            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
+            'Buffer' => $request
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+        if ($ok !== false) {
+            $this->SetBuffer('NotifyArmed', '1');
+            $this->SendDebug('CHNOTIFY', 'Listener über Client Socket gestartet', 0);
+        }
+    }
+
+    public function ReceiveData(string $JSONString): string
+    {
+        $packet = json_decode($JSONString, true);
+        if (!is_array($packet) || !isset($packet['Buffer'])) {
+            return '';
+        }
+        $buffer = $this->GetBuffer('NotifyRxBuffer') . (string)$packet['Buffer'];
+
+        while (true) {
+            $headerEnd = strpos($buffer, "\r\n\r\n");
+            if ($headerEnd === false) break;
+            $header = substr($buffer, 0, $headerEnd);
+            $bodyStart = $headerEnd + 4;
+            $length = null;
+            if (preg_match('/\r\nContent-Length:\s*(\d+)/i', "\r\n".$header, $m)) {
+                $length = (int)$m[1];
+            }
+
+            if ($length !== null) {
+                if (strlen($buffer) < $bodyStart + $length) break;
+                $body = substr($buffer, $bodyStart, $length);
+                $buffer = substr($buffer, $bodyStart + $length);
+            } else {
+                // zeptrion chnotify XML response; use closing root tag if no Content-Length exists.
+                if (!preg_match('/<([A-Za-z0-9_:-]+)(?:\s[^>]*)?>/', substr($buffer, $bodyStart), $root)) break;
+                $endTag = '</' . $root[1] . '>';
+                $end = strpos($buffer, $endTag, $bodyStart);
+                if ($end === false) break;
+                $end += strlen($endTag);
+                $body = substr($buffer, $bodyStart, $end - $bodyStart);
+                $buffer = substr($buffer, $end);
+            }
+
+            $this->SetBuffer('NotifyArmed', '0');
+            $body = trim($body);
+            if ($body !== '') {
+                $this->DispatchNotifyToChildren($body);
+            }
+            // chnotify is one response per request: immediately arm the next request,
+            // without any timer.
+            $this->ArmNotify();
+        }
+
+        $this->SetBuffer('NotifyRxBuffer', $buffer);
+        return '';
+    }
+
+    private function DispatchNotifyToChildren(string $payload): void
+    {
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $childID) {
+            $instance = IPS_GetInstance($childID);
+            if (($instance['ModuleInfo']['ModuleID'] ?? '') !== '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}') {
+                continue;
+            }
+            if (function_exists('ZEPA_ProcessNotifyData')) {
+                @ZEPA_ProcessNotifyData($childID, $payload);
+            }
+        }
+    }
+
     public function ForwardData(string $JSONString): string
     {
         $data = json_decode($JSONString, true);
