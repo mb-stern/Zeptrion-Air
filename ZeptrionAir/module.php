@@ -1013,11 +1013,11 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SendDebug('CHNOTIFY', 'Longpoll aktiv', 0);
     }
 
-    public function ReceiveData($JSONString): void
+    public function ReceiveData(string $JSONString): string
     {
         $data = json_decode($JSONString, true);
         if (!is_array($data) || !isset($data['Buffer']) || $data['Buffer'] === '') {
-            return;
+            return '';
         }
 
         $buffer = $this->GetBuffer('NotifyRxBuffer') . (string)$data['Buffer'];
@@ -1070,6 +1070,7 @@ class ZeptrionAir extends IPSModuleStrict
             $this->SetTimerInterval('NotifyTimer', 100);
         }
         $this->SetBuffer('NotifyRxBuffer', $buffer);
+        return '';
     }
 
     private function ExtractNotifyHttpResponse(string $buffer): ?array
