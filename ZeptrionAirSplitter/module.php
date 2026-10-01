@@ -43,7 +43,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         if ($host === '' || !in_array($method, ['GET', 'POST'], true) || $path === '' || $path[0] !== '/') {
             return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige HTTP-Anfrage']);
         }
-        $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
+        $lockPrefix = $path === '/zrap/chnotify' ? 'ZEPAS_NOTIFY_' : 'ZEPAS_HTTP_';
+        $lockName = $lockPrefix . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
         if (!IPS_SemaphoreEnter($lockName, 0)) {
             return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Gerätekommunikation ist belegt']);
         }
