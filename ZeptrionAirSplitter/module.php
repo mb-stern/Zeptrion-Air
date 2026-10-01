@@ -179,9 +179,14 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: keep-alive',
             0
         );
+        $this->SendDebug('TX HEX', bin2hex($q), 0);
+
+        // IPSModuleStrict uses HEX encoding for data-flow buffers.
+        // The old IPSModule test used the raw/UTF-8 buffer; under Strict the
+        // identical binary HTTP request must therefore be passed as bin2hex().
         $ok=$this->SendDataToParent(json_encode([
             'DataID'=>'{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
-            'Buffer'=>$q
+            'Buffer'=>bin2hex($q)
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
         if ($ok===false) {
