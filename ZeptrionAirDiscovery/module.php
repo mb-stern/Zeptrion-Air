@@ -73,7 +73,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     'name' => $host
                 ], [
                     'moduleID' => self::SPLITTER_MODULE_ID,
-                    'configuration' => []
+                    'configuration' => (object) []
                 ], [
                     'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
                     'configuration' => [
@@ -88,7 +88,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                     'configuration' => ['Host' => $host]
                 ], [
                     'moduleID' => self::SPLITTER_MODULE_ID,
-                    'configuration' => []
+                    'configuration' => (object) []
                 ], [
                     'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
                     'configuration' => [
