@@ -112,7 +112,18 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
 
         $rx=(string)$d['Buffer'];
-        $this->SendDebug('RX BUFFER', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
+        $this->SendDebug('RX BUFFER', $rx, 0);
+
+        // Client Socket: binäre Nutzdaten können als Hex-String im JSON-Buffer ankommen.
+        // Nur dann dekodieren, wenn der komplette Buffer gültiges Hex ist.
+        if ($rx !== '' && (strlen($rx) % 2) === 0 && preg_match('/^[0-9A-Fa-f]+$/D', $rx)) {
+            $decoded=@hex2bin($rx);
+            if ($decoded !== false) {
+                $rx=$decoded;
+                $this->SendDebug('RX DECODED', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
+            }
+        }
+
         $buffer=$this->GetBuffer('Buffer').$rx;
         while (true) {
             $r=$this->ExtractListenerResponse($buffer);
