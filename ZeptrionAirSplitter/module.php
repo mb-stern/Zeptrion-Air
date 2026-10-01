@@ -65,8 +65,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
 
         $this->SetTimerInterval('RecoveryTimer', 0);
-        $this->SendDebug('STATE', 'Listener starten -> zuerst chscan', 0);
-        return $this->SendListenerRequest('/zrap/chscan', 'scan');
+        $this->SendDebug('STATE', 'Listener starten -> direkt chnotify', 0);
+        return $this->SendListenerRequest('/zrap/chnotify', 'notify');
     }
 
     public function StopListener(): bool
@@ -98,8 +98,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             $this->SetBuffer('Pending', '');
             $this->SetBuffer('Buffer', '');
         }
-        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
-        $this->SendListenerRequest('/zrap/chscan', 'scan');
+        $this->SendDebug('RECOVERY', 'Client Socket aktiv -> chnotify erneut starten', 0);
+        $this->SendListenerRequest('/zrap/chnotify', 'notify');
     }
 
     public function ReceiveData(string $JSONString): string
@@ -143,10 +143,10 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             }
 
             if ($kind==='scan') {
-                $this->SetTimerInterval('RecoveryTimer',0);
-                $this->SendDebug('RECOVERY','chscan OK -> Recovery AUS',0);
                 $this->SendDebug('CHSCAN RAW',trim($r['body']),0);
             } elseif ($kind==='notify') {
+                $this->SetTimerInterval('RecoveryTimer',0);
+                $this->SendDebug('RECOVERY','chnotify OK -> Recovery AUS',0);
                 $this->SendDebug('NOTIFY RAW',trim($r['body']),0);
                 $this->DispatchNotifyToChildren($r['body']);
             }
