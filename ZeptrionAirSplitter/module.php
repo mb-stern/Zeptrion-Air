@@ -59,11 +59,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->SetBuffer('Buffer', '');
         $this->SetBuffer('Pending', '');
 
-        if (!$this->HasActiveParent()) {
-            $this->EnterRecovery('Parent nicht aktiv');
-            return false;
-        }
-
+        // Do not gate the first request by the Client Socket instance status.
+        // The socket may reconnect on the actual SendDataToParent() attempt.
         $this->SetTimerInterval('RecoveryTimer', 0);
         $this->SendDebug('STATE', 'Listener starten -> zuerst chscan', 0);
         return $this->SendListenerRequest('/zrap/chscan', 'scan');
@@ -84,14 +81,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
     {
         if ($this->GetBuffer('Listening') !== '1') {
             $this->SetTimerInterval('RecoveryTimer', 0);
-            return;
-        }
-        if (!$this->HasActiveParent()) {
-            $parentID=(int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
-            $status=$parentID>0 && IPS_InstanceExists($parentID)
-                ? (int)(IPS_GetInstance($parentID)['InstanceStatus'] ?? 0)
-                : 0;
-            $this->SendDebug('RECOVERY', 'Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten | ParentID='.$parentID.' Status='.$status, 0);
             return;
         }
         if ($this->GetBuffer('Pending') !== '') {
@@ -174,8 +163,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 
     private function SendListenerRequest(string $path,string $kind): bool
     {
-        if ($this->GetBuffer('Listening')!=='1' || !$this->HasActiveParent()) {
-            $this->EnterRecovery('Senden nicht moeglich');
+        if ($this->GetBuffer('Listening')!=='1') {
             return false;
         }
         if ($this->GetBuffer('Pending')!=='') return false;
