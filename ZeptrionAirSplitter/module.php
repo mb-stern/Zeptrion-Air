@@ -93,7 +93,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 
     public function ReceiveData(string $JSONString): string
     {
-        $this->SendDebug('RX JSON', $JSONString, 0);
         $d=json_decode($JSONString,true);
         if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer']==='') {
             $this->SendDebug('RX', 'Kein Buffer im Paket', 0);
@@ -101,7 +100,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
 
         $rx=(string)$d['Buffer'];
-        $this->SendDebug('RX BUFFER', $rx, 0);
 
         // Client Socket: binäre Nutzdaten können als Hex-String im JSON-Buffer ankommen.
         // Nur dann dekodieren, wenn der komplette Buffer gültiges Hex ist.
@@ -109,7 +107,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             $decoded=@hex2bin($rx);
             if ($decoded !== false) {
                 $rx=$decoded;
-                $this->SendDebug('RX DECODED', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
             }
         }
 
@@ -179,8 +176,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: keep-alive',
             0
         );
-        $this->SendDebug('TX HEX', bin2hex($q), 0);
-
         // IPSModuleStrict uses HEX encoding for data-flow buffers.
         // The old IPSModule test used the raw/UTF-8 buffer; under Strict the
         // identical binary HTTP request must therefore be passed as bin2hex().
