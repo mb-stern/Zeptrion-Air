@@ -36,7 +36,13 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->SetBuffer('Listening', '1');
         $this->SetTimerInterval('RecoveryTimer', 0);
         $this->SetStatus(102);
-        $this->StartListener();
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) > 0) {
+            $this->StartListener();
+        } else {
+            $this->SendDebug('STATE', 'Client Socket noch nicht zugeordnet -> Listener wartet', 0);
+            $this->SetTimerInterval('RecoveryTimer', 1000);
+        }
     }
     public function GetConfigurationForm(): string
     {
@@ -143,6 +149,13 @@ class ZeptrionAirSplitter extends IPSModuleStrict
     private function SendListenerRequest(string $path,string $kind): bool
     {
         if ($this->GetBuffer('Listening')!=='1') {
+            return false;
+        }
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SetBuffer('Pending','');
+            $this->SendDebug('STATE', 'Noch kein Client Socket zugeordnet -> Senden verschoben', 0);
+            $this->SetTimerInterval('RecoveryTimer', 1000);
             return false;
         }
         if ($this->GetBuffer('Pending')!=='') return false;
