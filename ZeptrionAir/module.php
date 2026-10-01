@@ -5,9 +5,7 @@ class ZeptrionAir extends IPSModuleStrict
     private const CHANNEL_TYPES = ['unused', 'light', 'dimmer', 'shutter', 'awning'];
     public function Create(): void
     {
-        parent::Create();
-        $this->RequireParent('{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}');
-        $this->RegisterPropertyString('Host', '');
+        parent::Create();        $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
         $this->RegisterPropertyString('SerialNumber', '');
