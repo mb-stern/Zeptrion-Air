@@ -65,8 +65,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
 
         $this->SetTimerInterval('RecoveryTimer', 0);
-        $this->SendDebug('STATE', 'Listener starten -> direkt chnotify', 0);
-        return $this->SendListenerRequest('/zrap/chnotify', 'notify');
+        $this->SendDebug('STATE', 'Listener starten -> zuerst chscan', 0);
+        return $this->SendListenerRequest('/zrap/chscan', 'scan');
     }
 
     public function StopListener(): bool
@@ -98,8 +98,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             $this->SetBuffer('Pending', '');
             $this->SetBuffer('Buffer', '');
         }
-        $this->SendDebug('RECOVERY', 'Client Socket aktiv -> chnotify erneut starten', 0);
-        $this->SendListenerRequest('/zrap/chnotify', 'notify');
+        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
+        $this->SendListenerRequest('/zrap/chscan', 'scan');
     }
 
     public function ReceiveData(string $JSONString): string
@@ -112,20 +112,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         }
 
         $rx=(string)$d['Buffer'];
-        $this->SendDebug('RX BUFFER', $rx, 0);
-
-        // IP-Symcon Client Socket can deliver binary payload as hexadecimal text.
-        // Decode only when the complete value is a valid even-length hex string.
-        if ($rx !== '' && (strlen($rx) % 2) === 0 && preg_match('/^[0-9A-Fa-f]+$/D', $rx)) {
-            $decoded=@hex2bin($rx);
-            if ($decoded !== false) {
-                $rx=$decoded;
-                $this->SendDebug('RX DECODED', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
-            }
-        } else {
-            $this->SendDebug('RX DECODED', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
-        }
-
+        $this->SendDebug('RX BUFFER', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
         $buffer=$this->GetBuffer('Buffer').$rx;
         while (true) {
             $r=$this->ExtractListenerResponse($buffer);
@@ -144,6 +131,11 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 
             if ($kind==='scan') {
                 $this->SendDebug('CHSCAN RAW',trim($r['body']),0);
+                $this->SetTimerInterval('RecoveryTimer',0);
+                $this->SendDebug('RECOVERY','chscan OK -> Recovery AUS',0);
+                if ($this->GetBuffer('Listening')==='1') {
+                    $this->SendDebug('STATE','chscan OK -> chnotify aktivieren',0);
+                }
             } elseif ($kind==='notify') {
                 $this->SetTimerInterval('RecoveryTimer',0);
                 $this->SendDebug('RECOVERY','chnotify OK -> Recovery AUS',0);
@@ -181,11 +173,11 @@ class ZeptrionAirSplitter extends IPSModuleStrict
            "Host: zeptrion\r\n".
            "Accept: application/xml,text/xml,*/*\r\n".
            "Cache-Control: no-cache\r\n".
-           "Connection: close\r\n\r\n";
+           "Connection: keep-alive\r\n\r\n";
 
         $this->SetBuffer('Pending',$kind);
         $this->SendDebug('TX',
-            'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: close',
+            'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: keep-alive',
             0
         );
         $ok=$this->SendDataToParent(json_encode([
