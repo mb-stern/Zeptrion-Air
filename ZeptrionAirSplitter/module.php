@@ -3,26 +3,24 @@ declare(strict_types=1);
 class ZeptrionAirSplitter extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
-    private const TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
-    private const CS = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
-
     public function Create(): void
     {
         parent::Create();
-        $this->RegisterPropertyInteger('RecoveryInterval', 10);
-        $this->RegisterTimer('RecoveryTimer', 0, 'ZEPAS_RecoveryTick($_IPS["TARGET"]);');
-
         $this->SetBuffer('Buffer', '');
         $this->SetBuffer('Listening', '0');
         $this->SetBuffer('Pending', '');
         $this->SetBuffer('Online', '0');
+        $this->RegisterPropertyInteger('RecoveryInterval', 10);
+        $this->RegisterTimer('RecoveryTimer', 0, 'ZEPAS_RecoveryTick($_IPS["TARGET"]);');
+        $this->RegisterAttributeString('SmartButtonScenes', '[]');
+        $this->RegisterAttributeString('SmartButtonToken', '');
+        $this->RegisterHook('zeptrionair');
     }
-
     public function GetCompatibleParents(): string
     {
         return json_encode([
             'type' => 'require',
-            'moduleIDs' => [self::CS]
+            'moduleIDs' => ['{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}']
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
@@ -30,16 +28,31 @@ class ZeptrionAirSplitter extends IPSModuleStrict
     {
         parent::ApplyChanges();
 
+        if ($this->ReadAttributeString('SmartButtonToken') === '') {
+            $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
+        }
+        $this->RegisterHook('zeptrionair');
+
         $this->SetBuffer('Buffer', '');
         $this->SetBuffer('Pending', '');
         $this->SetBuffer('Online', '0');
+        $this->SetBuffer('Listening', '1');
         $this->SetTimerInterval('RecoveryTimer', 0);
 
-        // Production version: listener starts automatically.
-        $this->SetBuffer('Listening', '1');
+        $this->SetStatus(102);
         $this->StartListener();
     }
 
+    public function GetConfigurationForm(): string
+    {
+        return json_encode([
+            'elements' => [
+                ['type' => 'Label', 'caption' => 'Zentraler Dienst für zeptrionAIR Smart-Taster.'],
+                ['type' => 'Label', 'caption' => 'WebHook: /hook/zeptrionair']
+            ],
+            'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
     public function StartListener(): bool
     {
         $this->SetBuffer('Listening', '1');
@@ -53,7 +66,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 
         $this->SetTimerInterval('RecoveryTimer', 0);
         $this->SendDebug('STATE', 'Listener starten -> zuerst chscan', 0);
-        return $this->SendRequest('/zrap/chscan', 'scan');
+        return $this->SendListenerRequest('/zrap/chscan', 'scan');
     }
 
     public function StopListener(): bool
@@ -67,228 +80,139 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         return true;
     }
 
-    public function ForceRecovery(): void
-    {
-        if ($this->GetBuffer('Listening') !== '1') {
-            $this->SetBuffer('Listening', '1');
-        }
-        $this->EnterRecovery('Recovery manuell ausgeloest');
-    }
-
     public function RecoveryTick(): void
     {
         if ($this->GetBuffer('Listening') !== '1') {
             $this->SetTimerInterval('RecoveryTimer', 0);
             return;
         }
-
         if (!$this->HasActiveParent()) {
-            // Exactly as in the successful test: an enabled Client Socket is
-            // reconnected by IP-Symcon itself. Do not continuously toggle Open.
             $this->SendDebug('RECOVERY', 'Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten', 0);
             return;
         }
-
         if ($this->GetBuffer('Pending') !== '') {
             $this->SetBuffer('Pending', '');
             $this->SetBuffer('Buffer', '');
         }
-
         $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
-        $this->SendRequest('/zrap/chscan', 'scan');
+        $this->SendListenerRequest('/zrap/chscan', 'scan');
     }
 
     public function ReceiveData(string $JSONString): string
     {
-        $d = json_decode($JSONString, true);
-        if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer'] === '') {
-            return '';
-        }
+        $d=json_decode($JSONString,true);
+        if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer']==='') return '';
 
-        $buffer = $this->GetBuffer('Buffer') . (string)$d['Buffer'];
-
+        $buffer=$this->GetBuffer('Buffer').(string)$d['Buffer'];
         while (true) {
-            $r = $this->ExtractHttpResponse($buffer);
-            if ($r === null) {
-                break;
-            }
-            $buffer = $r['rest'];
+            $r=$this->ExtractListenerResponse($buffer);
+            if ($r===null) break;
+            $buffer=$r['rest'];
 
-            $kind = $this->GetBuffer('Pending');
-            $this->SetBuffer('Pending', '');
-            $this->SetBuffer('Online', '1');
+            $kind=$this->GetBuffer('Pending');
+            $this->SetBuffer('Pending','');
+            $this->SetBuffer('Online','1');
+            $this->SendDebug('HTTP',(string)$r['status'].' '.$kind,0);
 
-            $this->SendDebug('HTTP', (string)$r['status'] . ' ' . $kind, 0);
-
-            if ($r['status'] !== 200 && $r['status'] !== 302 && $r['status'] !== 204) {
-                $this->EnterRecovery('HTTP Status ' . $r['status']);
+            if ($r['status']!==200 && $r['status']!==302 && $r['status']!==204) {
+                $this->EnterRecovery('HTTP Status '.$r['status']);
                 continue;
             }
 
-            if ($kind === 'scan') {
-                $this->ProcessScan($r['body']);
-                $this->SetTimerInterval('RecoveryTimer', 0);
-                $this->SendDebug('RECOVERY', 'chscan OK -> Recovery AUS', 0);
-                if ($this->GetBuffer('Listening') === '1') {
-                    $this->SendDebug('STATE', 'chscan OK -> chnotify aktivieren', 0);
-                }
-            } elseif ($kind === 'notify') {
-                $this->ProcessNotify($r['body']);
+            if ($kind==='scan') {
+                $this->SetTimerInterval('RecoveryTimer',0);
+                $this->SendDebug('RECOVERY','chscan OK -> Recovery AUS',0);
+                $this->SendDebug('CHSCAN RAW',trim($r['body']),0);
+            } elseif ($kind==='notify') {
+                $this->SendDebug('NOTIFY RAW',trim($r['body']),0);
+                $this->DispatchNotifyToChildren($r['body']);
             }
 
-            // No normal polling timer: immediately arm the next blocking chnotify
-            // after the previous HTTP response has completed.
-            if ($this->GetBuffer('Listening') === '1' && $this->GetBuffer('Pending') === '') {
-                $this->SendRequest('/zrap/chnotify', 'notify');
+            if ($this->GetBuffer('Listening')==='1' && $this->GetBuffer('Pending')==='') {
+                $this->SendListenerRequest('/zrap/chnotify','notify');
             }
         }
-
-        $this->SetBuffer('Buffer', $buffer);
+        $this->SetBuffer('Buffer',$buffer);
         return '';
     }
 
     private function EnterRecovery(string $reason): void
     {
-        $this->SetBuffer('Online', '0');
-        $this->SetBuffer('Pending', '');
-        $this->SetBuffer('Buffer', '');
-
-        $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
-        $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
-        $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s chscan versuchen', 0);
+        $this->SetBuffer('Online','0');
+        $this->SetBuffer('Pending','');
+        $this->SetBuffer('Buffer','');
+        $sec=max(5,$this->ReadPropertyInteger('RecoveryInterval'));
+        $this->SetTimerInterval('RecoveryTimer',$sec*1000);
+        $this->SendDebug('RECOVERY',$reason.' -> alle '.$sec.' s chscan versuchen',0);
     }
 
-    private function SendRequest(string $path, string $kind): bool
+    private function SendListenerRequest(string $path,string $kind): bool
     {
-        if ($this->GetBuffer('Listening') !== '1' || !$this->HasActiveParent()) {
+        if ($this->GetBuffer('Listening')!=='1' || !$this->HasActiveParent()) {
             $this->EnterRecovery('Senden nicht moeglich');
             return false;
         }
+        if ($this->GetBuffer('Pending')!=='') return false;
 
-        if ($this->GetBuffer('Pending') !== '') {
-            return false;
-        }
+        $q="GET ".$path." HTTP/1.1\r\n".
+           "Host: zeptrion\r\n".
+           "Accept: application/xml,text/xml,*/*\r\n".
+           "Cache-Control: no-cache\r\n".
+           "Connection: keep-alive\r\n\r\n";
 
-        $q = "GET " . $path . " HTTP/1.1\r\n"
-           . "Host: zeptrion\r\n"
-           . "Accept: application/xml,text/xml,*/*\r\n"
-           . "Cache-Control: no-cache\r\n"
-           . "Connection: keep-alive\r\n\r\n";
-
-        $this->SetBuffer('Pending', $kind);
-        $this->SendDebug('TX', $kind . ' ' . $path, 0);
-        $ok = $this->SendDataToParent(json_encode([
-            'DataID' => self::TX,
-            'Buffer' => $q
+        $this->SetBuffer('Pending',$kind);
+        $this->SendDebug('TX',$kind.' '.$path,0);
+        $ok=$this->SendDataToParent(json_encode([
+            'DataID'=>'{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
+            'Buffer'=>$q
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
-        if ($ok === false) {
-            $this->SetBuffer('Pending', '');
+        if ($ok===false) {
+            $this->SetBuffer('Pending','');
             $this->EnterRecovery('SendDataToParent fehlgeschlagen');
             return false;
         }
         return true;
     }
 
-    private function ProcessScan(string $body): void
-    {
-        $this->SendDebug('CHSCAN RAW', trim($body), 0);
-        $x = @simplexml_load_string(trim($body));
-        if ($x === false) {
-            return;
-        }
-        foreach ($x->children() as $c => $n) {
-            $v = isset($n->val) ? (string)$n->val : '';
-            $this->SendDebug('SYNC', (string)$c . ' = ' . $v, 0);
-        }
-    }
-
-    private function ProcessNotify(string $body): void
-    {
-        $this->SendDebug('NOTIFY RAW', trim($body), 0);
-        $x = @simplexml_load_string(trim($body));
-        if ($x === false) {
-            return;
-        }
-
-        foreach ($x->children() as $c => $n) {
-            $v = isset($n->val) ? (int)$n->val : -1;
-            $this->SendDebug('EVENT', (string)$c . ' = ' . $v, 0);
-        }
-
-        // The existing device module keeps the rollo/learning logic.
-        // Feed it the exact XML body received by the proven listener.
-        $this->DispatchNotifyToChildren($body);
-    }
-
     private function DispatchNotifyToChildren(string $payload): void
     {
         foreach (IPS_GetChildrenIDs($this->InstanceID) as $childID) {
-            if (!IPS_InstanceExists($childID)) {
-                continue;
-            }
-            $instance = IPS_GetInstance($childID);
-            if (($instance['ModuleInfo']['ModuleID'] ?? '') !== self::DEVICE_MODULE_ID) {
-                continue;
-            }
+            if (!IPS_InstanceExists($childID)) continue;
+            $instance=IPS_GetInstance($childID);
+            if (($instance['ModuleInfo']['ModuleID'] ?? '') !== self::DEVICE_MODULE_ID) continue;
             if (function_exists('ZEPA_ProcessNotifyData')) {
-                @ZEPA_ProcessNotifyData($childID, $payload);
+                @ZEPA_ProcessNotifyData($childID,$payload);
             }
         }
     }
 
-    private function ExtractHttpResponse(string $b): ?array
+    private function ExtractListenerResponse(string $b): ?array
     {
-        $he = strpos($b, "\r\n\r\n");
-        if ($he === false) {
-            return null;
-        }
+        $he=strpos($b,"\r\n\r\n");
+        if ($he===false) return null;
+        $h=substr($b,0,$he); $bs=$he+4;
+        $ls=explode("\r\n",$h); $sl=array_shift($ls); $st=0;
+        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/',(string)$sl,$m)) $st=(int)$m[1];
 
-        $h = substr($b, 0, $he);
-        $bs = $he + 4;
-        $ls = explode("\r\n", $h);
-        $sl = array_shift($ls);
-        $st = 0;
-        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/', (string)$sl, $m)) {
-            $st = (int)$m[1];
+        $hs=[];
+        foreach($ls as $l){
+            $p=strpos($l,':');
+            if($p!==false) $hs[strtolower(trim(substr($l,0,$p)))]=trim(substr($l,$p+1));
         }
-
-        $hs = [];
-        foreach ($ls as $l) {
-            $p = strpos($l, ':');
-            if ($p !== false) {
-                $hs[strtolower(trim(substr($l, 0, $p)))] = trim(substr($l, $p + 1));
+        if(isset($hs['content-length'])){
+            $n=(int)$hs['content-length'];
+            if(strlen($b)<$bs+$n) return null;
+            return ['status'=>$st,'body'=>substr($b,$bs,$n),'rest'=>substr($b,$bs+$n)];
+        }
+        if($st===302 || $st===204) return ['status'=>$st,'body'=>'','rest'=>substr($b,$bs)];
+        foreach(['</chnotify>','</chscan>'] as $tag){
+            $p=strpos($b,$tag,$bs);
+            if($p!==false){
+                $e=$p+strlen($tag);
+                return ['status'=>$st,'body'=>substr($b,$bs,$e-$bs),'rest'=>substr($b,$e)];
             }
         }
-
-        if (isset($hs['content-length'])) {
-            $n = (int)$hs['content-length'];
-            if (strlen($b) < $bs + $n) {
-                return null;
-            }
-            return [
-                'status' => $st,
-                'body'   => substr($b, $bs, $n),
-                'rest'   => substr($b, $bs + $n)
-            ];
-        }
-
-        if ($st === 302 || $st === 204) {
-            return ['status' => $st, 'body' => '', 'rest' => substr($b, $bs)];
-        }
-
-        foreach (['</chnotify>', '</chscan>'] as $tag) {
-            $p = strpos($b, $tag, $bs);
-            if ($p !== false) {
-                $e = $p + strlen($tag);
-                return [
-                    'status' => $st,
-                    'body'   => substr($b, $bs, $e - $bs),
-                    'rest'   => substr($b, $e)
-                ];
-            }
-        }
-
         return null;
     }
 
