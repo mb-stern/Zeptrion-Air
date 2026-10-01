@@ -5,7 +5,8 @@ class ZeptrionAir extends IPSModuleStrict
     private const CHANNEL_TYPES = ['unused', 'light', 'dimmer', 'shutter', 'awning'];
     public function Create(): void
     {
-        parent::Create();        $this->RegisterPropertyString('Host', '');
+        parent::Create();
+        $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
         $this->RegisterPropertyString('SerialNumber', '');
@@ -21,12 +22,9 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterPropertyBoolean('ShowScenes', false); // Migration: wird nicht mehr für neue Szenenauswahl verwendet.
         $this->RegisterTimer('PollTimer', 0, 'ZEPA_Poll($_IPS[\'TARGET\']);');
         $this->RegisterTimer('InfoTimer', 0, 'ZEPA_RefreshRuntimeInfo($_IPS[\'TARGET\']);');
-        $this->RegisterTimer('NotifyTimer', 0, 'ZEPA_NotifyTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
         $this->RegisterAttributeInteger('CommunicationFailures', 0);
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
-        $this->RegisterAttributeString('MotorRuntimeState', '{}');
-        $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -41,14 +39,6 @@ class ZeptrionAir extends IPSModuleStrict
             }
         }
     }
-    public function GetCompatibleParents(): string
-    {
-        return json_encode([
-            'type' => 'require',
-            'moduleIDs' => ['{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}']
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-
     public function GetConfigurationForm(): string
     {
         $elements = [];
@@ -198,9 +188,7 @@ class ZeptrionAir extends IPSModuleStrict
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'UpTimeMs', 'caption' => 'Fahrzeit ganz zu → ganz auf (ms)', 'minimum' => 100],
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'DownTimeMs', 'caption' => 'Fahrzeit ganz auf → ganz zu (ms)', 'minimum' => 100],
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'StepPercent', 'caption' => 'Schrittweite Position (%)', 'minimum' => 1, 'maximum' => 100],
-                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'LamellaTimeMs', 'caption' => 'Lamellenzeit geschlossen → offen (ms)', 'minimum' => 100],
-                        ['type' => 'Label', 'caption' => $this->MotorLearnedTimeCaption($channel)],
-                        ['type' => 'Button', 'caption' => 'Fahrzeiten automatisch einlernen', 'onClick' => 'echo ZEPA_StartTravelLearning($id, ' . $channel . ');']
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'LamellaTimeMs', 'caption' => 'Lamellenzeit geschlossen → offen (ms)', 'minimum' => 100]
                     ]
                 ];
             } elseif ($type === 'awning') {
@@ -212,9 +200,7 @@ class ZeptrionAir extends IPSModuleStrict
                     'items' => [
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'UpTimeMs', 'caption' => 'Fahrzeit ganz eingefahren → ganz ausgefahren (ms)', 'minimum' => 100],
                         ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'DownTimeMs', 'caption' => 'Fahrzeit ganz ausgefahren → ganz eingefahren (ms)', 'minimum' => 100],
-                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'StepPercent', 'caption' => 'Schrittweite Position (%)', 'minimum' => 1, 'maximum' => 100],
-                        ['type' => 'Label', 'caption' => $this->MotorLearnedTimeCaption($channel)],
-                        ['type' => 'Button', 'caption' => 'Fahrzeiten automatisch einlernen', 'onClick' => 'echo ZEPA_StartTravelLearning($id, ' . $channel . ');']
+                        ['type' => 'NumberSpinner', 'name' => 'Channel' . $channel . 'StepPercent', 'caption' => 'Schrittweite Position (%)', 'minimum' => 1, 'maximum' => 100]
                     ]
                 ];
             }
@@ -255,41 +241,37 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         return json_encode($form, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
+    public function GetCompatibleParents(): string
+    {
+        return '{"type":"connect","moduleIDs":["{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}"]}';
+    }
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
-        // Alte Long-Poll/SSE-Experimente bleiben deaktiviert.
         $this->SetTimerInterval('SceneResetTimer', 0);
         $this->ApplyChannelVariables();
         $this->ApplyInfoVariables();
-        if (trim($this->ReadPropertyString('Host')) === '') {
+        $host = trim($this->ReadPropertyString('Host'));
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ($host === '') {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SetTimerInterval('InfoTimer', 0);
-            $this->SetTimerInterval('NotifyTimer', 0);
-            $this->SetStatus(201);
             return;
         }
-        // Polling wird vollständig automatisch geregelt:
-        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SetTimerInterval('PollTimer', 0);
+            $this->SetTimerInterval('InfoTimer', 0);
+            return;
+        }
         $this->WriteAttributeInteger('CommunicationFailures', 0);
-        $this->SetTimerInterval('InfoTimer', 60000);
-        $state=$this->ReadMotorState();
-        $state['_notifySynced']=false;
-        $this->WriteMotorState($state);
-        $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
-        $this->SetTimerInterval('NotifyTimer', 0);
         $this->SetStatus(102);
+        $this->SetTimerInterval('InfoTimer', 60000);
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
-            $this->RefreshDeviceInfo();
         } else {
             $this->SetTimerInterval('PollTimer', 5000);
-            $this->Poll();
-            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
-                $this->RefreshDeviceInfo();
-            }
         }
     }
     private function IsMotorOnlyDevice(): bool
@@ -311,6 +293,10 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
+            return;
+        }
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
             return;
         }
         // Reine Motoraktoren liefern über chscan keine verwertbare Position.
@@ -384,47 +370,15 @@ class ZeptrionAir extends IPSModuleStrict
         }
         // Laut zrap-API startet cmd=reboot nur das WLAN-Gerät neu und behält
         // dessen Konfiguration. Factory-/Network-Reset werden hier bewusst
-        // NICHT angeboten.
-        $url = 'http://' . $host . '/zrap/sys';
-        $curl = curl_init();
-        if ($curl === false) {
-            return 'Neustart nicht möglich: cURL konnte nicht initialisiert werden.';
-        }
-        curl_setopt_array($curl, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1000,
-            CURLOPT_TIMEOUT_MS => 3000,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CUSTOMREQUEST => 'POST',
-            CURLOPT_POSTFIELDS => http_build_query(['cmd' => 'reboot']),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded']
-        ]);
-        $response = curl_exec($curl);
-        $error = curl_error($curl);
-        $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
-        if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400) {
-            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+        // NICHT angeboten. Die Wiedererreichbarkeit wird vom regulären Polling
+        // erkannt; hier wird weder blockierend gewartet noch ein Verzögerungstimer angelegt.
+        $result = $this->SendHttpRequest('POST', '/zrap/sys', ['cmd' => 'reboot'], 3000);
+        if (!$result['success']) {
+            $this->SendDebug('Geräte-Neustart', 'Nicht gesendet / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
             return 'Neustart konnte nicht ausgelöst werden. Das Gerät antwortet nicht auf die API.';
         }
-        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $httpCode, 0);
-        // Ein erfolgreicher POST bestätigt zunächst nur die Annahme des Befehls.
-        // Für eine echte Erfolgsmeldung warten wir, bis /zrap/id nach dem Neustart
-        // wieder erreichbar ist.
-        usleep(1500000);
-        for ($attempt = 1; $attempt <= 12; $attempt++) {
-            $id = $this->HttpXmlGet('/zrap/id');
-            if ($id !== null) {
-                $this->SetStatus(102);
-                $this->Poll();
-                $this->RefreshDeviceInfo();
-                $this->SendDebug('Geräte-Neustart', 'Gerät wieder erreichbar', 0);
-                return 'Neustart erfolgreich: Das zeptrionAIR-Gerät ist wieder erreichbar.';
-            }
-            usleep(1000000);
-        }
-        return 'Neustart wurde ausgelöst, aber das Gerät war nach ca. 14 Sekunden noch nicht wieder erreichbar.';
+        $this->SendDebug('Geräte-Neustart', 'Befehl akzeptiert / HTTP ' . $result['httpCode'], 0);
+        return 'Neustart wurde ausgelöst. Die Wiedererreichbarkeit wird automatisch über das reguläre Polling erkannt.';
     }
     public function RefreshRuntimeInfo(): void
     {
@@ -635,7 +589,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 return;
             case 'Position':
-                // Rollo/Markise: 0 % = offen/eingefahren, 100 % = geschlossen/ausgefahren.
+                // Rollo: 0 % = ganz offen, 100 % = ganz geschlossen.
                 $target = max(0, min(100, (int)$Value));
                 $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
                 $target = max(0, min(100, (int)round($target / $step) * $step));
@@ -645,28 +599,22 @@ class ZeptrionAir extends IPSModuleStrict
                 if ($target === $current) {
                     return;
                 }
-                $state = $this->ReadMotorState();
-                $key = (string)$channel;
-                $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
-                    'commandDirection' => $target > $current ? 'down' : 'up',
-                    'commandTarget' => $target
-                ]);
-                $this->WriteMotorState($state);
-
-                if ($target === 0 || $target === 100) {
-                    // Endlagen immer komplett anfahren -> sicherer Synchronpunkt.
-                    $command = $target === 0 ? 'open' : 'close';
-                } else {
-                    $time = $target > $current
-                        ? (int)round(($target - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
-                        : (int)round(($current - $target) * $this->EffectiveMotorTime($channel, 'up') / 100);
-                    $time = max(100, min(32000, $time));
-                    $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
-                }
-                if (!$this->SendCommand($channel, $command)) {
-                    $state = $this->ReadMotorState();
-                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget']);
-                    $this->WriteMotorState($state);
+                $time = $target > $current
+                    ? (int)round(($target - $current) * $this->ReadPropertyInteger('Channel' . $channel . 'DownTimeMs') / 100)
+                    : (int)round(($current - $target) * $this->ReadPropertyInteger('Channel' . $channel . 'UpTimeMs') / 100);
+                $time = max(100, min(32000, $time));
+                $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
+                if ($this->SendCommand($channel, $command)) {
+                    $this->SetValueIfChanged($ident, $target);
+                    // Nur das Rollo besitzt eine Lamellen-/Drehgradvariable.
+                    // Die Markise verwendet dieselbe zeitbasierte Positionsfahrt,
+                    // jedoch ohne Dummy und ohne Drehgrad.
+                    $channelType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+                    if ($channelType === 'shutter') {
+                        // Bei einer Fahrt ist die Lamellen-Endstellung aus der
+                        // Fahrtrichtung ableitbar: hoch = offen, tief = geschlossen.
+                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $target < $current ? 100 : 0);
+                    }
                 }
                 return;
             case 'Lamella':
@@ -751,37 +699,20 @@ class ZeptrionAir extends IPSModuleStrict
         if ($host === '') {
             throw new RuntimeException('Kein Host konfiguriert');
         }
-        $request = [
-            'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
-            'Host' => $host,
-            'Method' => 'POST',
-            'Path' => '/zrap/chctrl/ch' . $Channel,
-            'FormData' => ['cmd' => $Command],
-            'TimeoutMs' => 10000
-        ];
-        $this->SendDebug('SendCommand', '-> Splitter | ch' . $Channel . ' cmd=' . $Command, 0);
-        $result = $this->SendDataToParent(json_encode(
-            $request,
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
-        ));
-        if (!is_string($result) || $result === '') {
-            $this->SendDebug('SendCommand', 'Splitter lieferte keine Antwort', 0);
+        $lockName = 'ZEPA_HTTP_' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($lockName, 3000)) {
+            $this->SendDebug('SendCommand', 'Nicht gesendet – Gerätekommunikation ist belegt', 0);
             return false;
         }
-        $response = json_decode($result, true);
-        if (!is_array($response)) {
-            $this->SendDebug('SendCommand', 'Ungültige Splitter-Antwort: ' . $result, 0);
-            return false;
+        try {
+            $path = '/zrap/chctrl/ch' . $Channel;
+            $this->SendDebug('SendCommand', 'POST http://' . $host . $path . ' cmd=' . $Command, 0);
+            $result = $this->SendHttpRequest('POST', $path, ['cmd' => $Command], 10000);
+            $this->SendDebug('SendCommand', 'HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : '') . ' / Antwort: ' . $result['raw'], 0);
+            return $result['success'];
+        } finally {
+            IPS_SemaphoreLeave($lockName);
         }
-        $success = (bool)($response['success'] ?? false);
-        $httpCode = (int)($response['httpCode'] ?? 0);
-        $error = trim((string)($response['error'] ?? ''));
-        $this->SendDebug(
-            'SendCommand',
-            '<- Splitter | HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''),
-            0
-        );
-        return $success;
     }
     public function SwitchLight(int $Channel, bool $State): bool
     {
@@ -894,11 +825,10 @@ class ZeptrionAir extends IPSModuleStrict
             throw new InvalidArgumentException('Kanal ' . $channel . ' ist bei diesem Gerät nicht vorhanden');
         }
     }
-    private function HttpXmlGet(string $path, int $timeoutMs = 2500): ?array
+    private function HttpXmlGet(string $path): ?array
     {
         $this->WriteAttributeBoolean('LastRequestSkipped', false);
-        $lockPrefix = $path === '/zrap/chnotify' ? 'ZEPA_NOTIFY_' : 'ZEPA_HTTP_';
-        $lockName = $lockPrefix . $this->InstanceID;
+        $lockName = 'ZEPA_HTTP_' . $this->InstanceID;
         if (!IPS_SemaphoreEnter($lockName, 0)) {
             $this->WriteAttributeBoolean('LastRequestSkipped', true);
             return null;
@@ -908,32 +838,16 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return null;
             }
-            $url = 'http://' . $host . $path;
-            $curl = curl_init();
-            if ($curl === false) {
-                return null;
-            }
-            curl_setopt_array($curl, [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => 1000,
-                CURLOPT_TIMEOUT_MS => $timeoutMs,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_HTTPHEADER => ['Connection: close']
-            ]);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            if ($response === false || $error !== '' || $httpCode < 200 || $httpCode >= 400 || trim((string)$response) === '') {
-                $this->SendDebug('HTTP Fehler', $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            $result = $this->SendHttpRequest('GET', $path, null, 2500);
+            if (!$result['success'] || trim($result['raw']) === '') {
+                $this->SendDebug('HTTP Fehler', 'http://' . $host . $path . ' / HTTP ' . $result['httpCode'] . ($result['error'] !== '' ? ' / ' . $result['error'] : ''), 0);
                 return null;
             }
             libxml_use_internal_errors(true);
-            $xml = simplexml_load_string((string)$response, 'SimpleXMLElement', LIBXML_NOCDATA);
+            $xml = simplexml_load_string($result['raw'], 'SimpleXMLElement', LIBXML_NOCDATA);
             if ($xml === false) {
                 libxml_clear_errors();
-                $this->SendDebug('HTTP Fehler', 'Ungültiges XML von ' . $url, 0);
+                $this->SendDebug('HTTP Fehler', 'Ungültiges XML von http://' . $host . $path, 0);
                 return null;
             }
             $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -943,227 +857,43 @@ class ZeptrionAir extends IPSModuleStrict
             IPS_SemaphoreLeave($lockName);
         }
     }
-    public function NotifyTick(): void
+    private function SendHttpRequest(string $method, string $path, ?array $formData, int $timeoutMs): array
     {
-        // FIX8: chnotify is handled by the Splitter/Client Socket.
-        // No long-poll and no recovery polling timer in the device instance.
-        $this->SetTimerInterval('NotifyTimer', 0);
-    }
-
-    public function ProcessNotifyData(string $payload): void
-    {
-        $xml = @simplexml_load_string(trim($payload));
-        if ($xml === false) {
-            $this->SendDebug('CHNOTIFY', 'Ungültige XML-Nachricht: ' . $payload, 0);
-            return;
+        $instance = IPS_GetInstance($this->InstanceID);
+        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
+            $this->SendDebug('Splitter', 'Noch keine übergeordnete Instanz verbunden – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Noch kein zeptrionAIR-Splitter verbunden'];
         }
-        $data = json_decode((string) json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), true);
-        if (!is_array($data)) {
-            return;
+        $payload = json_encode([
+            'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
+            'Host' => trim($this->ReadPropertyString('Host')),
+            'Method' => strtoupper($method),
+            'Path' => $path,
+            'FormData' => $formData,
+            'TimeoutMs' => $timeoutMs
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $parentID = (int)($instance['ConnectionID'] ?? 0);
+        if (!IPS_IsInstanceCompatible($this->InstanceID, $parentID)) {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
+            $this->SendDebug('Splitter', 'Parent-Interface ist noch nicht verfügbar – Anfrage wird übersprungen', 0);
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Parent-Interface noch nicht verfügbar'];
         }
-
-        $this->SendDebug('CHNOTIFY RX', json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        for ($channel = 1; $channel <= $max; $channel++) {
-            $chState = $this->ExtractChannelState($data, $channel);
-            if ($chState === null) continue;
-            $raw = $this->FindNumericValue($chState, ['val', 'value', 'state']);
-            if ($raw === null) continue;
-            $value = (int) round($raw);
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-            $this->SendDebug('CHNOTIFY EVENT', 'ch' . $channel . '=' . $value . ' | ' . $type, 0);
-            if (in_array($type, ['shutter', 'awning'], true)) {
-                $this->ProcessMotorNotify($channel, $value);
-            } elseif ($type === 'light') {
-                $this->SetValueIfChanged('Ch' . $channel . 'Switch', $value > 0);
-            } elseif ($type === 'dimmer') {
-                $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $value > 0);
-            }
+        $response = $this->SendDataToParent((string)$payload);
+        $result = json_decode((string)$response, true);
+        if (!is_array($result)) {
+            return ['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Antwort vom zeptrionAIR-Splitter'];
         }
-    }
-
-    public function StartTravelLearning(int $Channel): string
-    {
-        $this->ValidateChannel($Channel);
-        $type = strtolower($this->ReadPropertyString('Channel' . $Channel . 'Type'));
-        if (!in_array($type, ['shutter', 'awning'], true)) {
-            return 'Einlernen ist nur bei Rollo oder Markise möglich.';
+        $error = (string)($result['error'] ?? '');
+        if ($error === 'Gerätekommunikation ist belegt') {
+            $this->WriteAttributeBoolean('LastRequestSkipped', true);
         }
-        $state = $this->ReadMotorState();
-        foreach ($state as $otherChannel => $otherState) {
-            if (!is_array($otherState) || (int)$otherChannel === $Channel) continue;
-            $otherLearn=(string)($otherState['learnState']??'idle');
-            if ($otherLearn!=='' && $otherLearn!=='idle') {
-                return 'Einlernen nicht gestartet: Kanal '.$otherChannel.' wird bereits eingelernt.';
-            }
-        }
-        $key = (string)$Channel;
-        $state[$key] = [
-            'learnState' => 'reference_wait_start',
-            'learnStartMs' => 0,
-            'moving' => false,
-            'direction' => '',
-            'commandDirection' => 'up',
-            'commandTarget' => 0
+        return [
+            'success' => (bool)($result['success'] ?? false),
+            'raw' => (string)($result['raw'] ?? ''),
+            'httpCode' => (int)($result['httpCode'] ?? 0),
+            'error' => $error
         ];
-        $this->WriteMotorState($state);
-        $this->SendDebug('LERNEN', 'ch' . $Channel . ': START -> zuerst HOCH bis Endanschlag', 0);
-        if (!$this->SendCommand($Channel, 'open')) {
-            $state = $this->ReadMotorState();
-            $state[$key]['learnState'] = 'idle';
-            $this->WriteMotorState($state);
-            return 'Einlernen konnte nicht gestartet werden.';
-        }
-        return 'Einlernen gestartet: HOCH Referenz → RUNTER messen → HOCH messen.';
     }
-
-    private function ProcessMotorNotify(int $channel, int $value): void
-    {
-        if ($value !== 0 && $value !== 100) return;
-        $state = $this->ReadMotorState();
-        $key = (string)$channel;
-        $m = is_array($state[$key] ?? null) ? $state[$key] : [];
-        $learn = (string)($m['learnState'] ?? 'idle');
-        $now = (int)round(microtime(true) * 1000);
-
-        if ($learn !== '' && $learn !== 'idle') {
-            if ($value === 100) {
-                if ($learn === 'reference_wait_start') {
-                    $m['learnState']='reference_running'; $m['learnStartMs']=$now;
-                    $this->SendDebug('LERNEN','ch'.$channel.': Referenzfahrt HOCH läuft',0);
-                } elseif ($learn === 'down_wait_start') {
-                    $m['learnState']='down_running'; $m['learnStartMs']=$now;
-                    $this->SendDebug('LERNEN','ch'.$channel.': RUNTER Zeitmessung gestartet',0);
-                } elseif ($learn === 'up_wait_start') {
-                    $m['learnState']='up_running'; $m['learnStartMs']=$now;
-                    $this->SendDebug('LERNEN','ch'.$channel.': HOCH Zeitmessung gestartet',0);
-                }
-                $state[$key]=$m; $this->WriteMotorState($state); return;
-            }
-            if ($learn === 'reference_running') {
-                $this->SetMotorPosition($channel,0);
-                $m['learnState']='down_wait_start'; $m['learnStartMs']=0;
-                $state[$key]=$m; $this->WriteMotorState($state);
-                $this->SendDebug('LERNEN','ch'.$channel.': oberer Anschlag = 0% -> RUNTER Messfahrt',0);
-                $this->SendCommand($channel,'close'); return;
-            }
-            if ($learn === 'down_running') {
-                $elapsed=max(1,$now-(int)($m['learnStartMs']??$now));
-                $this->WriteLearnedMotorTime($channel,'down',$elapsed);
-                $this->SetMotorPosition($channel,100);
-                $m['learnState']='up_wait_start'; $m['learnStartMs']=0;
-                $state[$key]=$m; $this->WriteMotorState($state);
-                $this->SendDebug('LERNEN','ch'.$channel.': RUNTER='.number_format($elapsed/1000,3,'.','').'s -> 100% | HOCH Messfahrt',0);
-                $this->SendCommand($channel,'open'); return;
-            }
-            if ($learn === 'up_running') {
-                $elapsed=max(1,$now-(int)($m['learnStartMs']??$now));
-                $this->WriteLearnedMotorTime($channel,'up',$elapsed);
-                $this->SetMotorPosition($channel,0);
-                $m['learnState']='idle'; $m['learnStartMs']=0; $m['lastDirection']='up';
-                unset($m['commandDirection'],$m['commandTarget']);
-                $state[$key]=$m; $this->WriteMotorState($state);
-                $t=$this->ReadLearnedMotorTimes()[$key]??[];
-                $this->SendDebug('LERNEN','ch'.$channel.': FERTIG | RUNTER '.number_format(((int)($t['down']??0))/1000,3,'.','').'s | HOCH '.number_format($elapsed/1000,3,'.','').'s | Position 0%',0);
-                return;
-            }
-            return;
-        }
-
-        if ($value === 100) {
-            $position=$this->GetMotorPosition($channel);
-            $direction=(string)($m['commandDirection']??'');
-            if ($direction==='') {
-                $direction=$position===0?'down':($position===100?'up':'unknown');
-            }
-            $m['moving']=true; $m['moveStartMs']=$now; $m['direction']=$direction;
-            $state[$key]=$m; $this->WriteMotorState($state);
-            $this->SendDebug('ROLLO','ch'.$channel.' START | Position='.$position.'% | Richtung='.$direction,0);
-            return;
-        }
-        if (!(bool)($m['moving']??false)) return;
-
-        $elapsed=max(0,$now-(int)($m['moveStartMs']??$now));
-        $position=$this->GetMotorPosition($channel);
-        $direction=(string)($m['direction']??'unknown');
-        $commandTarget=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null;
-        $up=$this->EffectiveMotorTime($channel,'up');
-        $down=$this->EffectiveMotorTime($channel,'down');
-        $expectUp=(int)round($position*$up/100);
-        $expectDown=(int)round((100-$position)*$down/100);
-        $errUp=abs($elapsed-$expectUp); $errDown=abs($elapsed-$expectDown);
-
-        if ($direction==='unknown') {
-            $direction=$errUp<=$errDown?'up':'down';
-            $this->SendDebug('ROLLO MATCH','ch'.$channel.' gemessen='.number_format($elapsed/1000,3,'.','').'s | UP→0='.number_format($expectUp/1000,3,'.','').'s Fehler='.number_format($errUp/1000,3,'.','').'s | DOWN→100='.number_format($expectDown/1000,3,'.','').'s Fehler='.number_format($errDown/1000,3,'.','').'s -> '.$direction,0);
-        }
-
-        if ($commandTarget!==null) {
-            $newPosition=max(0,min(100,$commandTarget));
-        } elseif ($direction==='up') {
-            $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
-            if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
-        } else {
-            $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
-            if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
-        }
-        $this->SetMotorPosition($channel,$newPosition);
-        $m['moving']=false; $m['direction']=''; $m['lastDirection']=$direction;
-        unset($m['commandDirection'],$m['commandTarget']);
-        $state[$key]=$m; $this->WriteMotorState($state);
-        $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Position='.$newPosition.'%',0);
-    }
-
-    private function MotorLearnedTimeCaption(int $channel): string
-    {
-        $t=$this->ReadLearnedMotorTimes()[(string)$channel]??[];
-        $up=(int)($t['up']??0); $down=(int)($t['down']??0);
-        return ($up>0&&$down>0)
-            ? 'Gelernte Fahrzeiten: HOCH '.number_format($up/1000,3,'.','').' s | RUNTER '.number_format($down/1000,3,'.','').' s'
-            : 'Gelernte Fahrzeiten: noch nicht eingelernt';
-    }
-    private function ReadMotorState(): array
-    {
-        $d=json_decode($this->ReadAttributeString('MotorRuntimeState'),true);
-        return is_array($d)?$d:[];
-    }
-    private function WriteMotorState(array $state): void
-    {
-        $this->WriteAttributeString('MotorRuntimeState',json_encode($state,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-    }
-    private function ReadLearnedMotorTimes(): array
-    {
-        $d=json_decode($this->ReadAttributeString('MotorLearnedTimes'),true);
-        return is_array($d)?$d:[];
-    }
-    private function WriteLearnedMotorTime(int $channel,string $direction,int $milliseconds): void
-    {
-        $times=$this->ReadLearnedMotorTimes(); $key=(string)$channel;
-        if (!is_array($times[$key]??null)) $times[$key]=[];
-        $times[$key][$direction]=max(100,$milliseconds);
-        $this->WriteAttributeString('MotorLearnedTimes',json_encode($times,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-    }
-    private function EffectiveMotorTime(int $channel,string $direction): int
-    {
-        $times=$this->ReadLearnedMotorTimes();
-        $learned=(int)($times[(string)$channel][$direction]??0);
-        if ($learned>0) return $learned;
-        return max(100,$this->ReadPropertyInteger('Channel'.$channel.($direction==='up'?'UpTimeMs':'DownTimeMs')));
-    }
-    private function GetMotorPosition(int $channel): int
-    {
-        $id=$this->FindManagedVariableID('Ch'.$channel.'Position');
-        return $id>0?max(0,min(100,(int)GetValue($id))):0;
-    }
-    private function SetMotorPosition(int $channel,int $position): void
-    {
-        $this->SetValueIfChanged('Ch'.$channel.'Position',max(0,min(100,$position)));
-        if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
-            if ($position===0) $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
-            elseif ($position===100) $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-        }
-    }
-
     private function ApplyChannelStates(array $data, string $source): void
     {
         $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));

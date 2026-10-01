@@ -6,15 +6,12 @@
   "aliases": [
     "zeptrionAIR Splitter"
   ],
-  "parentRequirements": [
-    "{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}"
-  ],
+  "parentRequirements": [],
   "childRequirements": [
     "{B13D5C24-91F2-4D38-A08C-2C6A9E45F710}"
   ],
   "implemented": [
-    "{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}",
-    "{018EF6B5-AB94-40C6-AA53-46943E824ACF}"
+    "{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}"
   ],
   "prefix": "ZEPAS",
   "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAirSplitter"

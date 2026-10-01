@@ -6,22 +6,9 @@ class ZeptrionAirSplitter extends IPSModuleStrict
     public function Create(): void
     {
         parent::Create();
-        $this->SetBuffer('Buffer', '');
-        $this->SetBuffer('Listening', '0');
-        $this->SetBuffer('Pending', '');
-        $this->SetBuffer('Online', '0');
-        $this->RegisterPropertyInteger('RecoveryInterval', 10);
-        $this->RegisterTimer('RecoveryTimer', 0, 'ZEPAS_RecoveryTick($_IPS["TARGET"]);');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
         $this->RegisterHook('zeptrionair');
-    }
-    public function GetCompatibleParents(): string
-    {
-        return json_encode([
-            'type' => 'require',
-            'moduleIDs' => ['{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}']
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
     public function ApplyChanges(): void
     {
@@ -30,19 +17,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
         }
         $this->RegisterHook('zeptrionair');
-        $this->SetBuffer('Buffer', '');
-        $this->SetBuffer('Pending', '');
-        $this->SetBuffer('Online', '0');
-        $this->SetBuffer('Listening', '1');
-        $this->SetTimerInterval('RecoveryTimer', 0);
         $this->SetStatus(102);
-        $instance = IPS_GetInstance($this->InstanceID);
-        if ((int)($instance['ConnectionID'] ?? 0) > 0) {
-            $this->StartListener();
-        } else {
-            $this->SendDebug('STATE', 'Client Socket noch nicht zugeordnet -> Listener wartet', 0);
-            $this->SetTimerInterval('RecoveryTimer', 1000);
-        }
     }
     public function GetConfigurationForm(): string
     {
@@ -53,186 +28,6 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             ],
             'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-    public function StartListener(): bool
-    {
-        $this->SetBuffer('Listening', '1');
-        $this->SetBuffer('Buffer', '');
-        $this->SetBuffer('Pending', '');
-        // Do not gate the first request by the Client Socket instance status.
-        // The socket may reconnect on the actual SendDataToParent() attempt.
-        $this->SetTimerInterval('RecoveryTimer', 0);
-        $this->SendDebug('STATE', 'Listener starten -> zuerst chscan', 0);
-        return $this->SendListenerRequest('/zrap/chscan', 'scan');
-    }
-    public function StopListener(): bool
-    {
-        $this->SetBuffer('Listening', '0');
-        $this->SetBuffer('Pending', '');
-        $this->SetBuffer('Buffer', '');
-        $this->SetBuffer('Online', '0');
-        $this->SetTimerInterval('RecoveryTimer', 0);
-        $this->SendDebug('STATE', 'Listener gestoppt', 0);
-        return true;
-    }
-    public function RecoveryTick(): void
-    {
-        if ($this->GetBuffer('Listening') !== '1') {
-            $this->SetTimerInterval('RecoveryTimer', 0);
-            return;
-        }
-        if ($this->GetBuffer('Pending') !== '') {
-            $this->SetBuffer('Pending', '');
-            $this->SetBuffer('Buffer', '');
-        }
-        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
-        $this->SendListenerRequest('/zrap/chscan', 'scan');
-    }
-    public function ReceiveData(string $JSONString): string
-    {
-        $d=json_decode($JSONString,true);
-        if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer']==='') {
-            $this->SendDebug('RX', 'Kein Buffer im Paket', 0);
-            return '';
-        }
-        $rx=(string)$d['Buffer'];
-        // Client Socket: binäre Nutzdaten können als Hex-String im JSON-Buffer ankommen.
-        // Nur dann dekodieren, wenn der komplette Buffer gültiges Hex ist.
-        if ($rx !== '' && (strlen($rx) % 2) === 0 && preg_match('/^[0-9A-Fa-f]+$/D', $rx)) {
-            $decoded=@hex2bin($rx);
-            if ($decoded !== false) {
-                $rx=$decoded;
-            }
-        }
-        $buffer=$this->GetBuffer('Buffer').$rx;
-        while (true) {
-            $r=$this->ExtractListenerResponse($buffer);
-            if ($r===null) break;
-            $buffer=$r['rest'];
-            $kind=$this->GetBuffer('Pending');
-            $this->SetBuffer('Pending','');
-            $this->SetBuffer('Online','1');
-            $this->SendDebug('HTTP',(string)$r['status'].' '.$kind,0);
-            if ($r['status']!==200 && $r['status']!==302 && $r['status']!==204) {
-                $this->EnterRecovery('HTTP Status '.$r['status']);
-                continue;
-            }
-            if ($kind==='scan') {
-                $this->SendDebug('CHSCAN RAW',trim($r['body']),0);
-                $this->SetTimerInterval('RecoveryTimer',0);
-                $this->SendDebug('RECOVERY','chscan OK -> Recovery AUS',0);
-                if ($this->GetBuffer('Listening')==='1') {
-                    $this->SendDebug('STATE','chscan OK -> chnotify aktivieren',0);
-                }
-            } elseif ($kind==='notify') {
-                $this->SetTimerInterval('RecoveryTimer',0);
-                $this->SendDebug('RECOVERY','chnotify OK -> Recovery AUS',0);
-                $this->SendDebug('NOTIFY RAW',trim($r['body']),0);
-                $this->DispatchNotifyToChildren($r['body']);
-            }
-            if ($this->GetBuffer('Listening')==='1' && $this->GetBuffer('Pending')==='') {
-                $this->SendListenerRequest('/zrap/chnotify','notify');
-            }
-        }
-        $this->SetBuffer('Buffer',$buffer);
-        return '';
-    }
-    private function EnterRecovery(string $reason): void
-    {
-        $this->SetBuffer('Online','0');
-        $this->SetBuffer('Pending','');
-        $this->SetBuffer('Buffer','');
-        $sec=max(5,$this->ReadPropertyInteger('RecoveryInterval'));
-        $this->SetTimerInterval('RecoveryTimer',$sec*1000);
-        $this->SendDebug('RECOVERY',$reason.' -> alle '.$sec.' s chscan versuchen',0);
-    }
-    private function SendListenerRequest(string $path,string $kind): bool
-    {
-        if ($this->GetBuffer('Listening')!=='1') {
-            return false;
-        }
-        $instance = IPS_GetInstance($this->InstanceID);
-        if ((int)($instance['ConnectionID'] ?? 0) <= 0) {
-            $this->SetBuffer('Pending','');
-            $this->SendDebug('STATE', 'Noch kein Client Socket zugeordnet -> Senden verschoben', 0);
-            $this->SetTimerInterval('RecoveryTimer', 1000);
-            return false;
-        }
-        if ($this->GetBuffer('Pending')!=='') return false;
-        $q="GET ".$path." HTTP/1.1\r\n".
-           "Host: zeptrion\r\n".
-           "Accept: application/xml,text/xml,*/*\r\n".
-           "Cache-Control: no-cache\r\n".
-           "Connection: keep-alive\r\n\r\n";
-        $this->SetBuffer('Pending',$kind);
-        $this->SendDebug('TX',
-            'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: keep-alive',
-            0
-        );
-        // IPSModuleStrict uses HEX encoding for data-flow buffers.
-        // The old IPSModule test used the raw/UTF-8 buffer; under Strict the
-        // identical binary HTTP request must therefore be passed as bin2hex().
-        $ok=$this->SendDataToParent(json_encode([
-            'DataID'=>'{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
-            'Buffer'=>bin2hex($q)
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        if ($ok===false) {
-            $this->SetBuffer('Pending','');
-            $this->EnterRecovery('SendDataToParent fehlgeschlagen');
-            return false;
-        }
-        return true;
-    }
-    private function DispatchNotifyToChildren(string $payload): void
-    {
-        // Die Kommunikationsverbindung Device -> Splitter ist NICHT identisch
-        // mit der Position im Objektbaum. IPS_GetChildrenIDs() findet deshalb
-        // Geräteinstanzen nicht zuverlässig.
-        //
-        // Alle ZeptrionAir-Instanzen ermitteln und nur jene bedienen, deren
-        // ConnectionID auf genau diesen Splitter zeigt.
-        $delivered = 0;
-        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $childID) {
-            if (!IPS_InstanceExists($childID)) {
-                continue;
-            }
-            $instance = IPS_GetInstance($childID);
-            if ((int)($instance['ConnectionID'] ?? 0) !== $this->InstanceID) {
-                continue;
-            }
-            if (function_exists('ZEPA_ProcessNotifyData')) {
-                ZEPA_ProcessNotifyData($childID, $payload);
-                $delivered++;
-            }
-        }
-        $this->SendDebug('NOTIFY DISPATCH', 'an '.$delivered.' verbundene Geräteinstanz(en) weitergegeben', 0);
-    }
-    private function ExtractListenerResponse(string $b): ?array
-    {
-        $he=strpos($b,"\r\n\r\n");
-        if ($he===false) return null;
-        $h=substr($b,0,$he); $bs=$he+4;
-        $ls=explode("\r\n",$h); $sl=array_shift($ls); $st=0;
-        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/', (string)$sl, $m)) $st=(int)$m[1];
-        $hs=[];
-        foreach($ls as $l){
-            $p=strpos($l,':');
-            if($p!==false) $hs[strtolower(trim(substr($l,0,$p)))]=trim(substr($l,$p+1));
-        }
-        if(isset($hs['content-length'])){
-            $n=(int)$hs['content-length'];
-            if(strlen($b)<$bs+$n) return null;
-            return ['status'=>$st,'body'=>substr($b,$bs,$n),'rest'=>substr($b,$bs+$n)];
-        }
-        if($st===302 || $st===204) return ['status'=>$st,'body'=>'','rest'=>substr($b,$bs)];
-        foreach(['</chnotify>','</chscan>'] as $tag){
-            $p=strpos($b,$tag,$bs);
-            if($p!==false){
-                $e=$p+strlen($tag);
-                return ['status'=>$st,'body'=>substr($b,$bs,$e-$bs),'rest'=>substr($b,$e)];
-            }
-        }
-        return null;
     }
     public function ForwardData(string $JSONString): string
     {
@@ -248,8 +43,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         if ($host === '' || !in_array($method, ['GET', 'POST'], true) || $path === '' || $path[0] !== '/') {
             return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige HTTP-Anfrage']);
         }
-        $lockPrefix = $path === '/zrap/chnotify' ? 'ZEPAS_NOTIFY_' : 'ZEPAS_HTTP_';
-        $lockName = $lockPrefix . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
+        $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
         if (!IPS_SemaphoreEnter($lockName, 0)) {
             return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Gerätekommunikation ist belegt']);
         }
@@ -279,7 +73,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             curl_close($curl);
             $raw = is_string($response) ? $response : '';
             $success = $response !== false && $error === '' && $httpCode >= 200 && $httpCode < 400;
-            $this->SendDebug($path === '/zrap/chnotify' ? 'CHNOTIFY Transport' : 'HTTP Transport', $method . ' ' . $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            $this->SendDebug('HTTP Transport', $method . ' ' . $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
             return json_encode(['success' => $success, 'raw' => $raw, 'httpCode' => $httpCode, 'error' => $error], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         } finally {
             IPS_SemaphoreLeave($lockName);
@@ -707,29 +501,29 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             'zeptrionTargets' => $this->GetTargets()
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         $html = <<<'HTML'
-\<!doctype html>\<html>\<head>\<meta charset="utf-8">\<meta name="viewport" content="width=device-width,initial-scale=1">\<title>Smart-Taster\</title>
-\<style>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Taster</title>
+<style>
 body{font-family:system-ui,sans-serif;max-width:1000px;margin:28px auto;padding:0 16px;background:#f5f5f5;color:#222}h1{font-size:24px}.card{background:#fff;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 1px 4px #0002}.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}input,select,button{font:inherit;padding:8px;border:1px solid #bbb;border-radius:6px}input{min-width:150px}select{min-width:180px}button{cursor:pointer}.name{flex:1}.danger{margin-left:auto}.status{padding:12px 0;min-height:24px;font-weight:600}.target{padding-left:12px;border-left:3px solid #ddd}.busy{opacity:.55;pointer-events:none}.hint,.source{color:#666;font-size:14px}.objfield{min-width:330px;text-align:left}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:99}.modalbox{background:#fff;width:min(760px,92vw);height:min(650px,84vh);border-radius:10px;padding:14px;display:flex;flex-direction:column}.tree{overflow:auto;flex:1;border:1px solid #ddd;border-radius:6px;padding:6px}.node{margin:1px 0}.nodeRow{display:flex;align-items:center;min-height:30px;border-radius:4px}.nodeRow:hover{background:#eee}.twisty{width:28px;border:0;background:transparent;padding:4px}.nodeLabel{border:0;background:transparent;text-align:left;flex:1;padding:5px}.nodeLabel.selectable{font-weight:500}.children{margin-left:22px}.search{box-sizing:border-box;width:100%;margin:8px 0}.close{margin-left:auto}.modalHead{display:flex;align-items:center;gap:10px}.typeTag{font-size:12px;color:#777;margin-left:8px}.searchResult{display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px;border-radius:4px}.searchResult:hover{background:#eee}
-\</style>\</head>\<body>\<h1>Smart-Taster konfigurieren\</h1>\<p class="hint">Szene benennen, zeptrionAIR-Ziele direkt oder Symcon-Objekte hinzufügen und danach programmieren.\</p>\<div id="scenes">\</div>\<button id="addScene">+ Szene hinzufügen\</button> \<button id="clearButton">Smart-Taster löschen\</button>\<div class="status" id="status">\</div>\<script>
+</style></head><body><h1>Smart-Taster konfigurieren</h1><p class="hint">Szene benennen, zeptrionAIR-Ziele direkt oder Symcon-Objekte hinzufügen und danach programmieren.</p><div id="scenes"></div><button id="addScene">+ Szene hinzufügen</button> <button id="clearButton">Smart-Taster löschen</button><div class="status" id="status"></div><script>
 const D=__DATA__;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptrionTargets||[];const cache=new Map();
 const el=id=>document.getElementById(id),mk=(t,x)=>{const e=document.createElement(t);if(x!==undefined)e.textContent=x;return e};
 function msg(x){el('status').textContent=x||''}function busy(v){document.body.classList.toggle('busy',!!v)}
 function opts(s,l,v){s.replaceChildren();l.forEach(x=>{const o=mk('option',x.caption);o.value=x.value;if(String(x.value)===String(v))o.selected=true;s.append(o)})}
-async function api(x){try{const r=await fetch('/hook/zeptrionair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw\.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
+async function api(x){try{const r=await fetch('/hook/zeptrionair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
 async function objectInfo(id){if(!id)return null;if(cache.has(+id))return cache.get(+id);const r=await api({op:'object-info',id:+id});if(r.ok&&r.object){cache.set(+id,r.object);return r.object}return null}
 function migrate(t){if(t.type==='variable')return{type:'symcon',object:+t.variable,value:t.value};if(t.type==='script')return{type:'symcon',object:+t.script};return t}
 async function pick(t,done){const m=mk('div');m.className='modal';const b=mk('div');b.className='modalbox';const head=mk('div');head.className='modalHead';head.append(mk('h3','Symcon-Objekt auswählen'));const x=mk('button','Schliessen');x.className='close';x.onclick=()=>m.remove();head.append(x);const q=mk('input');q.className='search';q.placeholder='Objekt suchen …';const tree=mk('div');tree.className='tree';b.append(head,q,tree);m.append(b);document.body.append(m);
 async function choose(item){if(!item.selectable)return;const full=await api({op:'object-info',id:+item.id});if(!full.ok||!full.object){msg('Objektinformationen konnten nicht geladen werden.');return}t.object=+item.id;t.objectInfo=full.object;t.value=full.object.defaultValue??'';cache.set(+item.id,full.object);m.remove();done()}
-async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row\.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row\.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
+async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
-async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i\<count;i++){let v=min+i\*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v\*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j\<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
+async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
+async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
 function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
 async function program(s){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die gewünschte blinkende Smart-Taste am Schalter drücken.'))return;msg('Smart-Tasten werden aktiviert. Bitte gewünschte blinkende Smart-Taste drücken …');busy(true);const clean=(s.targets||[]).map(t=>{const x={...t};delete x.objectInfo;return x});const r=await api({op:'program',scene:s.id,name:s.name,targets:clean});busy(false);if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
 async function forget(id){const r=await api({op:'forget',scene:id});if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
 async function clearButton(){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die Smart-Taste drücken, deren Programmierung gelöscht werden soll.'))return;msg('Smart-Tasten werden aktiviert. Bitte die zu löschende Smart-Taste drücken …');busy(true);const r=await api({op:'select-delete'});busy(false);msg(r.message)}
 el('addScene').onclick=addScene;el('clearButton').onclick=clearButton;render();
-\</script>\</body>\</html>
+</script></body></html>
 HTML;
         return str_replace('__DATA__', $data, $html);
     }
