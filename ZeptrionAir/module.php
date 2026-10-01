@@ -905,7 +905,8 @@ class ZeptrionAir extends IPSModuleStrict
     private function HttpXmlGet(string $path, int $timeoutMs = 2500): ?array
     {
         $this->WriteAttributeBoolean('LastRequestSkipped', false);
-        $lockName = 'ZEPA_HTTP_' . $this->InstanceID;
+        $lockPrefix = $path === '/zrap/chnotify' ? 'ZEPA_NOTIFY_' : 'ZEPA_HTTP_';
+        $lockName = $lockPrefix . $this->InstanceID;
         if (!IPS_SemaphoreEnter($lockName, 0)) {
             $this->WriteAttributeBoolean('LastRequestSkipped', true);
             return null;
