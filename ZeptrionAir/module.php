@@ -267,7 +267,11 @@ class ZeptrionAir extends IPSModuleStrict
         // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
         $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetTimerInterval('InfoTimer', 60000);
-        $this->SetTimerInterval('NotifyTimer', 250);
+        $state=$this->ReadMotorState();
+        $state['_notifySynced']=false;
+        $this->WriteMotorState($state);
+        $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
+        $this->SetTimerInterval('NotifyTimer',250);
         $this->SetStatus(102);
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
@@ -942,32 +946,55 @@ class ZeptrionAir extends IPSModuleStrict
     public function NotifyTick(): void
     {
         $this->SetTimerInterval('NotifyTimer', 0);
-        if (trim($this->ReadPropertyString('Host')) === '') {
+        $host=trim($this->ReadPropertyString('Host'));
+        if ($host==='') return;
+
+        $this->SendDebug('CHNOTIFY','Listener-Tick fuer '.$host,0);
+
+        // After start/recovery first get a clean state snapshot.
+        $state=$this->ReadMotorState();
+        if (!(bool)($state['_notifySynced']??false)) {
+            $scan=$this->HttpXmlGet('/zrap/chscan',5000);
+            if ($scan===null) {
+                $this->SendDebug('CHNOTIFY','chscan fehlgeschlagen -> in 10 s erneut',0);
+                $this->SetTimerInterval('NotifyTimer',10000);
+                return;
+            }
+            $state['_notifySynced']=true;
+            $this->WriteMotorState($state);
+            $this->SendDebug('CHNOTIFY','chscan OK -> chnotify starten',0);
+        }
+
+        $data=$this->HttpXmlGet('/zrap/chnotify',35000);
+        if ($data===null) {
+            // Do not destroy learned motor state; only force a fresh sync.
+            $state=$this->ReadMotorState();
+            $state['_notifySynced']=false;
+            $this->WriteMotorState($state);
+            $this->SendDebug('CHNOTIFY','Longpoll ohne gueltige Antwort -> Recovery in 10 s',0);
+            $this->SetTimerInterval('NotifyTimer',10000);
             return;
         }
-        $data = $this->HttpXmlGet('/zrap/chnotify', 35000);
-        if ($data === null) {
-            $this->SendDebug('chnotify', 'Keine Antwort -> neuer Versuch in 10 s', 0);
-            $this->SetTimerInterval('NotifyTimer', 10000);
-            return;
-        }
-        $this->SendDebug('chnotify', json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
-        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        for ($channel = 1; $channel <= $max; $channel++) {
-            $chState = $this->ExtractChannelState($data, $channel);
-            if ($chState === null) continue;
-            $raw = $this->FindNumericValue($chState, ['val', 'value', 'state']);
-            if ($raw === null) continue;
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-            if (in_array($type, ['shutter', 'awning'], true)) {
-                $this->ProcessMotorNotify($channel, (int)round($raw));
-            } elseif ($type === 'light') {
-                $this->SetValueIfChanged('Ch' . $channel . 'Switch', $raw > 0);
-            } elseif ($type === 'dimmer') {
-                $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $raw > 0);
+
+        $this->SendDebug('CHNOTIFY RX',json_encode($data,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),0);
+        $max=max(1,min(4,$this->ReadPropertyInteger('Channels')));
+        for($channel=1;$channel<=$max;$channel++){
+            $chState=$this->ExtractChannelState($data,$channel);
+            if($chState===null) continue;
+            $raw=$this->FindNumericValue($chState,['val','value','state']);
+            if($raw===null) continue;
+            $value=(int)round($raw);
+            $type=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
+            $this->SendDebug('CHNOTIFY EVENT','ch'.$channel.'='.$value.' | '.$type,0);
+            if(in_array($type,['shutter','awning'],true)){
+                $this->ProcessMotorNotify($channel,$value);
+            }elseif($type==='light'){
+                $this->SetValueIfChanged('Ch'.$channel.'Switch',$value>0);
+            }elseif($type==='dimmer'){
+                $this->SetValueIfChanged('Ch'.$channel.'DimmerSwitch',$value>0);
             }
         }
-        $this->SetTimerInterval('NotifyTimer', 100);
+        $this->SetTimerInterval('NotifyTimer',100);
     }
 
     public function StartTravelLearning(int $Channel): string
@@ -978,6 +1005,13 @@ class ZeptrionAir extends IPSModuleStrict
             return 'Einlernen ist nur bei Rollo oder Markise möglich.';
         }
         $state = $this->ReadMotorState();
+        foreach ($state as $otherChannel => $otherState) {
+            if (!is_array($otherState) || $otherChannel === (string)$Channel) continue;
+            $otherLearn=(string)($otherState['learnState']??'idle');
+            if ($otherLearn!=='' && $otherLearn!=='idle') {
+                return 'Einlernen nicht gestartet: Kanal '.$otherChannel.' wird bereits eingelernt.';
+            }
+        }
         $key = (string)$Channel;
         $state[$key] = [
             'learnState' => 'reference_wait_start',

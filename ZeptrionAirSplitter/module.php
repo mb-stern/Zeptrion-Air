@@ -74,7 +74,7 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             curl_close($curl);
             $raw = is_string($response) ? $response : '';
             $success = $response !== false && $error === '' && $httpCode >= 200 && $httpCode < 400;
-            $this->SendDebug('HTTP Transport', $method . ' ' . $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
+            $this->SendDebug($path === '/zrap/chnotify' ? 'CHNOTIFY Transport' : 'HTTP Transport', $method . ' ' . $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
             return json_encode(['success' => $success, 'raw' => $raw, 'httpCode' => $httpCode, 'error' => $error], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         } finally {
             IPS_SemaphoreLeave($lockName);
