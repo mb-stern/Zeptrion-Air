@@ -751,45 +751,37 @@ class ZeptrionAir extends IPSModuleStrict
         if ($host === '') {
             throw new RuntimeException('Kein Host konfiguriert');
         }
-        $lockName = 'ZEPA_HTTP_' . $this->InstanceID;
-        if (!IPS_SemaphoreEnter($lockName, 3000)) {
-            $this->SendDebug('SendCommand', 'Nicht gesendet – Gerätekommunikation ist belegt', 0);
+        $request = [
+            'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
+            'Host' => $host,
+            'Method' => 'POST',
+            'Path' => '/zrap/chctrl/ch' . $Channel,
+            'FormData' => ['cmd' => $Command],
+            'TimeoutMs' => 10000
+        ];
+        $this->SendDebug('SendCommand', '-> Splitter | ch' . $Channel . ' cmd=' . $Command, 0);
+        $result = $this->SendDataToParent(json_encode(
+            $request,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        ));
+        if (!is_string($result) || $result === '') {
+            $this->SendDebug('SendCommand', 'Splitter lieferte keine Antwort', 0);
             return false;
         }
-        try {
-            $url = 'http://' . $host . '/zrap/chctrl/ch' . $Channel;
-            $this->SendDebug('SendCommand', 'POST ' . $url . ' cmd=' . $Command, 0);
-            $curl = curl_init();
-            if ($curl === false) {
-                throw new RuntimeException('cURL konnte nicht initialisiert werden');
-            }
-            curl_setopt_array($curl, [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => http_build_query(['cmd' => $Command]),
-                CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Connection: close']
-            ]);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            $success = $response !== false && $httpCode >= 200 && $httpCode < 400;
-            $this->SendDebug(
-                'SendCommand',
-                'HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : '') . ' / Antwort: ' . (string)$response,
-                0
-            );
-            if (!$success) {
-                return false;
-            }
-            return true;
-        } finally {
-            IPS_SemaphoreLeave($lockName);
+        $response = json_decode($result, true);
+        if (!is_array($response)) {
+            $this->SendDebug('SendCommand', 'Ungültige Splitter-Antwort: ' . $result, 0);
+            return false;
         }
+        $success = (bool)($response['success'] ?? false);
+        $httpCode = (int)($response['httpCode'] ?? 0);
+        $error = trim((string)($response['error'] ?? ''));
+        $this->SendDebug(
+            'SendCommand',
+            '<- Splitter | HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''),
+            0
+        );
+        return $success;
     }
     public function SwitchLight(int $Channel, bool $State): bool
     {
