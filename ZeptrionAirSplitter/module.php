@@ -1,151 +1,359 @@
 <?php
 declare(strict_types=1);
-class ZeptrionAirSplitter extends IPSModuleStrict
+
+class ZeptrionChnotifyTest extends IPSModule
 {
-    private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
-    public function Create(): void
+    private const TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
+    private const CS = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
+
+    public function Create()
     {
         parent::Create();
+        $this->RequireParent(self::TX);
+
+        $this->RegisterPropertyInteger('RecoveryInterval', 10);
+        $this->RegisterPropertyInteger('LearnChannel', 1);
+        $this->RegisterAttributeInteger('LearnedUpMs', 0);
+        $this->RegisterAttributeInteger('LearnedDownMs', 0);
+        $this->RegisterAttributeInteger('RolloPosition', -1);
+        $this->RegisterAttributeString('LastDirection', '');
+        $this->RegisterTimer('RecoveryTimer', 0, 'ZCT_RecoveryTick($_IPS["TARGET"]);');
+        $this->RegisterTimer('LearnKickTimer', 0, 'ZCT_LearnKickTick($_IPS["TARGET"]);');
+        $this->RegisterTimer('PositionStopTimer', 0, 'ZCT_PositionStopTick($_IPS["TARGET"]);');
+
         $this->SetBuffer('Buffer', '');
         $this->SetBuffer('Listening', '0');
         $this->SetBuffer('Pending', '');
         $this->SetBuffer('Online', '0');
-        $this->RegisterPropertyInteger('RecoveryInterval', 10);
-        $this->RegisterTimer('RecoveryTimer', 0, 'ZEPAS_RecoveryTick($_IPS["TARGET"]);');
-        $this->RegisterAttributeString('SmartButtonScenes', '[]');
-        $this->RegisterAttributeString('SmartButtonToken', '');
-        $this->RegisterHook('zeptrionair');
-    }
-    public function GetCompatibleParents(): string
-    {
-        return json_encode([
-            'type' => 'require',
-            'moduleIDs' => ['{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}']
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $this->SetBuffer('LearnState', 'idle');
+        $this->SetBuffer('LearnStartMs', '0');
+        $this->SetBuffer('LearnDownMs', '0');
+        $this->SetBuffer('LearnUpMs', '0');
+        $this->SetBuffer('MoveStartMs', '0');
+        $this->SetBuffer('MoveDirection', '');
+        $this->SetBuffer('CommandDirection', '');
+        $this->SetBuffer('EndpointTarget', '');
+        $this->SetBuffer('PositionTarget', '');
+        $this->SetBuffer('NextAction', '');
     }
 
-    public function ApplyChanges(): void
+    public function GetCompatibleParents()
+    {
+        return json_encode(['type'=>'require','moduleIDs'=>[self::CS]]);
+    }
+
+    public function ApplyChanges()
     {
         parent::ApplyChanges();
-
-        if ($this->ReadAttributeString('SmartButtonToken') === '') {
-            $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
-        }
-        $this->RegisterHook('zeptrionair');
-
         $this->SetBuffer('Buffer', '');
         $this->SetBuffer('Pending', '');
         $this->SetBuffer('Online', '0');
-        $this->SetBuffer('Listening', '1');
         $this->SetTimerInterval('RecoveryTimer', 0);
-
-        $this->SetStatus(102);
-        $this->StartListener();
     }
 
-    public function GetConfigurationForm(): string
+    public function GetConfigurationForm()
     {
+        $down=$this->ReadAttributeInteger('LearnedDownMs');
+        $up=$this->ReadAttributeInteger('LearnedUpMs');
+        $pos=$this->ReadAttributeInteger('RolloPosition');
         return json_encode([
-            'elements' => [
-                ['type' => 'Label', 'caption' => 'Zentraler Dienst für zeptrionAIR Smart-Taster.'],
-                ['type' => 'Label', 'caption' => 'WebHook: /hook/zeptrionair']
+            'elements'=>[
+                ['type'=>'Label','caption'=>'V13 TEST: echte 0-100%-Positionsvariable + Best-Match.'],
+                ['type'=>'NumberSpinner','name'=>'RecoveryInterval','caption'=>'Recovery-Intervall (Sekunden)','minimum'=>5,'maximum'=>300],
+                ['type'=>'NumberSpinner','name'=>'LearnChannel','caption'=>'Rollo-Kanal (ch1 = 1, ch2 = 2)','minimum'=>1,'maximum'=>4],
+                ['type'=>'Label','caption'=>'Lernstatus: '.$this->GetBuffer('LearnState')],
+                ['type'=>'Label','caption'=>'Gelernte Fahrzeit HOCH: '.($up>0?number_format($up/1000,3,'.','').' s':'noch nicht gelernt')],
+                ['type'=>'Label','caption'=>'Gelernte Fahrzeit RUNTER: '.($down>0?number_format($down/1000,3,'.','').' s':'noch nicht gelernt')],
+                ['type'=>'Label','caption'=>'Berechnete Position: '.($pos>=0?$pos.' %':'noch unbekannt')],
+                ['type'=>'Label','caption'=>'Laufzeit RUNTER: '.($down>0?number_format($down/1000,3,',','').' s':'-')],
+                ['type'=>'Label','caption'=>'Laufzeit HOCH: '.($up>0?number_format($up/1000,3,',','').' s':'-')],
+                ['type'=>'Label','caption'=>'ACHTUNG: Einlernen bewegt den Behang automatisch. Fahrweg frei halten.']
             ],
-            'status' => [['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv']]
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-    public function StartListener(): bool
-    {
-        $this->SetBuffer('Listening', '1');
-        $this->SetBuffer('Buffer', '');
-        $this->SetBuffer('Pending', '');
-
-        // Do not gate the first request by the Client Socket instance status.
-        // The socket may reconnect on the actual SendDataToParent() attempt.
-        $this->SetTimerInterval('RecoveryTimer', 0);
-        $this->SendDebug('STATE', 'Listener starten -> zuerst chscan', 0);
-        return $this->SendListenerRequest('/zrap/chscan', 'scan');
+            'actions'=>[
+                ['type'=>'Button','caption'=>'Listener starten / neu starten','onClick'=>'ZCT_StartListener($id);'],
+                ['type'=>'Button','caption'=>'Listener stoppen','onClick'=>'ZCT_StopListener($id);'],
+                ['type'=>'Button','caption'=>'Recovery jetzt testen','onClick'=>'ZCT_ForceRecovery($id);'],
+                ['type'=>'Button','caption'=>'Laufzeiten einlernen','onClick'=>'ZCT_StartLearning($id);'],
+                ['type'=>'Button','caption'=>'Einlernen abbrechen','onClick'=>'ZCT_AbortLearning($id);']
+            ]
+        ]);
     }
 
-    public function StopListener(): bool
+    public function StartListener()
     {
-        $this->SetBuffer('Listening', '0');
-        $this->SetBuffer('Pending', '');
-        $this->SetBuffer('Buffer', '');
-        $this->SetBuffer('Online', '0');
-        $this->SetTimerInterval('RecoveryTimer', 0);
-        $this->SendDebug('STATE', 'Listener gestoppt', 0);
+        $this->SetBuffer('Listening','1');
+        $this->SetBuffer('Buffer','');
+        $this->SetBuffer('Pending','');
+        if (!$this->HasActiveParent()) {
+            $this->EnterRecovery('Parent nicht aktiv');
+            return false;
+        }
+        $this->SetTimerInterval('RecoveryTimer',0);
+        return $this->SendRequest('/zrap/chscan','scan');
+    }
+
+    public function StopListener()
+    {
+        $this->AbortLearning(false);
+        $this->SetBuffer('Listening','0');
+        $this->SetBuffer('Pending','');
+        $this->SetBuffer('Buffer','');
+        $this->SetBuffer('Online','0');
+        $this->SetTimerInterval('RecoveryTimer',0);
+        $this->SendDebug('STATE','Listener gestoppt',0);
         return true;
     }
 
-    public function RecoveryTick(): void
+    public function ForceRecovery()
     {
-        if ($this->GetBuffer('Listening') !== '1') {
-            $this->SetTimerInterval('RecoveryTimer', 0);
-            return;
-        }
-        if ($this->GetBuffer('Pending') !== '') {
-            $this->SetBuffer('Pending', '');
-            $this->SetBuffer('Buffer', '');
-        }
-        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
-        $this->SendListenerRequest('/zrap/chscan', 'scan');
+        if ($this->GetBuffer('Listening')!=='1') $this->SetBuffer('Listening','1');
+        $this->EnterRecovery('Recovery manuell ausgeloest');
     }
 
-    public function ReceiveData(string $JSONString): string
+    public function RequestAction($Ident, $Value)
+    {
+        if ($Ident!=='RolloPosition') {
+            throw new Exception('Invalid Ident');
+        }
+
+        $target=max(0,min(100,(int)$Value));
+        if ($this->GetBuffer('LearnState')!=='idle') {
+            $this->SendDebug('POSITION','Ziel '.$target.'% abgelehnt: Einlernen aktiv',0);
+            return;
+        }
+
+        $current=$this->ReadAttributeInteger('RolloPosition');
+        $up=$this->ReadAttributeInteger('LearnedUpMs');
+        $down=$this->ReadAttributeInteger('LearnedDownMs');
+
+        if ($current<0 || $up<=0 || $down<=0) {
+            $this->SendDebug('POSITION','Ziel '.$target.'% nicht moeglich: zuerst Laufzeiten einlernen/Synchronpunkt herstellen',0);
+            return;
+        }
+
+        if ($target===$current) {
+            $this->SetRolloPosition($target);
+            return;
+        }
+
+        // Endpoints are always driven fully and become hard synchronization points.
+        if ($target===0 || $target===100) {
+            $this->SetTimerInterval('PositionStopTimer',0);
+            $this->SetBuffer('PositionTarget',(string)$target);
+            $this->MoveToEndpoint($target);
+            return;
+        }
+
+        if ($this->GetBuffer('Pending')!=='') {
+            $this->SendDebug('POSITION','Ziel '.$target.'% wartet nicht: HTTP Pending='.$this->GetBuffer('Pending'),0);
+            return;
+        }
+
+        if ($target>$current) {
+            $dir='down';
+            $duration=(int)round(($target-$current)*$down/100);
+            $cmd='close';
+        } else {
+            $dir='up';
+            $duration=(int)round(($current-$target)*$up/100);
+            $cmd='open';
+        }
+
+        $this->SetBuffer('CommandDirection',$dir);
+        $this->SetBuffer('PositionTarget',(string)$target);
+        $this->SendDebug('POSITION','Ziel '.$target.'% | Ist '.$current.'% | '.$dir.' | Fahrzeit '.number_format($duration/1000,3,'.','').' s',0);
+
+        if ($this->SendCommand($cmd,'position_'.$target)) {
+            // Timer starts after command transmission. Stop command terminates the
+            // movement; the final notify event then updates the real position.
+            $this->SetTimerInterval('PositionStopTimer',max(100,$duration));
+        }
+    }
+
+    public function PositionStopTick()
+    {
+        $this->SetTimerInterval('PositionStopTimer',0);
+        $target=$this->GetBuffer('PositionTarget');
+        if ($target==='') return false;
+
+        $this->SendDebug('POSITION','Zielzeit erreicht -> STOP senden | Ziel '.$target.'%',0);
+        return $this->SendCommand('stop','position_stop_'.$target);
+    }
+
+    public function MoveToEndpoint(int $target)
+    {
+        if ($target!==0 && $target!==100) return false;
+        if ($this->GetBuffer('LearnState')!=='idle') return false;
+        if ($this->GetBuffer('Pending')!=='') {
+            $this->SendDebug('ROLLO TARGET','noch HTTP Pending='.$this->GetBuffer('Pending').' -> Zielbefehl momentan nicht gesendet',0);
+            return false;
+        }
+
+        $dir=$target===0 ? 'up' : 'down';
+        $this->SetBuffer('CommandDirection',$dir);
+        $this->SetBuffer('EndpointTarget',(string)$target);
+        $this->SendDebug('ROLLO TARGET','Variable/Ziel '.$target.'% -> '.strtoupper($dir),0);
+        return $this->SendCommand($target===0 ? 'open' : 'close','endpoint_'.$target);
+    }
+
+    public function StartLearning()
+    {
+        if ($this->GetBuffer('Listening')!=='1') {
+            $this->SendDebug('LEARN','Bitte zuerst Listener starten.',0);
+            return false;
+        }
+        if (!$this->HasActiveParent()) {
+            $this->SendDebug('LEARN','Client Socket nicht aktiv.',0);
+            return false;
+        }
+        if ($this->GetBuffer('LearnState')!=='idle') {
+            $oldState=$this->GetBuffer('LearnState');
+            $this->SendDebug('LEARN','Neustart | alter Zustand='.$oldState,0);
+            $this->SetTimerInterval('LearnKickTimer',0);
+            $this->SetBuffer('LearnState','idle');
+            $this->SetBuffer('LearnStartMs','0');
+            $this->SetBuffer('LearnDownMs','0');
+            $this->SetBuffer('LearnUpMs','0');
+            $this->SetBuffer('NextAction','');
+            $this->SetBuffer('CommandDirection','');
+            $this->SetBuffer('Pending','');
+            $this->SetBuffer('Buffer','');
+        }
+
+        $this->SetBuffer('LearnDownMs','0');
+        $this->SetBuffer('LearnUpMs','0');
+        $this->SetBuffer('CommandDirection','');
+        $this->SetBuffer('LearnStartMs','0');
+        $this->SetBuffer('LearnState','reference_pending');
+        $this->SetBuffer('NextAction','open_reference');
+        $this->SendDebug('LEARN','START: zuerst HOCH bis Endanschlag. Diese Fahrt wird NICHT gemessen.',0);
+
+        // chnotify darf den Lernstart nicht blockieren.
+        // Socket nicht aus/einschalten; nur den offenen Longpoll logisch freigeben.
+        if ($this->GetBuffer('Pending')==='notify') {
+            $this->SendDebug('LEARN','laufendes chnotify fuer Lernstart freigeben',0);
+            $this->SetBuffer('Pending','');
+            $this->SetBuffer('Buffer','');
+        }
+
+        $this->RunNextActionIfPossible();
+        return true;
+    }
+
+    public function LearnKickTick()
+    {
+        $this->SetTimerInterval('LearnKickTimer',0);
+        if ($this->GetBuffer('LearnState')==='idle') return false;
+
+        if ($this->GetBuffer('Pending')==='notify') {
+            $this->SetBuffer('Pending','');
+            $this->SetBuffer('Buffer','');
+        }
+
+        $this->SendDebug('LEARN','Lernbefehl erneut versuchen',0);
+        $ok=$this->RunNextActionIfPossible();
+        if (!$ok && $this->GetBuffer('NextAction')!=='') {
+            $this->SetTimerInterval('LearnKickTimer',500);
+        }
+        return $ok;
+    }
+
+    private function GetSocketID(): int
+    {
+        $instance=IPS_GetInstance($this->InstanceID);
+        return (int)($instance['ConnectionID'] ?? 0);
+    }
+
+    public function AbortLearning(bool $sendStop = true)
+    {
+        $wasLearning=$this->GetBuffer('LearnState')!=='idle';
+        $this->SetTimerInterval('LearnKickTimer',0);
+        $this->SetBuffer('LearnState','idle');
+        $this->SetBuffer('LearnStartMs','0');
+        $this->SetBuffer('NextAction','');
+        $this->SetBuffer('CommandDirection','');
+        if ($wasLearning) $this->SendDebug('LEARN','ABGEBROCHEN',0);
+
+        if ($sendStop && $this->GetBuffer('Pending')==='' && $this->HasActiveParent()) {
+            $this->SendCommand('stop','abort_stop');
+        }
+        return true;
+    }
+
+    public function RecoveryTick()
+    {
+        // No recovery request may interfere with a running learning sequence.
+        if ($this->GetBuffer('LearnState')!=='idle') {
+            $this->SendDebug('RECOVERY','gesperrt: Einlernen aktiv',0);
+            return;
+        }
+
+        if ($this->GetBuffer('Listening')!=='1') {
+            $this->SetTimerInterval('RecoveryTimer',0);
+            return;
+        }
+
+        if (!$this->HasActiveParent()) {
+            // IP-Symcon reconnects an enabled Client Socket itself.
+            // Do not toggle Open here; simply wait for the next recovery tick.
+            $this->SendDebug('RECOVERY','Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten',0);
+            return;
+        }
+
+        if ($this->GetBuffer('Pending')!=='') {
+            $this->SetBuffer('Pending','');
+            $this->SetBuffer('Buffer','');
+        }
+
+        $this->SendDebug('RECOVERY','Probe mit chscan',0);
+        $this->SendRequest('/zrap/chscan','scan');
+    }
+
+    public function ReceiveData($JSONString)
     {
         $d=json_decode($JSONString,true);
-        if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer']==='') {
-            $this->SendDebug('RX', 'Kein Buffer im Paket', 0);
-            return '';
-        }
+        if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer']==='') return;
 
-        $rx=(string)$d['Buffer'];
+        $buffer=$this->GetBuffer('Buffer').(string)$d['Buffer'];
 
-        // Client Socket: binäre Nutzdaten können als Hex-String im JSON-Buffer ankommen.
-        // Nur dann dekodieren, wenn der komplette Buffer gültiges Hex ist.
-        if ($rx !== '' && (strlen($rx) % 2) === 0 && preg_match('/^[0-9A-Fa-f]+$/D', $rx)) {
-            $decoded=@hex2bin($rx);
-            if ($decoded !== false) {
-                $rx=$decoded;
-            }
-        }
-
-        $buffer=$this->GetBuffer('Buffer').$rx;
         while (true) {
-            $r=$this->ExtractListenerResponse($buffer);
+            $r=$this->Extract($buffer);
             if ($r===null) break;
             $buffer=$r['rest'];
 
             $kind=$this->GetBuffer('Pending');
             $this->SetBuffer('Pending','');
             $this->SetBuffer('Online','1');
+
             $this->SendDebug('HTTP',(string)$r['status'].' '.$kind,0);
 
-            if ($r['status']!==200 && $r['status']!==302 && $r['status']!==204) {
+            if ($r['status']!==200 && $r['status']!==302) {
                 $this->EnterRecovery('HTTP Status '.$r['status']);
                 continue;
             }
 
             if ($kind==='scan') {
-                $this->SendDebug('CHSCAN RAW',trim($r['body']),0);
+                $this->ProcessScan($r['body']);
                 $this->SetTimerInterval('RecoveryTimer',0);
                 $this->SendDebug('RECOVERY','chscan OK -> Recovery AUS',0);
                 if ($this->GetBuffer('Listening')==='1') {
                     $this->SendDebug('STATE','chscan OK -> chnotify aktivieren',0);
                 }
             } elseif ($kind==='notify') {
-                $this->SetTimerInterval('RecoveryTimer',0);
-                $this->SendDebug('RECOVERY','chnotify OK -> Recovery AUS',0);
-                $this->SendDebug('NOTIFY RAW',trim($r['body']),0);
-                $this->DispatchNotifyToChildren($r['body']);
+                $this->ProcessNotify($r['body']);
+            } elseif (str_starts_with($kind,'cmd:')) {
+                $this->SendDebug('COMMAND','HTTP bestaetigt: '.substr($kind,4),0);
             }
 
             if ($this->GetBuffer('Listening')==='1' && $this->GetBuffer('Pending')==='') {
-                $this->SendListenerRequest('/zrap/chnotify','notify');
+                if (!$this->RunNextActionIfPossible()) {
+                    $this->SendRequest('/zrap/chnotify','notify');
+                }
             }
         }
+
         $this->SetBuffer('Buffer',$buffer);
-        return '';
     }
 
     private function EnterRecovery(string $reason): void
@@ -153,16 +361,83 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->SetBuffer('Online','0');
         $this->SetBuffer('Pending','');
         $this->SetBuffer('Buffer','');
+
+        if ($this->GetBuffer('LearnState')!=='idle') {
+            $this->SetBuffer('LearnState','idle');
+            $this->SetBuffer('NextAction','');
+            $this->SetBuffer('LearnStartMs','0');
+            $this->SendDebug('LEARN','Einlernen wegen Verbindungsproblem abgebrochen.',0);
+        }
+
         $sec=max(5,$this->ReadPropertyInteger('RecoveryInterval'));
         $this->SetTimerInterval('RecoveryTimer',$sec*1000);
         $this->SendDebug('RECOVERY',$reason.' -> alle '.$sec.' s chscan versuchen',0);
     }
 
-    private function SendListenerRequest(string $path,string $kind): bool
+    private function RunNextActionIfPossible(): bool
     {
-        if ($this->GetBuffer('Listening')!=='1') {
+        if ($this->GetBuffer('Pending')!=='') return false;
+
+        $action=$this->GetBuffer('NextAction');
+        if ($action==='') return false;
+        $this->SetBuffer('NextAction','');
+
+        if ($action==='open_reference') {
+            $this->SetBuffer('LearnState','reference_wait_start');
+            $this->SendDebug('LEARN','1/3: HOCH Referenzfahrt senden',0);
+            $this->SetBuffer('CommandDirection','up');
+            return $this->SendCommand('open','open_reference');
+        }
+        if ($action==='close_measure') {
+            $this->SetBuffer('LearnState','down_wait_start');
+            $this->SendDebug('LEARN','2/3: RUNTER Messfahrt senden',0);
+            $this->SetBuffer('CommandDirection','down');
+            return $this->SendCommand('close','close_measure');
+        }
+        if ($action==='open_measure') {
+            $this->SetBuffer('LearnState','up_wait_start');
+            $this->SendDebug('LEARN','3/3: HOCH Messfahrt senden',0);
+            $this->SetBuffer('CommandDirection','up');
+            return $this->SendCommand('open','open_measure');
+        }
+        return false;
+    }
+
+    private function SendCommand(string $cmd,string $tag): bool
+    {
+        if ($this->GetBuffer('Listening')!=='1' || !$this->HasActiveParent()) {
+            $this->EnterRecovery('Befehl senden nicht moeglich');
             return false;
         }
+        if ($this->GetBuffer('Pending')!=='') return false;
+
+        $ch=max(1,$this->ReadPropertyInteger('LearnChannel'));
+        $body='cmd='.rawurlencode($cmd);
+        $q="POST /zrap/chctrl/ch".$ch." HTTP/1.1\r\n".
+           "Host: zeptrion\r\n".
+           "Content-Type: application/x-www-form-urlencoded\r\n".
+           "Content-Length: ".strlen($body)."\r\n".
+           "Connection: keep-alive\r\n\r\n".$body;
+
+        $this->SetBuffer('Pending','cmd:'.$tag);
+        $this->SendDebug('TX','ch'.$ch.' cmd='.$cmd.' ('.$tag.')',0);
+        $ok=$this->SendDataToParent(json_encode(['DataID'=>self::TX,'Buffer'=>$q]));
+
+        if ($ok===false) {
+            $this->SetBuffer('Pending','');
+            $this->EnterRecovery('SendDataToParent fuer Befehl fehlgeschlagen');
+            return false;
+        }
+        return true;
+    }
+
+    private function SendRequest(string $path,string $kind): bool
+    {
+        if ($this->GetBuffer('Listening')!=='1' || !$this->HasActiveParent()) {
+            $this->EnterRecovery('Senden nicht moeglich');
+            return false;
+        }
+
         if ($this->GetBuffer('Pending')!=='') return false;
 
         $q="GET ".$path." HTTP/1.1\r\n".
@@ -172,17 +447,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
            "Connection: keep-alive\r\n\r\n";
 
         $this->SetBuffer('Pending',$kind);
-        $this->SendDebug('TX',
-            'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: keep-alive',
-            0
-        );
-        // IPSModuleStrict uses HEX encoding for data-flow buffers.
-        // The old IPSModule test used the raw/UTF-8 buffer; under Strict the
-        // identical binary HTTP request must therefore be passed as bin2hex().
-        $ok=$this->SendDataToParent(json_encode([
-            'DataID'=>'{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
-            'Buffer'=>bin2hex($q)
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->SendDebug('TX',$kind.' '.$path,0);
+        $ok=$this->SendDataToParent(json_encode(['DataID'=>self::TX,'Buffer'=>$q]));
 
         if ($ok===false) {
             $this->SetBuffer('Pending','');
@@ -192,19 +458,227 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         return true;
     }
 
-    private function DispatchNotifyToChildren(string $payload): void
+    private function ProcessScan(string $body): void
     {
-        foreach (IPS_GetChildrenIDs($this->InstanceID) as $childID) {
-            if (!IPS_InstanceExists($childID)) continue;
-            $instance=IPS_GetInstance($childID);
-            if (($instance['ModuleInfo']['ModuleID'] ?? '') !== self::DEVICE_MODULE_ID) continue;
-            if (function_exists('ZEPA_ProcessNotifyData')) {
-                @ZEPA_ProcessNotifyData($childID,$payload);
-            }
+        $this->SendDebug('CHSCAN RAW',trim($body),0);
+        $x=@simplexml_load_string(trim($body));
+        if ($x===false) return;
+        foreach ($x->children() as $c=>$n) {
+            $v=isset($n->val)?(string)$n->val:'';
+            $this->SendDebug('SYNC',(string)$c.' = '.$v,0);
         }
     }
 
-    private function ExtractListenerResponse(string $b): ?array
+    private function ProcessNotify(string $body): void
+    {
+        $this->SendDebug('NOTIFY RAW',trim($body),0);
+        $x=@simplexml_load_string(trim($body));
+        if ($x===false) return;
+
+        foreach ($x->children() as $c=>$n) {
+            $v=isset($n->val)?(int)$n->val:-1;
+            $msg=(string)$c.' = '.$v;
+            $this->SendDebug('EVENT',$msg,0);
+            $this->LogMessage('chnotify '.$msg,KL_MESSAGE);
+            $this->ProcessRolloEvent((string)$c,$v);
+            $this->ProcessLearningEvent((string)$c,$v);
+        }
+    }
+
+    private function ProcessRolloEvent(string $channel,int $value): void
+    {
+        $target='ch'.max(1,$this->ReadPropertyInteger('LearnChannel'));
+        if ($channel!==$target) return;
+        if ($this->GetBuffer('LearnState')!=='idle') return;
+
+        $now=(int)round(microtime(true)*1000);
+
+        if ($value===100) {
+            $pos=$this->ReadAttributeInteger('RolloPosition');
+            $dir=$this->GetBuffer('CommandDirection');
+            $this->SetBuffer('CommandDirection','');
+
+            // At a known endpoint the physical direction is unambiguous.
+            if ($dir==='') {
+                if ($pos===0) $dir='down';
+                elseif ($pos===100) $dir='up';
+                else $dir='unknown';
+            }
+
+            $this->SetBuffer('MoveStartMs',(string)$now);
+            $this->SetBuffer('MoveDirection',$dir);
+            $this->SendDebug('ROLLO','Fahrt START | Position='.($pos>=0?$pos.'%':'unbekannt').' | Richtung='.$dir,0);
+            return;
+        }
+
+        if ($value!==0) return;
+
+        $start=(int)$this->GetBuffer('MoveStartMs');
+        if ($start<=0) return;
+        $elapsed=max(0,$now-$start);
+        $this->SetBuffer('MoveStartMs','0');
+
+        $dir=$this->GetBuffer('MoveDirection');
+        $this->SetBuffer('MoveDirection','');
+        $endpointTarget=$this->GetBuffer('EndpointTarget');
+        $this->SetBuffer('EndpointTarget','');
+
+        $pos=$this->ReadAttributeInteger('RolloPosition');
+        $up=$this->ReadAttributeInteger('LearnedUpMs');
+        $down=$this->ReadAttributeInteger('LearnedDownMs');
+
+        if ($pos<0 || $up<=0 || $down<=0) {
+            $this->SendDebug('ROLLO','Fahrt ENDE nach '.$elapsed.' ms | Position unbekannt: Lernwerte/Synchronpunkt fehlen',0);
+            return;
+        }
+
+        // Expected remaining time from current position to each endpoint.
+        $expectUp=(int)round($pos*$up/100);
+        $expectDown=(int)round((100-$pos)*$down/100);
+        $errUp=abs($elapsed-$expectUp);
+        $errDown=abs($elapsed-$expectDown);
+
+        if ($dir==='unknown') {
+            // Best match: whichever endpoint runtime is nearer to the measured run.
+            // This is especially strong near an endpoint. Around the middle both
+            // possibilities can be similar; LastDirection is only a tie-breaker.
+            if ($errUp < $errDown) {
+                $dir='up';
+            } elseif ($errDown < $errUp) {
+                $dir='down';
+            } else {
+                $last=$this->ReadAttributeString('LastDirection');
+                $dir=($last==='up') ? 'down' : (($last==='down') ? 'up' : 'unknown');
+            }
+
+            $this->SendDebug(
+                'ROLLO MATCH',
+                'gemessen='.number_format($elapsed/1000,3,'.','').'s | UP bis 0='.number_format($expectUp/1000,3,'.','').'s (Fehler '.number_format($errUp/1000,3,'.','').'s) | DOWN bis 100='.number_format($expectDown/1000,3,'.','').'s (Fehler '.number_format($errDown/1000,3,'.','').'s) -> '.$dir,
+                0
+            );
+        }
+
+        if ($dir==='up') {
+            $delta=(int)round($elapsed*100/$up);
+            $new=max(0,$pos-$delta);
+
+            // If runtime closely matches/exceeds the remaining path, this is a
+            // reliable upper endpoint and becomes a hard synchronization point.
+            $tol=max(750,(int)round($expectUp*0.08));
+            if ($elapsed >= $expectUp-$tol) $new=0;
+
+            $this->SetRolloPosition($new);
+            $this->WriteAttributeString('LastDirection','up');
+        } elseif ($dir==='down') {
+            $delta=(int)round($elapsed*100/$down);
+            $new=min(100,$pos+$delta);
+
+            $tol=max(750,(int)round($expectDown*0.08));
+            if ($elapsed >= $expectDown-$tol) $new=100;
+
+            $this->SetRolloPosition($new);
+            $this->WriteAttributeString('LastDirection','down');
+        } else {
+            $this->SendDebug('ROLLO','Richtung nicht bestimmbar -> Position bleibt '.$pos.'%',0);
+            return;
+        }
+
+        if ($endpointTarget==='0' || $endpointTarget==='100') {
+            $forced=(int)$endpointTarget;
+            $this->SetRolloPosition($forced);
+            $this->WriteAttributeString('LastDirection',$forced===0 ? 'up' : 'down');
+            $this->SetBuffer('PositionTarget','');
+            $this->SendDebug('ROLLO SYNC','explizites Variablen-Ziel erreicht -> Position hart auf '.$forced.'%',0);
+        } else {
+            $positionTarget=$this->GetBuffer('PositionTarget');
+            if ($positionTarget!=='' && (int)$positionTarget>0 && (int)$positionTarget<100) {
+                $forced=(int)$positionTarget;
+                $this->SetRolloPosition($forced);
+                $this->SetBuffer('PositionTarget','');
+                $this->SendDebug('ROLLO SYNC','zeitgesteuertes Variablen-Ziel erreicht -> Position='.$forced.'%',0);
+            }
+        }
+        $this->SendDebug('ROLLO','Fahrt ENDE | '.$elapsed.' ms | Richtung='.$dir.' | Position='.$this->ReadAttributeInteger('RolloPosition').'%',0);
+    }
+
+    private function SetRolloPosition(int $position): void
+    {
+        $position=max(0,min(100,$position));
+        $this->WriteAttributeInteger('RolloPosition',$position);
+        $id=@$this->GetIDForIdent('RolloPosition');
+        if ($id>0 && (int)GetValue($id)!==$position) $this->SetValue('RolloPosition',$position);
+    }
+
+    private function ProcessLearningEvent(string $channel,int $value): void
+    {
+        $target='ch'.max(1,$this->ReadPropertyInteger('LearnChannel'));
+        if ($channel!==$target) return;
+
+        $state=$this->GetBuffer('LearnState');
+        if ($state==='idle') return;
+
+        $now=(int)round(microtime(true)*1000);
+
+        if ($value===100) {
+            if ($state==='reference_wait_start') {
+                $this->SetBuffer('LearnState','reference_run');
+                $this->SendDebug('LEARN','1/3: Referenzfahrt HOCH laeuft',0);
+            } elseif ($state==='down_wait_start') {
+                $this->SetBuffer('LearnStartMs',(string)$now);
+                $this->SetBuffer('LearnState','down_run');
+                $this->SendDebug('LEARN','2/3: RUNTER Zeitmessung gestartet',0);
+            } elseif ($state==='up_wait_start') {
+                $this->SetBuffer('LearnStartMs',(string)$now);
+                $this->SetBuffer('LearnState','up_run');
+                $this->SendDebug('LEARN','3/3: HOCH Zeitmessung gestartet',0);
+            }
+            return;
+        }
+
+        if ($value!==0) return;
+
+        if ($state==='reference_run') {
+            $this->SetBuffer('LearnState','between');
+            $this->SetBuffer('NextAction','close_measure');
+            $this->SetRolloPosition(0);
+            $this->SendDebug('LEARN','1/3: oberer Anschlag erreicht -> Position 0%. Referenzzeit verworfen.',0);
+        } elseif ($state==='down_run') {
+            $ms=$now-(int)$this->GetBuffer('LearnStartMs');
+            if ($ms<500) {
+                $this->SendDebug('LEARN','FEHLER: RUNTER-Laufzeit unplausibel kurz.',0);
+                $this->AbortLearning(false);
+                return;
+            }
+            $this->SetBuffer('LearnDownMs',(string)$ms);
+            $this->WriteAttributeInteger('LearnedDownMs',$ms);
+            $this->SetRolloPosition(100);
+            $this->SetBuffer('LearnState','between');
+            $this->SetBuffer('NextAction','open_measure');
+            $this->SendDebug('LEARN','2/3: RUNTER = '.number_format($ms/1000,3,'.','').' s -> Position 100%.',0);
+        } elseif ($state==='up_run') {
+            $ms=$now-(int)$this->GetBuffer('LearnStartMs');
+            if ($ms<500) {
+                $this->SendDebug('LEARN','FEHLER: HOCH-Laufzeit unplausibel kurz.',0);
+                $this->AbortLearning(false);
+                return;
+            }
+            $this->SetBuffer('LearnUpMs',(string)$ms);
+            $this->WriteAttributeInteger('LearnedUpMs',$ms);
+            $this->SetRolloPosition(0);
+            $this->WriteAttributeString('LastDirection','up');
+            $this->SetBuffer('LearnState','idle');
+            $this->SetBuffer('LearnStartMs','0');
+            $this->SetBuffer('CommandDirection','');
+            $this->SendDebug(
+                'LEARN',
+                'FERTIG | RUNTER '.number_format(((int)$this->GetBuffer('LearnDownMs'))/1000,3,'.','').
+                ' s | HOCH '.number_format($ms/1000,3,'.','').' s | Position = 0%',
+                0
+            );
+        }
+    }
+
+    private function Extract(string $b): ?array
     {
         $he=strpos($b,"\r\n\r\n");
         if ($he===false) return null;
@@ -215,14 +689,20 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $hs=[];
         foreach($ls as $l){
             $p=strpos($l,':');
-            if($p!==false) $hs[strtolower(trim(substr($l,0,$p)))]=trim(substr($l,$p+1));
+            if($p!==false)$hs[strtolower(trim(substr($l,0,$p)))]=trim(substr($l,$p+1));
         }
+
         if(isset($hs['content-length'])){
             $n=(int)$hs['content-length'];
-            if(strlen($b)<$bs+$n) return null;
+            if(strlen($b)<$bs+$n)return null;
             return ['status'=>$st,'body'=>substr($b,$bs,$n),'rest'=>substr($b,$bs+$n)];
         }
-        if($st===302 || $st===204) return ['status'=>$st,'body'=>'','rest'=>substr($b,$bs)];
+
+        // chctrl may answer with redirect/no XML body.
+        if($st===302 || $st===204) {
+            return ['status'=>$st,'body'=>'','rest'=>substr($b,$bs)];
+        }
+
         foreach(['</chnotify>','</chscan>'] as $tag){
             $p=strpos($b,$tag,$bs);
             if($p!==false){
@@ -231,730 +711,5 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             }
         }
         return null;
-    }
-
-    public function ForwardData(string $JSONString): string
-    {
-        $data = json_decode($JSONString, true);
-        if (!is_array($data)) {
-            return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige Anfrage']);
-        }
-        $host = trim((string)($data['Host'] ?? ''));
-        $method = strtoupper((string)($data['Method'] ?? 'GET'));
-        $path = (string)($data['Path'] ?? '');
-        $formData = is_array($data['FormData'] ?? null) ? $data['FormData'] : null;
-        $timeoutMs = max(500, min(65000, (int)($data['TimeoutMs'] ?? 4000)));
-        if ($host === '' || !in_array($method, ['GET', 'POST'], true) || $path === '' || $path[0] !== '/') {
-            return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Ungültige HTTP-Anfrage']);
-        }
-        $lockPrefix = $path === '/zrap/chnotify' ? 'ZEPAS_NOTIFY_' : 'ZEPAS_HTTP_';
-        $lockName = $lockPrefix . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
-        if (!IPS_SemaphoreEnter($lockName, 0)) {
-            return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'Gerätekommunikation ist belegt']);
-        }
-        try {
-            $url = 'http://' . $host . $path;
-            $curl = curl_init();
-            if ($curl === false) {
-                return json_encode(['success' => false, 'raw' => '', 'httpCode' => 0, 'error' => 'cURL konnte nicht initialisiert werden']);
-            }
-            $options = [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => min(2000, $timeoutMs),
-                CURLOPT_TIMEOUT_MS => $timeoutMs,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_CUSTOMREQUEST => $method,
-                CURLOPT_HTTPHEADER => ['Connection: close']
-            ];
-            if ($method === 'POST' && $formData !== null) {
-                $options[CURLOPT_POSTFIELDS] = http_build_query($formData);
-                $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/x-www-form-urlencoded', 'Connection: close'];
-            }
-            curl_setopt_array($curl, $options);
-            $response = curl_exec($curl);
-            $error = curl_error($curl);
-            $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-            $raw = is_string($response) ? $response : '';
-            $success = $response !== false && $error === '' && $httpCode >= 200 && $httpCode < 400;
-            $this->SendDebug($path === '/zrap/chnotify' ? 'CHNOTIFY Transport' : 'HTTP Transport', $method . ' ' . $url . ' / HTTP ' . $httpCode . ($error !== '' ? ' / ' . $error : ''), 0);
-            return json_encode(['success' => $success, 'raw' => $raw, 'httpCode' => $httpCode, 'error' => $error], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        } finally {
-            IPS_SemaphoreLeave($lockName);
-        }
-    }
-    public function GetSmartButtonAssignment(int $deviceInstance): string
-    {
-        $names = [];
-        foreach ($this->ReadScenes() as $scene) {
-            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
-                continue;
-            }
-            $name = trim((string)($scene['name'] ?? ''));
-            if ($name !== '') {
-                $names[] = $name;
-            }
-        }
-        return implode(', ', array_values(array_unique($names)));
-    }
-    public function GetSmartButtonAssignments(int $deviceInstance): string
-    {
-        $result = [];
-        foreach ($this->ReadScenes() as $scene) {
-            if ((int)($scene['smartButtonInstance'] ?? 0) !== $deviceInstance) {
-                continue;
-            }
-            $targets = [];
-            foreach (($scene['targets'] ?? []) as $target) {
-                if (!is_array($target)) {
-                    continue;
-                }
-                $type = (string)($target['type'] ?? '');
-                if ($type === 'zeptrion') {
-                    $instance = (int)($target['instance'] ?? 0);
-                    $channel = (int)($target['channel'] ?? 0);
-                    $memory = (int)($target['memory'] ?? 0);
-                    if ($this->IsDeviceInstance($instance)) {
-                        $channelName = trim((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Name'));
-                        $deviceName = trim(IPS_GetName($instance));
-                        $caption = $channelName !== '' ? $channelName : ($deviceName . ' / Kanal ' . $channel);
-                    } else {
-                        $caption = 'zeptrionAIR';
-                    }
-                    $targets[] = $caption . ' → S' . $memory . ' (direkt)';
-                } elseif ($type === 'symcon') {
-                    $objectID = (int)($target['object'] ?? 0);
-                    if (IPS_VariableExists($objectID)) {
-                        $targets[] = $this->ObjectPath($objectID) . ' → ' . $this->FormatSmartButtonValue($objectID, $target['value'] ?? null);
-                    } elseif (IPS_ScriptExists($objectID)) {
-                        $targets[] = $this->ObjectPath($objectID) . ' → Script ausführen';
-                    }
-                }
-            }
-            $result[] = [
-                'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
-                'targets' => $targets
-            ];
-            if (count($result) >= 2) {
-                break;
-            }
-        }
-        return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-    private function FormatSmartButtonValue(int $variableID, mixed $value): string
-    {
-        $variable = IPS_GetVariable($variableID);
-        $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
-        if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
-            $profile = IPS_GetVariableProfile($profileName);
-            foreach (($profile['Associations'] ?? []) as $association) {
-                if ((string)($association['Value'] ?? '') === (string)$value) {
-                    return (string)($association['Name'] ?? $value);
-                }
-            }
-            return (string)$value . (string)($profile['Suffix'] ?? '');
-        }
-        if ((int)$variable['VariableType'] === 0) {
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'Ein' : 'Aus';
-        }
-        return (string)$value;
-    }
-    protected function ProcessHookData(): void
-    {
-        if ((string)($_GET['action'] ?? '') === 'run') {
-            $this->RunScene((string)($_GET['scene'] ?? ''), (string)($_GET['token'] ?? ''));
-            return;
-        }
-        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
-            header('Content-Type: application/json; charset=utf-8');
-            set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
-                if (!(error_reporting() & $severity)) {
-                    return false;
-                }
-                throw new ErrorException($message, 0, $severity, $file, $line);
-            });
-            try {
-                $rawInput = file_get_contents('php://input');
-                if ($rawInput === false) {
-                    throw new RuntimeException('Anfragedaten konnten nicht gelesen werden.');
-                }
-                $in = json_decode($rawInput, true, 512, JSON_THROW_ON_ERROR);
-                if (!is_array($in)) {
-                    throw new RuntimeException('Ungültige Anfrage.');
-                }
-                switch ((string)($in['op'] ?? '')) {
-                case 'program':
-                    echo json_encode($this->ProgramScene($in), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    return;
-                case 'forget':
-                    echo json_encode($this->ForgetScene((string)($in['scene'] ?? '')), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    return;
-                case 'select-delete':
-                    echo json_encode($this->SelectDelete(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    return;
-                case 'tree-children':
-                    echo json_encode(['ok' => true, 'items' => $this->GetObjectTreeChildren((int)($in['parent'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    return;
-                case 'tree-search':
-                    echo json_encode(['ok' => true, 'items' => $this->SearchObjectTree((string)($in['query'] ?? ''))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    return;
-                    case 'object-info':
-                        echo json_encode(['ok' => true, 'object' => $this->GetSelectableObjectInfo((int)($in['id'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                        return;
-                }
-                echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            } catch (Throwable $e) {
-                $this->SendDebug('Webinterface', $e->getMessage(), 0);
-                echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            }
-            return;
-        }
-        header('Content-Type: text/html; charset=utf-8');
-        echo $this->BuildInterface();
-    }
-    private function ProgramScene(array $in): array
-    {
-        $name = trim((string)($in['name'] ?? '')) ?: 'Szene';
-        $targets = $this->NormalizeTargets(is_array($in['targets'] ?? null) ? $in['targets'] : []);
-        if ($targets === []) {
-            return ['ok' => false, 'message' => 'Bitte mindestens ein Ziel auswählen.'];
-        }
-        $id = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($in['scene'] ?? '')) ?: bin2hex(random_bytes(6));
-        $sel = $this->SelectSmartButton();
-        if (!$sel['success']) {
-            return ['ok' => false, 'message' => $sel['message']];
-        }
-        $services = [];
-        $hasSymconTargets = false;
-        foreach ($targets as $target) {
-            if ((string)($target['type'] ?? '') === 'zeptrion') {
-                $instance = (int)($target['instance'] ?? 0);
-                $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
-                if ($host === '') {
-                    return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
-                }
-                $services[] = [
-                    'typ' => 'application/x-www-form-urlencoded',
-                    'req' => 'POST',
-                    'loc' => $host,
-                    'pth' => '/zrap/chctrl',
-                    'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
-                ];
-            } elseif ((string)($target['type'] ?? '') === 'symcon') {
-                $hasSymconTargets = true;
-            }
-        }
-        if ($hasSymconTargets) {
-            $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
-            if ($hh === '') {
-                return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
-            }
-            $p = explode(':', $hh, 2);
-            $token = $this->ReadAttributeString('SmartButtonToken');
-            $services[] = [
-                'req' => 'GET',
-                'typ' => 'application/x-www-form-urlencoded',
-                'loc' => $p[0],
-                'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
-                'pth' => '/hook/zeptrionair?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
-                'bdy' => ''
-            ];
-        }
-        if ($services === []) {
-            return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
-        }
-        $payload = count($services) === 1 ? $services[0] : $services;
-        $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        if (!is_string($encoded)) {
-            return ['ok' => false, 'message' => 'Smart-Taster-Programm konnte nicht erzeugt werden.'];
-        }
-        $estimatedBytes = strlen($encoded) + strlen('Content-Type: application/json\r\nContent-Length: ' . strlen($encoded) . '\r\nConnection: close\r\n');
-        if ($estimatedBytes > 730) {
-            return ['ok' => false, 'message' => 'Die Smart-Taster-Szene ist zu gross. zeptrionAIR erlaubt für /zapi/smartbt/prgs maximal 730 Byte inklusive HTTP-Header.'];
-        }
-        $r = $this->SmartButtonRequest((string)$sel['host'], 'POST', '/zapi/smartbt/prgs', $payload, 5000);
-        if (!$r['success']) {
-            return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
-        }
-        $scenes = $this->ReadScenes();
-        $entry = [
-            'id' => $id,
-            'name' => $name,
-            'targets' => $targets,
-            'smartButtonHost' => $sel['host'],
-            'smartButtonName' => $sel['name'],
-            'smartButtonInstance' => $sel['instance']
-        ];
-        $found = false;
-        foreach ($scenes as &$scene) {
-            if ((string)($scene['id'] ?? '') === $id) {
-                $scene = $entry;
-                $found = true;
-                break;
-            }
-        }
-        unset($scene);
-        if (!$found) {
-            $scenes[] = $entry;
-        }
-        $this->WriteScenes($scenes);
-        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
-    }
-    private function SelectDelete(): array
-    {
-        $s = $this->SelectSmartButton();
-        if (!$s['success']) {
-            return ['ok' => false, 'message' => $s['message']];
-        }
-        return ['ok' => true, 'message' => 'Smart-Taste auf „' . $s['name'] . '“ wurde erkannt und zum Löschen ausgewählt.'];
-    }
-    private function SelectSmartButton(): array
-    {
-        $devices = $this->GetDeviceHosts();
-        if ($devices === []) {
-            return ['success' => false, 'message' => 'Keine zeptrionAIR-Geräte mit Host gefunden.'];
-        }
-        $active = [];
-        foreach ($devices as $host => $device) {
-            $r = $this->SmartButtonRequest($host, 'POST', '/zapi/smartbt/prgm', ['on' => true, 'ntm' => 60], 4000);
-            if ($r['success']) {
-                $active[$host] = $device;
-            }
-        }
-        if ($active === []) {
-            return ['success' => false, 'message' => 'Programmiermodus konnte auf keinem zApp gestartet werden.'];
-        }
-        $locked = [];
-        foreach (array_keys($active) as $host) {
-            $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
-            if (IPS_SemaphoreEnter($lockName, 0)) {
-                $locked[$host] = $lockName;
-            } else {
-                unset($active[$host]);
-            }
-        }
-        if ($active === []) {
-            return ['success' => false, 'message' => 'Gerätekommunikation ist belegt. Smart-Taster-Auswahl konnte nicht gestartet werden.'];
-        }
-        $this->SendDebug('Smart-Taster', 'Warte auf Tastendruck auf ' . count($active) . ' zApp(s): ' . implode(', ', array_keys($active)), 0);
-        $multi = curl_multi_init();
-        $handles = [];
-        foreach ($active as $host => $device) {
-            $ch = curl_init();
-            curl_setopt_array($ch, [
-                CURLOPT_URL => 'http://' . $host . '/zapi/smartbt/prgn',
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => 2500,
-                CURLOPT_TIMEOUT_MS => 65000,
-                CURLOPT_HTTPHEADER => ['Connection: close']
-            ]);
-            curl_multi_add_handle($multi, $ch);
-            $handles[$host] = $ch;
-        }
-        $selected = '';
-        $deadline = microtime(true) + 66;
-        do {
-            do {
-                $status = curl_multi_exec($multi, $running);
-            } while ($status === CURLM_CALL_MULTI_PERFORM);
-            foreach ($handles as $host => $ch) {
-                if ((int)(curl_getinfo($ch)['http_code'] ?? 0) === 200) {
-                    $body = (string)curl_multi_getcontent($ch);
-                    if ($body !== '') {
-                        $this->SendDebug('Smart-Taster prgn RAW', $host . ' / HTTP 200 / Antwort: ' . $body, 0);
-                        $json = json_decode($body, true);
-                        if (is_array($json) && ($json['prg'] ?? false) === true) {
-                            $selected = $host;
-                            break 2;
-                        }
-                    }
-                }
-            }
-            if ($running > 0) {
-                curl_multi_select($multi, .2);
-            }
-        } while ($running > 0 && microtime(true) < $deadline);
-        foreach ($handles as $ch) {
-            curl_multi_remove_handle($multi, $ch);
-            curl_close($ch);
-        }
-        curl_multi_close($multi);
-        foreach ($locked as $lockName) {
-            IPS_SemaphoreLeave($lockName);
-        }
-        if ($selected === '') {
-            return ['success' => false, 'message' => 'Keine Smart-Taste erkannt.'];
-        }
-        $device = $active[$selected];
-        $this->SendDebug('Smart-Taster erkannt', 'zApp: ' . $selected . ' / Gerät: ' . $device['name'] . ' / Instanz: ' . $device['instance'], 0);
-        return ['success' => true, 'host' => $selected, 'name' => $device['name'], 'instance' => $device['instance']];
-    }
-    private function SmartButtonRequest(string $host, string $method, string $path, mixed $payload = null, int $timeoutMs = 4000): array
-    {
-        $lockName = 'ZEPAS_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
-        if (!IPS_SemaphoreEnter($lockName, 0)) {
-            return ['success' => false, 'message' => 'Gerätekommunikation ist belegt', 'raw' => '', 'httpCode' => 0];
-        }
-        try {
-            $url = 'http://' . $host . $path;
-            $ch = curl_init();
-            if ($ch === false) {
-                return ['success' => false, 'message' => 'cURL konnte nicht initialisiert werden', 'raw' => '', 'httpCode' => 0];
-            }
-            $options = [
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT_MS => 2000,
-                CURLOPT_TIMEOUT_MS => $timeoutMs,
-                CURLOPT_CUSTOMREQUEST => $method,
-                CURLOPT_HTTPHEADER => ['Connection: close']
-            ];
-            if ($payload !== null) {
-                $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                $options[CURLOPT_POSTFIELDS] = $body;
-                $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close'];
-            }
-            curl_setopt_array($ch, $options);
-            $response = curl_exec($ch);
-            $error = curl_error($ch);
-            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-            $raw = is_string($response) ? $response : '';
-            $this->SendDebug('Smart-Taster RAW', $method . ' ' . $url . ' / HTTP ' . $code . ' / Antwort: ' . $raw . ($error !== '' ? ' / Fehler: ' . $error : ''), 0);
-            return ['success' => $error === '' && $code >= 200 && $code < 300, 'message' => $error !== '' ? $error : 'HTTP ' . $code . ($raw !== '' ? ' / ' . $raw : ''), 'raw' => $raw, 'httpCode' => $code];
-        } finally {
-            IPS_SemaphoreLeave($lockName);
-        }
-    }
-    private function ForgetScene(string $id): array
-    {
-        $scenes = array_values(array_filter($this->ReadScenes(), static fn(array $scene): bool => (string)($scene['id'] ?? '') !== $id));
-        $this->WriteScenes($scenes);
-        return ['ok' => true, 'message' => 'Eintrag wurde aus dem zeptrionAIR-Splitter entfernt.', 'scenes' => $scenes];
-    }
-    private function RunScene(string $id, string $token): void
-    {
-        if ($token === '' || !hash_equals($this->ReadAttributeString('SmartButtonToken'), $token)) {
-            http_response_code(403);
-            echo 'Forbidden';
-            return;
-        }
-        foreach ($this->ReadScenes() as $scene) {
-            if ((string)($scene['id'] ?? '') !== $id) {
-                continue;
-            }
-            foreach (($scene['targets'] ?? []) as $target) {
-                try {
-                    $type = (string)($target['type'] ?? 'zeptrion');
-                    if ($type === 'symcon') {
-                        $objectID = (int)($target['object'] ?? 0);
-                        if (IPS_VariableExists($objectID)) {
-                            RequestAction($objectID, $target['value'] ?? null);
-                        } elseif (IPS_ScriptExists($objectID)) {
-                            IPS_RunScript($objectID);
-                        }
-                    } elseif ($type === 'variable') {
-                        $objectID = (int)($target['variable'] ?? 0);
-                        if (IPS_VariableExists($objectID)) {
-                            RequestAction($objectID, $target['value'] ?? null);
-                        }
-                    } elseif ($type === 'script') {
-                        $objectID = (int)($target['script'] ?? 0);
-                        if (IPS_ScriptExists($objectID)) {
-                            IPS_RunScript($objectID);
-                        }
-                    }
-                } catch (Throwable $e) {
-                    $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
-                }
-            }
-            echo 'OK';
-            return;
-        }
-        http_response_code(404);
-        echo 'Scene not found';
-    }
-    private function BuildInterface(): string
-    {
-        $scenes = $this->ReadScenes();
-        foreach ($scenes as &$scene) {
-            if (!is_array($scene['targets'] ?? null)) {
-                continue;
-            }
-            foreach ($scene['targets'] as &$target) {
-                if (!is_array($target)) {
-                    continue;
-                }
-                $type = (string)($target['type'] ?? '');
-                $objectID = $type === 'variable' ? (int)($target['variable'] ?? 0) : ($type === 'script' ? (int)($target['script'] ?? 0) : (int)($target['object'] ?? 0));
-                if (!in_array($type, ['symcon', 'variable', 'script'], true) || $objectID <= 0) {
-                    continue;
-                }
-                $info = $this->GetSelectableObjectInfo($objectID);
-                if ($info !== null) {
-                    $target['objectInfo'] = $info;
-                } else {
-                    $target['objectMissing'] = true;
-                }
-            }
-            unset($target);
-        }
-        unset($scene);
-        $data = json_encode([
-            'scenes' => $scenes,
-            'zeptrionTargets' => $this->GetTargets()
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
-        $html = <<<'HTML'
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Taster</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:1000px;margin:28px auto;padding:0 16px;background:#f5f5f5;color:#222}h1{font-size:24px}.card{background:#fff;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 1px 4px #0002}.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}input,select,button{font:inherit;padding:8px;border:1px solid #bbb;border-radius:6px}input{min-width:150px}select{min-width:180px}button{cursor:pointer}.name{flex:1}.danger{margin-left:auto}.status{padding:12px 0;min-height:24px;font-weight:600}.target{padding-left:12px;border-left:3px solid #ddd}.busy{opacity:.55;pointer-events:none}.hint,.source{color:#666;font-size:14px}.objfield{min-width:330px;text-align:left}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:99}.modalbox{background:#fff;width:min(760px,92vw);height:min(650px,84vh);border-radius:10px;padding:14px;display:flex;flex-direction:column}.tree{overflow:auto;flex:1;border:1px solid #ddd;border-radius:6px;padding:6px}.node{margin:1px 0}.nodeRow{display:flex;align-items:center;min-height:30px;border-radius:4px}.nodeRow:hover{background:#eee}.twisty{width:28px;border:0;background:transparent;padding:4px}.nodeLabel{border:0;background:transparent;text-align:left;flex:1;padding:5px}.nodeLabel.selectable{font-weight:500}.children{margin-left:22px}.search{box-sizing:border-box;width:100%;margin:8px 0}.close{margin-left:auto}.modalHead{display:flex;align-items:center;gap:10px}.typeTag{font-size:12px;color:#777;margin-left:8px}.searchResult{display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px;border-radius:4px}.searchResult:hover{background:#eee}
-</style></head><body><h1>Smart-Taster konfigurieren</h1><p class="hint">Szene benennen, zeptrionAIR-Ziele direkt oder Symcon-Objekte hinzufügen und danach programmieren.</p><div id="scenes"></div><button id="addScene">+ Szene hinzufügen</button> <button id="clearButton">Smart-Taster löschen</button><div class="status" id="status"></div><script>
-const D=__DATA__;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptrionTargets||[];const cache=new Map();
-const el=id=>document.getElementById(id),mk=(t,x)=>{const e=document.createElement(t);if(x!==undefined)e.textContent=x;return e};
-function msg(x){el('status').textContent=x||''}function busy(v){document.body.classList.toggle('busy',!!v)}
-function opts(s,l,v){s.replaceChildren();l.forEach(x=>{const o=mk('option',x.caption);o.value=x.value;if(String(x.value)===String(v))o.selected=true;s.append(o)})}
-async function api(x){try{const r=await fetch('/hook/zeptrionair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
-async function objectInfo(id){if(!id)return null;if(cache.has(+id))return cache.get(+id);const r=await api({op:'object-info',id:+id});if(r.ok&&r.object){cache.set(+id,r.object);return r.object}return null}
-function migrate(t){if(t.type==='variable')return{type:'symcon',object:+t.variable,value:t.value};if(t.type==='script')return{type:'symcon',object:+t.script};return t}
-async function pick(t,done){const m=mk('div');m.className='modal';const b=mk('div');b.className='modalbox';const head=mk('div');head.className='modalHead';head.append(mk('h3','Symcon-Objekt auswählen'));const x=mk('button','Schliessen');x.className='close';x.onclick=()=>m.remove();head.append(x);const q=mk('input');q.className='search';q.placeholder='Objekt suchen …';const tree=mk('div');tree.className='tree';b.append(head,q,tree);m.append(b);document.body.append(m);
-async function choose(item){if(!item.selectable)return;const full=await api({op:'object-info',id:+item.id});if(!full.ok||!full.object){msg('Objektinformationen konnten nicht geladen werden.');return}t.object=+item.id;t.objectInfo=full.object;t.value=full.object.defaultValue??'';cache.set(+item.id,full.object);m.remove();done()}
-async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
-let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
-async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
-function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
-async function program(s){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die gewünschte blinkende Smart-Taste am Schalter drücken.'))return;msg('Smart-Tasten werden aktiviert. Bitte gewünschte blinkende Smart-Taste drücken …');busy(true);const clean=(s.targets||[]).map(t=>{const x={...t};delete x.objectInfo;return x});const r=await api({op:'program',scene:s.id,name:s.name,targets:clean});busy(false);if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
-async function forget(id){const r=await api({op:'forget',scene:id});if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
-async function clearButton(){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die Smart-Taste drücken, deren Programmierung gelöscht werden soll.'))return;msg('Smart-Tasten werden aktiviert. Bitte die zu löschende Smart-Taste drücken …');busy(true);const r=await api({op:'select-delete'});busy(false);msg(r.message)}
-el('addScene').onclick=addScene;el('clearButton').onclick=clearButton;render();
-</script></body></html>
-HTML;
-        return str_replace('__DATA__', $data, $html);
-    }
-    private function GetDeviceHosts(): array
-    {
-        $result = [];
-        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $id) {
-            $host = trim((string)IPS_GetProperty($id, 'Host'));
-            if ($host === '') {
-                continue;
-            }
-            $name = trim(IPS_GetName($id));
-            $result[$host] = ['instance' => $id, 'name' => $name !== '' ? $name : $host];
-        }
-        ksort($result, SORT_NATURAL);
-        return $result;
-    }
-    private function GetTargets(): array
-    {
-        $result = [];
-        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $id) {
-            $count = max(1, min(4, (int)IPS_GetProperty($id, 'Channels')));
-            for ($channel = 1; $channel <= $count; $channel++) {
-                if (strtolower((string)IPS_GetProperty($id, 'Channel' . $channel . 'Type')) === 'unused') {
-                    continue;
-                }
-                $name = trim((string)IPS_GetProperty($id, 'Channel' . $channel . 'Name'));
-                if ($name === '') {
-                    $name = IPS_GetName($id) . ' / Kanal ' . $channel;
-                }
-                $result[] = ['value' => $id . ':' . $channel, 'caption' => $name, 'instance' => $id, 'channel' => $channel];
-            }
-        }
-        usort($result, static fn($a, $b) => strnatcasecmp($a['caption'], $b['caption']));
-        return $result;
-    }
-    private function GetObjectTreeChildren(int $parentID): array
-    {
-        $ids = $parentID === 0 ? IPS_GetChildrenIDs(0) : (IPS_ObjectExists($parentID) ? IPS_GetChildrenIDs($parentID) : []);
-        $items = [];
-        foreach ($ids as $id) {
-            $info = $this->GetTreeObjectInfo((int)$id);
-            if ($info !== null) {
-                $items[] = $info;
-            }
-        }
-        usort($items, static function (array $a, array $b): int {
-            $rank = static function (array $item): int {
-                $id = (int)($item['id'] ?? 0);
-                if ($id > 0 && IPS_ObjectExists($id)) {
-                    $object = IPS_GetObject($id);
-                    $objectType = (int)($object['ObjectType'] ?? -1);
-                    if ($objectType === 0) {
-                        return 0;
-                    }
-                    if ($objectType === 1) {
-                        return 1;
-                    }
-                }
-                return 2;
-            };
-            $ra = $rank($a);
-            $rb = $rank($b);
-            return $ra === $rb ? strnatcasecmp((string)$a['name'], (string)$b['name']) : ($ra <=> $rb);
-        });
-        return $items;
-    }
-    private function SearchObjectTree(string $query): array
-    {
-        $query = trim($query);
-        if ($query === '') {
-            return [];
-        }
-        $needle = mb_strtolower($query);
-        $items = [];
-        foreach (IPS_GetObjectList() as $id) {
-            if (!IPS_VariableExists($id) && !IPS_ScriptExists($id)) {
-                continue;
-            }
-            $path = $this->ObjectPath($id);
-            if (mb_strpos(mb_strtolower($path), $needle) === false) {
-                continue;
-            }
-            $info = $this->GetSelectableObjectInfo($id);
-            if ($info !== null) {
-                $items[] = $info;
-            }
-            if (count($items) >= 100) {
-                break;
-            }
-        }
-        usort($items, static fn(array $a, array $b): int => strnatcasecmp((string)$a['path'], (string)$b['path']));
-        return $items;
-    }
-    private function GetTreeObjectInfo(int $id): ?array
-    {
-        if (!IPS_ObjectExists($id)) {
-            return null;
-        }
-        $selectable = IPS_VariableExists($id) || IPS_ScriptExists($id);
-        $type = IPS_VariableExists($id) ? 'variable' : (IPS_ScriptExists($id) ? 'script' : 'container');
-        return [
-            'id' => $id,
-            'name' => IPS_GetName($id),
-            'path' => $this->ObjectPath($id),
-            'type' => $type,
-            'selectable' => $selectable,
-            'hasChildren' => count(IPS_GetChildrenIDs($id)) > 0,
-            'icon' => $type === 'variable' ? '●' : ($type === 'script' ? '▶' : '▸')
-        ];
-    }
-    private function GetSelectableObjectInfo(int $id): ?array
-    {
-        if (IPS_VariableExists($id)) {
-            $variable = IPS_GetVariable($id);
-            $profileName = (string)($variable['VariableCustomProfile'] ?: $variable['VariableProfile']);
-            $associations = [];
-            $profileMin = null;
-            $profileMax = null;
-            $profileStep = null;
-            $profileSuffix = '';
-            if ($profileName !== '' && IPS_VariableProfileExists($profileName)) {
-                $profile = IPS_GetVariableProfile($profileName);
-                foreach (($profile['Associations'] ?? []) as $association) {
-                    $associations[] = ['value' => $association['Value'], 'name' => $association['Name']];
-                }
-                $profileMin = $profile['MinValue'] ?? null;
-                $profileMax = $profile['MaxValue'] ?? null;
-                $profileStep = $profile['StepSize'] ?? null;
-                $profileSuffix = (string)($profile['Suffix'] ?? '');
-            }
-            return [
-                'id' => $id,
-                'name' => IPS_GetName($id),
-                'path' => $this->ObjectPath($id),
-                'type' => 'variable',
-                'selectable' => true,
-                'varType' => (int)$variable['VariableType'],
-                'associations' => $associations,
-                'profileMin' => $profileMin,
-                'profileMax' => $profileMax,
-                'profileStep' => $profileStep,
-                'profileSuffix' => $profileSuffix,
-                'defaultValue' => (int)$variable['VariableType'] === 0 ? 'false' : ($profileMin ?? '')
-            ];
-        }
-        if (IPS_ScriptExists($id)) {
-            return [
-                'id' => $id,
-                'name' => IPS_GetName($id),
-                'path' => $this->ObjectPath($id),
-                'type' => 'script',
-                'selectable' => true
-            ];
-        }
-        return null;
-    }
-    private function ObjectPath(int $id): string
-    {
-        $parts = [];
-        $current = $id;
-        for ($i = 0; $i < 20 && $current > 0; $i++) {
-            $parts[] = IPS_GetName($current);
-            $current = IPS_GetParent($current);
-        }
-        return implode(' / ', array_reverse($parts));
-    }
-    private function NormalizeTargets(array $targets): array
-    {
-        $out = [];
-        foreach ($targets as $target) {
-            if (!is_array($target)) {
-                continue;
-            }
-            $type = (string)($target['type'] ?? 'zeptrion');
-            if ($type === 'zeptrion') {
-                $instance = (int)($target['instance'] ?? 0);
-                $channel = (int)($target['channel'] ?? 0);
-                $memory = (int)($target['memory'] ?? 0);
-                if ($this->IsDeviceInstance($instance) && $channel >= 1 && $channel <= 4 && $memory >= 1 && $memory <= 4) {
-                    $out[] = ['type' => 'zeptrion', 'instance' => $instance, 'channel' => $channel, 'memory' => $memory];
-                }
-            } elseif ($type === 'symcon') {
-                $id = (int)($target['object'] ?? 0);
-                if (IPS_VariableExists($id)) {
-                    $variable = IPS_GetVariable($id);
-                    $value = $target['value'] ?? '';
-                    switch ((int)$variable['VariableType']) {
-                        case 0: $value = filter_var($value, FILTER_VALIDATE_BOOLEAN); break;
-                        case 1: $value = (int)$value; break;
-                        case 2: $value = (float)$value; break;
-                        default: $value = (string)$value;
-                    }
-                    $out[] = ['type' => 'symcon', 'object' => $id, 'value' => $value];
-                } elseif (IPS_ScriptExists($id)) {
-                    $out[] = ['type' => 'symcon', 'object' => $id];
-                }
-            } elseif ($type === 'variable') {
-                $id = (int)($target['variable'] ?? 0);
-                if (IPS_VariableExists($id)) {
-                    $out[] = ['type' => 'symcon', 'object' => $id, 'value' => $target['value'] ?? ''];
-                }
-            } elseif ($type === 'script') {
-                $id = (int)($target['script'] ?? 0);
-                if (IPS_ScriptExists($id)) {
-                    $out[] = ['type' => 'symcon', 'object' => $id];
-                }
-            }
-        }
-        return $out;
-    }
-    private function IsDeviceInstance(int $id): bool
-    {
-        if ($id <= 0 || !IPS_InstanceExists($id)) {
-            return false;
-        }
-        $instance = IPS_GetInstance($id);
-        return (string)($instance['ModuleInfo']['ModuleID'] ?? '') === self::DEVICE_MODULE_ID;
-    }
-    private function ReadScenes(): array
-    {
-        $data = json_decode($this->ReadAttributeString('SmartButtonScenes'), true);
-        return is_array($data) ? $data : [];
-    }
-    private function WriteScenes(array $scenes): void
-    {
-        $this->WriteAttributeString('SmartButtonScenes', json_encode(array_values($scenes), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 }
