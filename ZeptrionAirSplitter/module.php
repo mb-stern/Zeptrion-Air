@@ -10,6 +10,14 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->RegisterAttributeString('SmartButtonToken', '');
         $this->RegisterHook('zeptrionair');
     }
+    public function GetCompatibleParents(): string
+    {
+        return json_encode([
+            'type' => 'require',
+            'moduleIDs' => ['{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}']
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
