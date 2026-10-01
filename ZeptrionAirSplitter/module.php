@@ -10,6 +10,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
         $this->SetBuffer('Listening', '0');
         $this->SetBuffer('Pending', '');
         $this->SetBuffer('Online', '0');
+        $this->SetBuffer('RecoveryFailures', '0');
+        $this->SetBuffer('SocketRestartStage', '0');
         $this->RegisterPropertyInteger('RecoveryInterval', 10);
         $this->RegisterTimer('RecoveryTimer', 0, 'ZEPAS_RecoveryTick($_IPS["TARGET"]);');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
@@ -86,16 +88,81 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             $this->SetTimerInterval('RecoveryTimer', 0);
             return;
         }
-        if (!$this->HasActiveParent()) {
-            $this->SendDebug('RECOVERY', 'Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten', 0);
+
+        $socketID = $this->GetSocketID();
+        if ($socketID <= 0 || !IPS_InstanceExists($socketID)) {
+            $this->SendDebug('RECOVERY', 'Client Socket nicht gefunden', 0);
             return;
         }
-        if ($this->GetBuffer('Pending') !== '') {
+
+        $stage = (int)$this->GetBuffer('SocketRestartStage');
+
+        // Stage 1: socket was deliberately closed on previous tick.
+        if ($stage === 1) {
+            $this->SendDebug('RECOVERY', 'Client Socket wieder einschalten', 0);
+            IPS_SetProperty($socketID, 'Open', true);
+            IPS_ApplyChanges($socketID);
+            $this->SetBuffer('SocketRestartStage', '2');
+            return;
+        }
+
+        // Stage 2: wait until Symcon reports the socket active, then probe.
+        if ($stage === 2) {
+            if (!$this->HasActiveParent()) {
+                $this->SendDebug('RECOVERY', 'Warte auf Client Socket ACTIVE', 0);
+                return;
+            }
+            $this->SetBuffer('SocketRestartStage', '0');
+            $this->SetBuffer('RecoveryFailures', '0');
             $this->SetBuffer('Pending', '');
             $this->SetBuffer('Buffer', '');
+            $this->SendDebug('RECOVERY', 'Client Socket ACTIVE -> Probe mit chscan', 0);
+            $this->SendListenerRequest('/zrap/chscan', 'scan');
+            return;
         }
-        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
-        $this->SendListenerRequest('/zrap/chscan', 'scan');
+
+        if (!$this->HasActiveParent()) {
+            $fail=(int)$this->GetBuffer('RecoveryFailures')+1;
+            $this->SetBuffer('RecoveryFailures',(string)$fail);
+            $this->SendDebug('RECOVERY','Client Socket nicht aktiv | Versuch '.$fail,0);
+
+            // Do not hammer the socket. After 3 failed recovery ticks perform
+            // exactly one controlled OFF -> next tick ON cycle.
+            if ($fail >= 3) {
+                $this->SetBuffer('RecoveryFailures','0');
+                $this->SetBuffer('Pending','');
+                $this->SetBuffer('Buffer','');
+                if ((bool)IPS_GetProperty($socketID,'Open')) {
+                    $this->SendDebug('RECOVERY','Client Socket neu starten -> AUS',0);
+                    IPS_SetProperty($socketID,'Open',false);
+                    IPS_ApplyChanges($socketID);
+                }
+                $this->SetBuffer('SocketRestartStage','1');
+            }
+            return;
+        }
+
+        // A request that is still pending on a recovery tick did not complete.
+        if ($this->GetBuffer('Pending') !== '') {
+            $this->SendDebug('RECOVERY','HTTP '.$this->GetBuffer('Pending').' ohne Antwort -> Verbindung verwerfen',0);
+            $this->SetBuffer('Pending','');
+            $this->SetBuffer('Buffer','');
+            if ((bool)IPS_GetProperty($socketID,'Open')) {
+                IPS_SetProperty($socketID,'Open',false);
+                IPS_ApplyChanges($socketID);
+            }
+            $this->SetBuffer('SocketRestartStage','1');
+            return;
+        }
+
+        $this->SendDebug('RECOVERY','Probe mit chscan',0);
+        $this->SendListenerRequest('/zrap/chscan','scan');
+    }
+
+    private function GetSocketID(): int
+    {
+        $instance=IPS_GetInstance($this->InstanceID);
+        return (int)($instance['ConnectionID'] ?? 0);
     }
 
     public function ReceiveData(string $JSONString): string
@@ -121,6 +188,8 @@ class ZeptrionAirSplitter extends IPSModuleStrict
 
             if ($kind==='scan') {
                 $this->SetTimerInterval('RecoveryTimer',0);
+                $this->SetBuffer('RecoveryFailures','0');
+                $this->SetBuffer('SocketRestartStage','0');
                 $this->SendDebug('RECOVERY','chscan OK -> Recovery AUS',0);
                 $this->SendDebug('CHSCAN RAW',trim($r['body']),0);
             } elseif ($kind==='notify') {
