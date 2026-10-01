@@ -111,8 +111,22 @@ class ZeptrionAirSplitter extends IPSModuleStrict
             return '';
         }
 
-        $this->SendDebug('RX RAW', (string)$d['Buffer'], 0);
-        $buffer=$this->GetBuffer('Buffer').(string)$d['Buffer'];
+        $rx=(string)$d['Buffer'];
+        $this->SendDebug('RX BUFFER', $rx, 0);
+
+        // IP-Symcon Client Socket can deliver binary payload as hexadecimal text.
+        // Decode only when the complete value is a valid even-length hex string.
+        if ($rx !== '' && (strlen($rx) % 2) === 0 && preg_match('/^[0-9A-Fa-f]+$/D', $rx)) {
+            $decoded=@hex2bin($rx);
+            if ($decoded !== false) {
+                $rx=$decoded;
+                $this->SendDebug('RX DECODED', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
+            }
+        } else {
+            $this->SendDebug('RX DECODED', str_replace(["\r","\n"], ['<CR>','<LF>'], $rx), 0);
+        }
+
+        $buffer=$this->GetBuffer('Buffer').$rx;
         while (true) {
             $r=$this->ExtractListenerResponse($buffer);
             if ($r===null) break;
@@ -167,10 +181,13 @@ class ZeptrionAirSplitter extends IPSModuleStrict
            "Host: zeptrion\r\n".
            "Accept: application/xml,text/xml,*/*\r\n".
            "Cache-Control: no-cache\r\n".
-           "Connection: keep-alive\r\n\r\n";
+           "Connection: close\r\n\r\n";
 
         $this->SetBuffer('Pending',$kind);
-        $this->SendDebug('TX',$kind.' '.$path.' | DataID={79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',0);
+        $this->SendDebug('TX',
+            'GET '.$path.' HTTP/1.1 | Host: zeptrion | Accept: application/xml,text/xml,*/* | Cache-Control: no-cache | Connection: close',
+            0
+        );
         $ok=$this->SendDataToParent(json_encode([
             'DataID'=>'{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
             'Buffer'=>$q
