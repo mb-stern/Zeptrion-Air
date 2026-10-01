@@ -278,7 +278,7 @@ class ZeptrionAir extends IPSModuleStrict
         $state['_notifySynced']=false;
         $this->WriteMotorState($state);
         $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
-        $this->SetTimerInterval('NotifyTimer',250);
+        $this->SetTimerInterval('NotifyTimer', 0);
         $this->SetStatus(102);
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
@@ -953,35 +953,20 @@ class ZeptrionAir extends IPSModuleStrict
     }
     public function NotifyTick(): void
     {
+        // FIX8: chnotify is handled by the Splitter/Client Socket.
+        // No long-poll and no recovery polling timer in the device instance.
         $this->SetTimerInterval('NotifyTimer', 0);
-        $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') {
+    }
+
+    public function ProcessNotifyData(string $payload): void
+    {
+        $xml = @simplexml_load_string(trim($payload));
+        if ($xml === false) {
+            $this->SendDebug('CHNOTIFY', 'Ungültige XML-Nachricht: ' . $payload, 0);
             return;
         }
-
-        $state = $this->ReadMotorState();
-        if (!(bool)($state['_notifySynced'] ?? false)) {
-            $scan = $this->HttpXmlGet('/zrap/chscan', 5000);
-            if ($scan === null) {
-                $this->SendDebug('CHNOTIFY', 'chscan fehlgeschlagen -> in 10 s erneut', 0);
-                $this->SetTimerInterval('NotifyTimer', 10000);
-                return;
-            }
-            $this->ApplyChannelStates($scan, 'chscan/notify-sync');
-            $state['_notifySynced'] = true;
-            $this->WriteMotorState($state);
-            $this->SendDebug('CHNOTIFY', 'chscan OK -> chnotify starten', 0);
-        }
-
-        // Transport remains Device -> existing ZeptrionAirSplitter.
-        // Splitter uses a separate semaphore for /zrap/chnotify per host.
-        $data = $this->HttpXmlGet('/zrap/chnotify', 35000);
-        if ($data === null) {
-            $state = $this->ReadMotorState();
-            $state['_notifySynced'] = false;
-            $this->WriteMotorState($state);
-            $this->SendDebug('CHNOTIFY', 'keine Antwort -> Recovery in 10 s', 0);
-            $this->SetTimerInterval('NotifyTimer', 10000);
+        $data = json_decode((string) json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), true);
+        if (!is_array($data)) {
             return;
         }
 
@@ -992,7 +977,7 @@ class ZeptrionAir extends IPSModuleStrict
             if ($chState === null) continue;
             $raw = $this->FindNumericValue($chState, ['val', 'value', 'state']);
             if ($raw === null) continue;
-            $value = (int)round($raw);
+            $value = (int) round($raw);
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             $this->SendDebug('CHNOTIFY EVENT', 'ch' . $channel . '=' . $value . ' | ' . $type, 0);
             if (in_array($type, ['shutter', 'awning'], true)) {
@@ -1003,7 +988,6 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $value > 0);
             }
         }
-        $this->SetTimerInterval('NotifyTimer', 100);
     }
 
     public function StartTravelLearning(int $Channel): string
