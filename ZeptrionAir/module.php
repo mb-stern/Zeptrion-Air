@@ -999,7 +999,7 @@ class ZeptrionAir extends IPSModuleStrict
         }
         $state = $this->ReadMotorState();
         foreach ($state as $otherChannel => $otherState) {
-            if (!is_array($otherState) || $otherChannel === (string)$Channel) continue;
+            if (!is_array($otherState) || (int)$otherChannel === $Channel) continue;
             $otherLearn=(string)($otherState['learnState']??'idle');
             if ($otherLearn!=='' && $otherLearn!=='idle') {
                 return 'Einlernen nicht gestartet: Kanal '.$otherChannel.' wird bereits eingelernt.';
