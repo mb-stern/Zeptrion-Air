@@ -995,7 +995,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyRxBuffer', '');
         $this->SetBuffer('NotifyPending', '1');
         $ok = $this->SendDataToParent(json_encode([
-            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
+            'DataID' => '{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}',
             'Buffer' => $request
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
