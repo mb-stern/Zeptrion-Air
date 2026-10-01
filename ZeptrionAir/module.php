@@ -6,6 +6,7 @@ class ZeptrionAir extends IPSModuleStrict
     public function Create(): void
     {
         parent::Create();
+        $this->RequireParent('{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}');
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -28,6 +29,8 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
         $this->RegisterAttributeString('MotorRuntimeState', '{}');
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
+        $this->SetBuffer('NotifyRxBuffer', '');
+        $this->SetBuffer('NotifyPending', '0');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -42,6 +45,14 @@ class ZeptrionAir extends IPSModuleStrict
             }
         }
     }
+    public function GetCompatibleParents(): string
+    {
+        return json_encode([
+            'type' => 'require',
+            'moduleIDs' => ['{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}']
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
     public function GetConfigurationForm(): string
     {
         $elements = [];
@@ -270,6 +281,8 @@ class ZeptrionAir extends IPSModuleStrict
         $state=$this->ReadMotorState();
         $state['_notifySynced']=false;
         $this->WriteMotorState($state);
+        $this->SetBuffer('NotifyRxBuffer', '');
+        $this->SetBuffer('NotifyPending', '0');
         $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
         $this->SetTimerInterval('NotifyTimer',250);
         $this->SetStatus(102);
@@ -917,7 +930,7 @@ class ZeptrionAir extends IPSModuleStrict
                 CURLOPT_URL => $url,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CONNECTTIMEOUT_MS => 1000,
-                CURLOPT_TIMEOUT_MS => 2500,
+                CURLOPT_TIMEOUT_MS => $timeoutMs,
                 CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_HTTPHEADER => ['Connection: close']
             ]);
@@ -946,55 +959,156 @@ class ZeptrionAir extends IPSModuleStrict
     public function NotifyTick(): void
     {
         $this->SetTimerInterval('NotifyTimer', 0);
-        $host=trim($this->ReadPropertyString('Host'));
-        if ($host==='') return;
 
-        $this->SendDebug('CHNOTIFY','Listener-Tick fuer '.$host,0);
-
-        // After start/recovery first get a clean state snapshot.
-        $state=$this->ReadMotorState();
-        if (!(bool)($state['_notifySynced']??false)) {
-            $scan=$this->HttpXmlGet('/zrap/chscan',5000);
-            if ($scan===null) {
-                $this->SendDebug('CHNOTIFY','chscan fehlgeschlagen -> in 10 s erneut',0);
-                $this->SetTimerInterval('NotifyTimer',10000);
-                return;
-            }
-            $state['_notifySynced']=true;
-            $this->WriteMotorState($state);
-            $this->SendDebug('CHNOTIFY','chscan OK -> chnotify starten',0);
-        }
-
-        $data=$this->HttpXmlGet('/zrap/chnotify',35000);
-        if ($data===null) {
-            // Do not destroy learned motor state; only force a fresh sync.
-            $state=$this->ReadMotorState();
-            $state['_notifySynced']=false;
-            $this->WriteMotorState($state);
-            $this->SendDebug('CHNOTIFY','Longpoll ohne gueltige Antwort -> Recovery in 10 s',0);
-            $this->SetTimerInterval('NotifyTimer',10000);
+        if (!$this->HasActiveParent()) {
+            $this->SetBuffer('NotifyPending', '0');
+            $this->SetBuffer('NotifyRxBuffer', '');
+            $this->SendDebug('CHNOTIFY', 'Client Socket noch nicht aktiv -> neuer Versuch in 10 s', 0);
+            $this->SetTimerInterval('NotifyTimer', 10000);
             return;
         }
 
-        $this->SendDebug('CHNOTIFY RX',json_encode($data,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),0);
-        $max=max(1,min(4,$this->ReadPropertyInteger('Channels')));
-        for($channel=1;$channel<=$max;$channel++){
-            $chState=$this->ExtractChannelState($data,$channel);
-            if($chState===null) continue;
-            $raw=$this->FindNumericValue($chState,['val','value','state']);
-            if($raw===null) continue;
-            $value=(int)round($raw);
-            $type=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
-            $this->SendDebug('CHNOTIFY EVENT','ch'.$channel.'='.$value.' | '.$type,0);
-            if(in_array($type,['shutter','awning'],true)){
-                $this->ProcessMotorNotify($channel,$value);
-            }elseif($type==='light'){
-                $this->SetValueIfChanged('Ch'.$channel.'Switch',$value>0);
-            }elseif($type==='dimmer'){
-                $this->SetValueIfChanged('Ch'.$channel.'DimmerSwitch',$value>0);
+        if ($this->GetBuffer('NotifyPending') === '1') {
+            // Longpoll läuft bereits. Der nächste Tick wird von ReceiveData gesetzt.
+            return;
+        }
+
+        // Snapshot über REST. Damit haben wir nach Start/Reconnect einen definierten Zustand.
+        $state = $this->ReadMotorState();
+        if (!(bool)($state['_notifySynced'] ?? false)) {
+            $scan = $this->HttpXmlGet('/zrap/chscan', 5000);
+            if ($scan === null) {
+                $this->SendDebug('CHNOTIFY', 'chscan fehlgeschlagen -> neuer Versuch in 10 s', 0);
+                $this->SetTimerInterval('NotifyTimer', 10000);
+                return;
+            }
+            $this->ApplyChannelStates($scan, 'chscan/notify-sync');
+            $state['_notifySynced'] = true;
+            $this->WriteMotorState($state);
+            $this->SendDebug('CHNOTIFY', 'chscan OK -> Longpoll starten', 0);
+        }
+
+        $request = "GET /zrap/chnotify HTTP/1.1\r\n" .
+                   "Host: zeptrion\r\n" .
+                   "Accept: application/xml,text/xml,*/*\r\n" .
+                   "Cache-Control: no-cache\r\n" .
+                   "Connection: keep-alive\r\n\r\n";
+
+        $this->SetBuffer('NotifyRxBuffer', '');
+        $this->SetBuffer('NotifyPending', '1');
+        $ok = $this->SendDataToParent(json_encode([
+            'DataID' => '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}',
+            'Buffer' => $request
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+        if ($ok === false) {
+            $this->SetBuffer('NotifyPending', '0');
+            $state = $this->ReadMotorState();
+            $state['_notifySynced'] = false;
+            $this->WriteMotorState($state);
+            $this->SendDebug('CHNOTIFY', 'Senden fehlgeschlagen -> Recovery in 10 s', 0);
+            $this->SetTimerInterval('NotifyTimer', 10000);
+            return;
+        }
+        $this->SendDebug('CHNOTIFY', 'Longpoll aktiv', 0);
+    }
+
+    public function ReceiveData($JSONString): void
+    {
+        $data = json_decode($JSONString, true);
+        if (!is_array($data) || !isset($data['Buffer']) || $data['Buffer'] === '') {
+            return;
+        }
+
+        $buffer = $this->GetBuffer('NotifyRxBuffer') . (string)$data['Buffer'];
+        while (true) {
+            $response = $this->ExtractNotifyHttpResponse($buffer);
+            if ($response === null) {
+                break;
+            }
+            $buffer = $response['rest'];
+            $this->SetBuffer('NotifyPending', '0');
+
+            $status = (int)$response['status'];
+            if ($status !== 200) {
+                $this->SendDebug('CHNOTIFY', 'HTTP ' . $status . ' -> Recovery', 0);
+                $state = $this->ReadMotorState();
+                $state['_notifySynced'] = false;
+                $this->WriteMotorState($state);
+                $this->SetTimerInterval('NotifyTimer', 10000);
+                continue;
+            }
+
+            $body = trim((string)$response['body']);
+            $this->SendDebug('CHNOTIFY RX', $body, 0);
+            $xml = @simplexml_load_string($body);
+            if ($xml !== false) {
+                $json = json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $parsed = json_decode((string)$json, true);
+                if (is_array($parsed)) {
+                    $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+                    for ($channel = 1; $channel <= $max; $channel++) {
+                        $chState = $this->ExtractChannelState($parsed, $channel);
+                        if ($chState === null) continue;
+                        $raw = $this->FindNumericValue($chState, ['val', 'value', 'state']);
+                        if ($raw === null) continue;
+                        $value = (int)round($raw);
+                        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+                        $this->SendDebug('CHNOTIFY EVENT', 'ch' . $channel . '=' . $value . ' | ' . $type, 0);
+                        if (in_array($type, ['shutter', 'awning'], true)) {
+                            $this->ProcessMotorNotify($channel, $value);
+                        } elseif ($type === 'light') {
+                            $this->SetValueIfChanged('Ch' . $channel . 'Switch', $value > 0);
+                        } elseif ($type === 'dimmer') {
+                            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $value > 0);
+                        }
+                    }
+                }
+            }
+
+            // Exactly one longpoll at a time. Immediately arm the next one.
+            $this->SetTimerInterval('NotifyTimer', 100);
+        }
+        $this->SetBuffer('NotifyRxBuffer', $buffer);
+    }
+
+    private function ExtractNotifyHttpResponse(string $buffer): ?array
+    {
+        $headerEnd = strpos($buffer, "\r\n\r\n");
+        if ($headerEnd === false) return null;
+        $header = substr($buffer, 0, $headerEnd);
+        $bodyStart = $headerEnd + 4;
+        $lines = explode("\r\n", $header);
+        $statusLine = array_shift($lines);
+        $status = 0;
+        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/', (string)$statusLine, $m)) {
+            $status = (int)$m[1];
+        }
+        $headers = [];
+        foreach ($lines as $line) {
+            $p = strpos($line, ':');
+            if ($p !== false) {
+                $headers[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
             }
         }
-        $this->SetTimerInterval('NotifyTimer',100);
+        if (isset($headers['content-length'])) {
+            $length = (int)$headers['content-length'];
+            if (strlen($buffer) < $bodyStart + $length) return null;
+            return [
+                'status' => $status,
+                'body' => substr($buffer, $bodyStart, $length),
+                'rest' => substr($buffer, $bodyStart + $length)
+            ];
+        }
+        $tag = '</chnotify>';
+        $p = strpos($buffer, $tag, $bodyStart);
+        if ($p === false) return null;
+        $end = $p + strlen($tag);
+        return [
+            'status' => $status,
+            'body' => substr($buffer, $bodyStart, $end - $bodyStart),
+            'rest' => substr($buffer, $end)
+        ];
     }
 
     public function StartTravelLearning(int $Channel): string
