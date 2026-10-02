@@ -13,6 +13,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterAttributeString('ReceiveBuffer', '');
         $this->RegisterAttributeBoolean('NotifyPending', false);
+        $this->RegisterAttributeInteger('RegisteredParentID', 0);
         $this->RegisterTimer('Recovery', 0, 'ZEPADT_Recovery($_IPS[\'TARGET\']);');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterVariableInteger('Ch' . $channel . 'Value', 'Kanal ' . $channel, '~Intensity.100', $channel * 10);
@@ -30,7 +31,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             'elements' => [
                 ['type' => 'ValidationTextBox', 'name' => 'Host', 'caption' => 'IP-Adresse / Hostname'],
                 ['type' => 'NumberSpinner', 'name' => 'Channels', 'caption' => 'Kanäle', 'minimum' => 1, 'maximum' => 4],
-                ['type' => 'Label', 'caption' => 'Normalbetrieb: dauerhaftes chnotify. Ist der Client Socket getrennt, wird alle 10 Sekunden per chscan geprüft. Sobald das Gerät wieder erreichbar und der Socket verbunden ist, startet chnotify wieder.']
+                ['type' => 'Label', 'caption' => 'Normalbetrieb: dauerhaftes chnotify. Auf Statusänderungen des Client Sockets wird sofort reagiert. Der 10-Sekunden-Timer dient nur als Recovery-Fallback.']
             ],
             'actions' => [
                 ['type' => 'Button', 'caption' => 'chscan jetzt lesen', 'onClick' => 'echo ZEPADT_Scan($id);'],
@@ -52,16 +53,29 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
         $this->SetTimerInterval('Recovery', 0);
+
+        $oldParentID = $this->ReadAttributeInteger('RegisteredParentID');
+        if ($oldParentID > 0 && IPS_InstanceExists($oldParentID)) {
+            $this->UnregisterMessage($oldParentID, IM_CHANGESTATUS);
+        }
+
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
+            $this->WriteAttributeInteger('RegisteredParentID', 0);
             $this->SetStatus(201);
             return;
         }
+
         $parentID = $this->GetParentID();
         if ($parentID <= 0) {
+            $this->WriteAttributeInteger('RegisteredParentID', 0);
             $this->SetStatus(202);
             return;
         }
+
+        $this->RegisterMessage($parentID, IM_CHANGESTATUS);
+        $this->WriteAttributeInteger('RegisteredParentID', $parentID);
+
         $parentConfig = json_decode(IPS_GetConfiguration($parentID), true);
         $needsApply = !is_array($parentConfig)
             || (string)($parentConfig['Host'] ?? '') !== $host
@@ -73,12 +87,29 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             IPS_SetProperty($parentID, 'Open', true);
             IPS_ApplyChanges($parentID);
         }
+
         if (!$this->IsParentConnected()) {
             $this->StartRecovery('Client Socket ist noch nicht verbunden');
             return;
         }
-        $this->SetStatus(102);
-        $this->EnsureNotify();
+
+        $this->OnParentConnected();
+    }
+
+    public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
+    {
+        parent::MessageSink($TimeStamp, $SenderID, $Message, $Data);
+        if ($Message !== IM_CHANGESTATUS || $SenderID !== $this->GetParentID()) return;
+
+        $status = isset($Data[0]) ? (int)$Data[0] : 0;
+        $this->SendDebug('Client Socket', 'Statusänderung auf ' . $status, 0);
+
+        if ($status === 102) {
+            $this->OnParentConnected();
+            return;
+        }
+
+        $this->StartRecovery('Client Socket Status ' . $status);
     }
 
     public function ReceiveData(string $JSONString): string
@@ -100,8 +131,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             $this->SetStatus(102);
             $this->EnsureNotify();
         } else {
-            $this->SendDebug('chNotify HTTP', 'Status ' . (int)$response['status'], 0);
-            $this->StartRecovery('HTTP ' . (int)$response['status']);
+            $this->StartRecovery('chnotify HTTP ' . (int)$response['status']);
         }
         return '';
     }
@@ -133,22 +163,20 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
 
     public function RestartNotify(): void
     {
-        $this->SetTimerInterval('Recovery', 0);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
         if (!$this->IsParentConnected()) {
             $this->StartRecovery('Client Socket ist nicht verbunden');
             return;
         }
-        $this->SetStatus(102);
-        $this->EnsureNotify();
+        $this->OnParentConnected();
     }
 
     public function Recovery(): void
     {
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') return;
-        $this->SendDebug('Recovery', 'Prüfe Gerät per chscan', 0);
+        $this->SendDebug('Recovery', 'Fallback-Prüfung per chscan', 0);
         $result = $this->HttpRequest('GET', '/zrap/chscan');
         if (!$result['success']) {
             $this->SendDebug('Recovery', 'chscan fehlgeschlagen: ' . $result['error'], 0);
@@ -156,15 +184,10 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         }
         $this->ApplyXmlChannelValues($result['body']);
         if (!$this->IsParentConnected()) {
-            $this->SendDebug('Recovery', 'Gerät erreichbar, Client Socket aber noch nicht verbunden', 0);
+            $this->SendDebug('Recovery', 'Gerät erreichbar, Client Socket noch nicht verbunden', 0);
             return;
         }
-        $this->SendDebug('Recovery', 'Client Socket wieder verbunden - starte chnotify', 0);
-        $this->SetTimerInterval('Recovery', 0);
-        $this->WriteAttributeString('ReceiveBuffer', '');
-        $this->WriteAttributeBoolean('NotifyPending', false);
-        $this->SetStatus(102);
-        $this->EnsureNotify();
+        $this->OnParentConnected(false);
     }
 
     public function Scan(): string
@@ -185,6 +208,27 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $result = $this->HttpRequest('POST', '/zrap/chctrl/ch' . $Channel, ['cmd' => $command]);
         if ($result['success']) $this->SetValue('Ch' . $Channel . 'Value', $value);
         return $result['success'];
+    }
+
+    private function OnParentConnected(bool $doScan = true): void
+    {
+        if (!$this->IsParentConnected()) return;
+        $this->SendDebug('Client Socket', 'Verbunden - Wiederanlauf', 0);
+        $this->SetTimerInterval('Recovery', 0);
+        $this->WriteAttributeString('ReceiveBuffer', '');
+        $this->WriteAttributeBoolean('NotifyPending', false);
+
+        if ($doScan) {
+            $scan = $this->HttpRequest('GET', '/zrap/chscan');
+            if (!$scan['success']) {
+                $this->StartRecovery('chscan beim Wiederanlauf fehlgeschlagen: ' . $scan['error']);
+                return;
+            }
+            $this->ApplyXmlChannelValues($scan['body']);
+        }
+
+        $this->SetStatus(102);
+        $this->EnsureNotify();
     }
 
     private function GetParentID(): int
