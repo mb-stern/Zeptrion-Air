@@ -30,7 +30,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             'elements' => [
                 ['type' => 'ValidationTextBox', 'name' => 'Host', 'caption' => 'IP-Adresse / Hostname'],
                 ['type' => 'NumberSpinner', 'name' => 'Channels', 'caption' => 'Kanäle', 'minimum' => 1, 'maximum' => 4],
-                ['type' => 'Label', 'caption' => 'Normalbetrieb: dauerhaftes chnotify. Bei Verbindungsfehler wird alle 10 Sekunden per chscan geprüft; nach erfolgreichem chscan wird chnotify wieder gestartet.']
+                ['type' => 'Label', 'caption' => 'Normalbetrieb: dauerhaftes chnotify. Ist der Client Socket getrennt, wird alle 10 Sekunden per chscan geprüft. Sobald das Gerät wieder erreichbar und der Socket verbunden ist, startet chnotify wieder.']
             ],
             'actions' => [
                 ['type' => 'Button', 'caption' => 'chscan jetzt lesen', 'onClick' => 'echo ZEPADT_Scan($id);'],
@@ -38,9 +38,9 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             ],
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
+                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Verbindung unterbrochen - Recovery aktiv'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'Host fehlt'],
-                ['code' => 202, 'icon' => 'error', 'caption' => 'Client Socket fehlt'],
-                ['code' => 203, 'icon' => 'error', 'caption' => 'Verbindung unterbrochen - Recovery aktiv']
+                ['code' => 202, 'icon' => 'error', 'caption' => 'Client Socket fehlt']
             ]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
@@ -57,9 +57,8 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             $this->SetStatus(201);
             return;
         }
-        $instance = IPS_GetInstance($this->InstanceID);
-        $parentID = (int)($instance['ConnectionID'] ?? 0);
-        if ($parentID <= 0 || !IPS_InstanceExists($parentID)) {
+        $parentID = $this->GetParentID();
+        if ($parentID <= 0) {
             $this->SetStatus(202);
             return;
         }
@@ -73,6 +72,10 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             IPS_SetProperty($parentID, 'Port', 80);
             IPS_SetProperty($parentID, 'Open', true);
             IPS_ApplyChanges($parentID);
+        }
+        if (!$this->IsParentConnected()) {
+            $this->StartRecovery('Client Socket ist noch nicht verbunden');
+            return;
         }
         $this->SetStatus(102);
         $this->EnsureNotify();
@@ -108,6 +111,10 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         if ($this->ReadAttributeBoolean('NotifyPending')) return;
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') return;
+        if (!$this->IsParentConnected()) {
+            $this->StartRecovery('Client Socket ist nicht verbunden');
+            return;
+        }
         $request = "GET /zrap/chnotify HTTP/1.1\r\n"
             . 'Host: ' . $host . "\r\n"
             . "Accept: application/xml,text/xml,*/*\r\n"
@@ -115,11 +122,12 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $payload = json_encode(['DataID' => self::TX_DATA_ID, 'Buffer' => $request], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', true);
-        $result = $this->SendDataToParent((string)$payload);
-        $this->SendDebug('chNotify TX', 'GET /zrap/chnotify', 0);
-        if ($result === false) {
+        try {
+            $this->SendDataToParent((string)$payload);
+            $this->SendDebug('chNotify TX', 'GET /zrap/chnotify', 0);
+        } catch (Throwable $e) {
             $this->WriteAttributeBoolean('NotifyPending', false);
-            $this->StartRecovery('SendDataToParent fehlgeschlagen');
+            $this->StartRecovery('Senden fehlgeschlagen: ' . $e->getMessage());
         }
     }
 
@@ -128,6 +136,10 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->SetTimerInterval('Recovery', 0);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
+        if (!$this->IsParentConnected()) {
+            $this->StartRecovery('Client Socket ist nicht verbunden');
+            return;
+        }
         $this->SetStatus(102);
         $this->EnsureNotify();
     }
@@ -136,14 +148,18 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     {
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') return;
-        $this->SendDebug('Recovery', 'Prüfe Verbindung per chscan', 0);
+        $this->SendDebug('Recovery', 'Prüfe Gerät per chscan', 0);
         $result = $this->HttpRequest('GET', '/zrap/chscan');
         if (!$result['success']) {
             $this->SendDebug('Recovery', 'chscan fehlgeschlagen: ' . $result['error'], 0);
             return;
         }
         $this->ApplyXmlChannelValues($result['body']);
-        $this->SendDebug('Recovery', 'Verbindung wieder da - starte chnotify', 0);
+        if (!$this->IsParentConnected()) {
+            $this->SendDebug('Recovery', 'Gerät erreichbar, Client Socket aber noch nicht verbunden', 0);
+            return;
+        }
+        $this->SendDebug('Recovery', 'Client Socket wieder verbunden - starte chnotify', 0);
         $this->SetTimerInterval('Recovery', 0);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
@@ -171,12 +187,27 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         return $result['success'];
     }
 
+    private function GetParentID(): int
+    {
+        $instance = IPS_GetInstance($this->InstanceID);
+        $parentID = (int)($instance['ConnectionID'] ?? 0);
+        return ($parentID > 0 && IPS_InstanceExists($parentID)) ? $parentID : 0;
+    }
+
+    private function IsParentConnected(): bool
+    {
+        $parentID = $this->GetParentID();
+        if ($parentID <= 0) return false;
+        $parent = IPS_GetInstance($parentID);
+        return (int)($parent['InstanceStatus'] ?? 0) === 102;
+    }
+
     private function StartRecovery(string $reason): void
     {
         $this->SendDebug('Recovery', 'Aktiviert: ' . $reason, 0);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
-        $this->SetStatus(203);
+        $this->SetStatus(104);
         $this->SetTimerInterval('Recovery', 10000);
     }
 
