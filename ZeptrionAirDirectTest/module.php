@@ -13,6 +13,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterAttributeString('ReceiveBuffer', '');
         $this->RegisterAttributeBoolean('NotifyPending', false);
+        $this->RegisterTimer('Recovery', 0, 'ZEPADT_Recovery($_IPS[\'TARGET\']);');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterVariableInteger('Ch' . $channel . 'Value', 'Kanal ' . $channel, '~Intensity.100', $channel * 10);
         }
@@ -29,7 +30,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             'elements' => [
                 ['type' => 'ValidationTextBox', 'name' => 'Host', 'caption' => 'IP-Adresse / Hostname'],
                 ['type' => 'NumberSpinner', 'name' => 'Channels', 'caption' => 'Kanäle', 'minimum' => 1, 'maximum' => 4],
-                ['type' => 'Label', 'caption' => 'Testaufbau: eigener dauerhaft geöffneter Client Socket pro zeptrionAIR-Gerät. Nach jeder chnotify-Antwort wird sofort die nächste Anfrage auf derselben TCP-Verbindung gesendet.']
+                ['type' => 'Label', 'caption' => 'Normalbetrieb: dauerhaftes chnotify. Bei Verbindungsfehler wird alle 10 Sekunden per chscan geprüft; nach erfolgreichem chscan wird chnotify wieder gestartet.']
             ],
             'actions' => [
                 ['type' => 'Button', 'caption' => 'chscan jetzt lesen', 'onClick' => 'echo ZEPADT_Scan($id);'],
@@ -38,7 +39,8 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'Host fehlt'],
-                ['code' => 202, 'icon' => 'error', 'caption' => 'Client Socket fehlt']
+                ['code' => 202, 'icon' => 'error', 'caption' => 'Client Socket fehlt'],
+                ['code' => 203, 'icon' => 'error', 'caption' => 'Verbindung unterbrochen - Recovery aktiv']
             ]
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
@@ -49,34 +51,29 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->SetReceiveDataFilter('.*');
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
-
+        $this->SetTimerInterval('Recovery', 0);
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
             $this->SetStatus(201);
             return;
         }
-
         $instance = IPS_GetInstance($this->InstanceID);
         $parentID = (int)($instance['ConnectionID'] ?? 0);
         if ($parentID <= 0 || !IPS_InstanceExists($parentID)) {
             $this->SetStatus(202);
             return;
         }
-
-        // Client Socket einmal konfigurieren und dauerhaft geöffnet lassen.
         $parentConfig = json_decode(IPS_GetConfiguration($parentID), true);
         $needsApply = !is_array($parentConfig)
             || (string)($parentConfig['Host'] ?? '') !== $host
             || (int)($parentConfig['Port'] ?? 0) !== 80
             || !((bool)($parentConfig['Open'] ?? false));
-
         if ($needsApply) {
             IPS_SetProperty($parentID, 'Host', $host);
             IPS_SetProperty($parentID, 'Port', 80);
             IPS_SetProperty($parentID, 'Open', true);
             IPS_ApplyChanges($parentID);
         }
-
         $this->SetStatus(102);
         $this->EnsureNotify();
     }
@@ -87,26 +84,22 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         if (!is_array($data)) return '';
         $chunk = (string)($data['Buffer'] ?? '');
         if ($chunk === '') return '';
-
         $buffer = $this->ReadAttributeString('ReceiveBuffer') . $chunk;
         $this->WriteAttributeString('ReceiveBuffer', $buffer);
         $this->SendDebug('chNotify RX', $chunk, 0);
-
         $response = $this->ExtractHttpResponse($buffer);
         if ($response === null) return '';
-
         $this->WriteAttributeString('ReceiveBuffer', (string)$response['rest']);
         $this->WriteAttributeBoolean('NotifyPending', false);
-
         if ((int)$response['status'] >= 200 && (int)$response['status'] < 300) {
             $this->ApplyXmlChannelValues((string)$response['body']);
+            $this->SetTimerInterval('Recovery', 0);
+            $this->SetStatus(102);
+            $this->EnsureNotify();
         } else {
             $this->SendDebug('chNotify HTTP', 'Status ' . (int)$response['status'], 0);
+            $this->StartRecovery('HTTP ' . (int)$response['status']);
         }
-
-        // Laut zApp-API muss nach jeder Antwort sofort ein neues chnotify gestartet werden.
-        // Kein Poll-Timer und kein Socket-Neustart: dieselbe offene TCP-Verbindung wird weiter benutzt.
-        $this->EnsureNotify();
         return '';
     }
 
@@ -115,29 +108,46 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         if ($this->ReadAttributeBoolean('NotifyPending')) return;
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') return;
-
         $request = "GET /zrap/chnotify HTTP/1.1\r\n"
             . 'Host: ' . $host . "\r\n"
             . "Accept: application/xml,text/xml,*/*\r\n"
-            . "Connection: keep-alive\r\n"
-            . "Keep-Alive: timeout=60, max=1000\r\n"
-            . "\r\n";
-
-        $payload = json_encode([
-            'DataID' => self::TX_DATA_ID,
-            'Buffer' => $request
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
+            . "Connection: keep-alive\r\n\r\n";
+        $payload = json_encode(['DataID' => self::TX_DATA_ID, 'Buffer' => $request], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', true);
-        $this->SendDataToParent((string)$payload);
-        $this->SendDebug('chNotify TX', 'GET /zrap/chnotify (keep-alive)', 0);
+        $result = $this->SendDataToParent((string)$payload);
+        $this->SendDebug('chNotify TX', 'GET /zrap/chnotify', 0);
+        if ($result === false) {
+            $this->WriteAttributeBoolean('NotifyPending', false);
+            $this->StartRecovery('SendDataToParent fehlgeschlagen');
+        }
     }
 
     public function RestartNotify(): void
     {
+        $this->SetTimerInterval('Recovery', 0);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
+        $this->SetStatus(102);
+        $this->EnsureNotify();
+    }
+
+    public function Recovery(): void
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        if ($host === '') return;
+        $this->SendDebug('Recovery', 'Prüfe Verbindung per chscan', 0);
+        $result = $this->HttpRequest('GET', '/zrap/chscan');
+        if (!$result['success']) {
+            $this->SendDebug('Recovery', 'chscan fehlgeschlagen: ' . $result['error'], 0);
+            return;
+        }
+        $this->ApplyXmlChannelValues($result['body']);
+        $this->SendDebug('Recovery', 'Verbindung wieder da - starte chnotify', 0);
+        $this->SetTimerInterval('Recovery', 0);
+        $this->WriteAttributeString('ReceiveBuffer', '');
+        $this->WriteAttributeBoolean('NotifyPending', false);
+        $this->SetStatus(102);
         $this->EnsureNotify();
     }
 
@@ -159,6 +169,15 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $result = $this->HttpRequest('POST', '/zrap/chctrl/ch' . $Channel, ['cmd' => $command]);
         if ($result['success']) $this->SetValue('Ch' . $Channel . 'Value', $value);
         return $result['success'];
+    }
+
+    private function StartRecovery(string $reason): void
+    {
+        $this->SendDebug('Recovery', 'Aktiviert: ' . $reason, 0);
+        $this->WriteAttributeString('ReceiveBuffer', '');
+        $this->WriteAttributeBoolean('NotifyPending', false);
+        $this->SetStatus(203);
+        $this->SetTimerInterval('Recovery', 10000);
     }
 
     private function HttpRequest(string $method, string $path, ?array $form = null): array
