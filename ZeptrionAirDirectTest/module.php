@@ -3,24 +3,28 @@ declare(strict_types=1);
 
 class ZeptrionAirDirectTest extends IPSModuleStrict
 {
-    private const CLIENT_SOCKET_ID = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
-    private const TX_DATA_ID = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
+    private const TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
+    private const CS = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
 
     public function Create(): void
     {
         parent::Create();
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyInteger('Channels', 2);
-        $this->RegisterAttributeString('ReceiveBuffer', '');
-        $this->RegisterAttributeBoolean('NotifyPending', false);
-        $this->RegisterAttributeInteger('RegisteredParentID', 0);
-        $this->RegisterTimer('Recovery', 0, 'ZEPADT_Recovery($_IPS[\'TARGET\']);');
-        for ($channel = 1; $channel <= 4; $channel++) $this->RegisterVariableInteger('Ch' . $channel . 'Value', 'Kanal ' . $channel, '~Intensity.100', $channel * 10);
+        $this->RegisterPropertyInteger('RecoveryInterval', 10);
+        $this->RegisterTimer('RecoveryTimer', 0, 'ZEPADT_Recovery($_IPS["TARGET"]);');
+        $this->SetBuffer('Buffer', '');
+        $this->SetBuffer('Listening', '0');
+        $this->SetBuffer('Pending', '');
+        $this->SetBuffer('Online', '0');
+        for ($channel = 1; $channel <= 4; $channel++) {
+            $this->RegisterVariableInteger('Ch' . $channel . 'Value', 'Kanal ' . $channel, '~Intensity.100', $channel * 10);
+        }
     }
 
     public function GetCompatibleParents(): string
     {
-        return '{"type":"connect","moduleIDs":["' . self::CLIENT_SOCKET_ID . '"]}';
+        return json_encode(['type' => 'require', 'moduleIDs' => [self::CS]]);
     }
 
     public function GetConfigurationForm(): string
@@ -29,15 +33,17 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             'elements' => [
                 ['type' => 'ValidationTextBox', 'name' => 'Host', 'caption' => 'IP-Adresse / Hostname'],
                 ['type' => 'NumberSpinner', 'name' => 'Channels', 'caption' => 'Kanäle', 'minimum' => 1, 'maximum' => 4],
-                ['type' => 'Label', 'caption' => 'Normalbetrieb: chnotify wie im erfolgreichen Socket-Test. Bei Ausfall Recovery alle 10 Sekunden.']
+                ['type' => 'NumberSpinner', 'name' => 'RecoveryInterval', 'caption' => 'Recovery-Intervall (Sekunden)', 'minimum' => 5, 'maximum' => 300],
+                ['type' => 'Label', 'caption' => 'Kommunikation entspricht dem funktionierenden Chnotify-Test: chscan und chnotify laufen ueber denselben Client Socket.']
             ],
             'actions' => [
-                ['type' => 'Button', 'caption' => 'chscan jetzt lesen', 'onClick' => 'echo ZEPADT_Scan($id);'],
-                ['type' => 'Button', 'caption' => 'chnotify neu starten', 'onClick' => 'ZEPADT_RestartNotify($id);']
+                ['type' => 'Button', 'caption' => 'Listener starten / neu starten', 'onClick' => 'ZEPADT_StartListener($id);'],
+                ['type' => 'Button', 'caption' => 'Listener stoppen', 'onClick' => 'ZEPADT_StopListener($id);'],
+                ['type' => 'Button', 'caption' => 'Recovery jetzt testen', 'onClick' => 'ZEPADT_ForceRecovery($id);']
             ],
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
-                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Verbindung unterbrochen - Recovery aktiv'],
+                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Recovery aktiv'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'Host fehlt'],
                 ['code' => 202, 'icon' => 'error', 'caption' => 'Client Socket fehlt']
             ]
@@ -48,146 +54,266 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     {
         parent::ApplyChanges();
         $this->SetReceiveDataFilter('.*');
-        $this->ResetNotifyState();
-        $this->SetTimerInterval('Recovery', 0);
-        $oldParentID = $this->ReadAttributeInteger('RegisteredParentID');
-        if ($oldParentID > 0 && IPS_InstanceExists($oldParentID)) $this->UnregisterMessage($oldParentID, IM_CHANGESTATUS);
+        $this->SetBuffer('Buffer', '');
+        $this->SetBuffer('Pending', '');
+        $this->SetBuffer('Online', '0');
+        $this->SetBuffer('Listening', '1');
+        $this->SetTimerInterval('RecoveryTimer', 0);
+
         $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') { $this->WriteAttributeInteger('RegisteredParentID', 0); $this->SetStatus(201); return; }
-        $parentID = $this->GetParentID();
-        if ($parentID <= 0) { $this->WriteAttributeInteger('RegisteredParentID', 0); $this->SetStatus(202); return; }
-        $this->RegisterMessage($parentID, IM_CHANGESTATUS);
-        $this->WriteAttributeInteger('RegisteredParentID', $parentID);
-        $cfg = json_decode(IPS_GetConfiguration($parentID), true);
-        if (!is_array($cfg) || (string)($cfg['Host'] ?? '') !== $host || (int)($cfg['Port'] ?? 0) !== 80 || !((bool)($cfg['Open'] ?? false))) {
-            IPS_SetProperty($parentID, 'Host', $host); IPS_SetProperty($parentID, 'Port', 80); IPS_SetProperty($parentID, 'Open', true); IPS_ApplyChanges($parentID);
+        if ($host === '') {
+            $this->SetStatus(201);
+            return;
         }
-        if ($this->IsParentConnected()) $this->StartNotify(); else $this->StartRecovery('Client Socket ist noch nicht verbunden');
+
+        $socketID = $this->GetSocketID();
+        if ($socketID <= 0 || !IPS_InstanceExists($socketID)) {
+            $this->SetStatus(202);
+            return;
+        }
+
+        $cfg = json_decode(IPS_GetConfiguration($socketID), true);
+        if (!is_array($cfg) || (string)($cfg['Host'] ?? '') !== $host || (int)($cfg['Port'] ?? 0) !== 80 || !((bool)($cfg['Open'] ?? false))) {
+            IPS_SetProperty($socketID, 'Host', $host);
+            IPS_SetProperty($socketID, 'Port', 80);
+            IPS_SetProperty($socketID, 'Open', true);
+            IPS_ApplyChanges($socketID);
+        }
+
+        if ($this->HasActiveParent()) {
+            $this->StartListener();
+        } else {
+            $this->EnterRecovery('Parent nicht aktiv');
+        }
     }
 
-    public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
+    public function StartListener(): bool
     {
-        parent::MessageSink($TimeStamp, $SenderID, $Message, $Data);
-        if ($Message !== IM_CHANGESTATUS || $SenderID !== $this->GetParentID()) return;
-        $status = isset($Data[0]) ? (int)$Data[0] : 0;
-        $this->SendDebug('Client Socket', 'Statusänderung auf ' . $status, 0);
-        if ($status === 102) { $this->ResetNotifyState(); $this->StartNotify(); } else $this->StartRecovery('Client Socket Status ' . $status);
+        $this->SetBuffer('Listening', '1');
+        $this->SetBuffer('Buffer', '');
+        $this->SetBuffer('Pending', '');
+        if (!$this->HasActiveParent()) {
+            $this->EnterRecovery('Parent nicht aktiv');
+            return false;
+        }
+        $this->SetTimerInterval('RecoveryTimer', 0);
+        $this->SetStatus(102);
+        return $this->SendRequest('/zrap/chscan', 'scan');
     }
 
-    public function ReceiveData(string $JSONString): string
+    public function StopListener(): bool
     {
-        $data = json_decode($JSONString, true);
-        if (!is_array($data)) return '';
-        $chunk = (string)($data['Buffer'] ?? '');
-        if ($chunk === '') return '';
-        if ((strlen($chunk) % 2) === 0 && ctype_xdigit($chunk)) { $decoded = hex2bin($chunk); if ($decoded !== false) $chunk = $decoded; }
-        $this->SendDebug('chNotify RX', $chunk, 0);
-        $buffer = $this->ReadAttributeString('ReceiveBuffer') . $chunk;
-        $this->WriteAttributeString('ReceiveBuffer', $buffer);
-        $response = $this->ExtractHttpResponse($buffer);
-        if ($response === null) return '';
-        $this->WriteAttributeString('ReceiveBuffer', (string)$response['rest']);
-        $this->WriteAttributeBoolean('NotifyPending', false);
-        if ((int)$response['status'] >= 200 && (int)$response['status'] < 300) {
-            $this->ApplyXmlChannelValues((string)$response['body']);
-            $this->SetTimerInterval('Recovery', 0); $this->SetStatus(102); $this->EnsureNotify();
-        } else $this->StartRecovery('chnotify HTTP ' . (int)$response['status']);
-        return '';
+        $this->SetBuffer('Listening', '0');
+        $this->SetBuffer('Pending', '');
+        $this->SetBuffer('Buffer', '');
+        $this->SetBuffer('Online', '0');
+        $this->SetTimerInterval('RecoveryTimer', 0);
+        $this->SendDebug('STATE', 'Listener gestoppt', 0);
+        return true;
     }
 
-    public function EnsureNotify(): void
+    public function ForceRecovery(): bool
     {
-        if ($this->ReadAttributeBoolean('NotifyPending')) return;
-        if (!$this->IsParentConnected()) { $this->StartRecovery('Client Socket ist nicht verbunden'); return; }
-        $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') return;
-        $request = "GET /zrap/chnotify HTTP/1.1\r\n" . 'Host: ' . $host . "\r\n" . "Connection: close\r\n\r\n";
-        $payload = json_encode(['DataID' => self::TX_DATA_ID, 'Buffer' => $request], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $this->WriteAttributeString('ReceiveBuffer', ''); $this->WriteAttributeBoolean('NotifyPending', true);
-        try { $this->SendDataToParent((string)$payload); $this->SendDebug('chNotify TX', 'GET /zrap/chnotify | Connection: close', 0); }
-        catch (Throwable $e) { $this->WriteAttributeBoolean('NotifyPending', false); $this->StartRecovery('Senden fehlgeschlagen: ' . $e->getMessage()); }
-    }
-
-    public function RestartNotify(): void
-    {
-        $this->ResetNotifyState();
-        if ($this->IsParentConnected()) $this->StartNotify(); else $this->StartRecovery('Client Socket ist nicht verbunden');
+        if ($this->GetBuffer('Listening') !== '1') {
+            $this->SetBuffer('Listening', '1');
+        }
+        $this->EnterRecovery('Recovery manuell ausgeloest');
+        return true;
     }
 
     public function Recovery(): void
     {
-        $this->SendDebug('Recovery', 'Fallback-Prüfung per chscan', 0);
-        $result = $this->HttpRequest('GET', '/zrap/chscan');
-        if (!$result['success']) { $this->SendDebug('Recovery', 'chscan fehlgeschlagen: ' . $result['error'], 0); return; }
-        $this->ApplyXmlChannelValues($result['body']);
-        if (!$this->IsParentConnected()) { $this->SendDebug('Recovery', 'Gerät erreichbar, Client Socket noch nicht verbunden', 0); return; }
-        $this->ResetNotifyState(); $this->StartNotify(false);
-    }
-
-    public function Scan(): string
-    {
-        $result = $this->HttpRequest('GET', '/zrap/chscan');
-        if (!$result['success']) return 'chscan fehlgeschlagen: ' . $result['error'];
-        $this->ApplyXmlChannelValues($result['body']); return 'chscan erfolgreich';
-    }
-
-    public function SetChannel(int $Channel, int $Value): bool
-    {
-        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        if ($Channel < 1 || $Channel > $max) throw new InvalidArgumentException('Ungültiger Kanal');
-        $value = max(0, min(100, $Value)); $command = $value === 0 ? 'off' : ($value === 100 ? 'on' : null);
-        if ($command === null) throw new InvalidArgumentException('Der Direkt-Test schaltet vorerst nur 0 oder 100 Prozent.');
-        $result = $this->HttpRequest('POST', '/zrap/chctrl/ch' . $Channel, ['cmd' => $command]);
-        if ($result['success']) $this->SetValue('Ch' . $Channel . 'Value', $value); return $result['success'];
-    }
-
-    private function StartNotify(bool $doScan = true): void
-    {
-        if (!$this->IsParentConnected()) { $this->StartRecovery('Client Socket ist nicht verbunden'); return; }
-        $this->SetTimerInterval('Recovery', 0);
-        if ($doScan) {
-            $scan = $this->HttpRequest('GET', '/zrap/chscan');
-            if (!$scan['success']) { $this->StartRecovery('chscan vor chnotify fehlgeschlagen: ' . $scan['error']); return; }
-            $this->ApplyXmlChannelValues($scan['body']);
+        if ($this->GetBuffer('Listening') !== '1') {
+            $this->SetTimerInterval('RecoveryTimer', 0);
+            return;
         }
-        $this->SetStatus(102); $this->EnsureNotify();
+
+        if (!$this->HasActiveParent()) {
+            $this->SendDebug('RECOVERY', 'Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten', 0);
+            return;
+        }
+
+        if ($this->GetBuffer('Pending') !== '') {
+            $this->SetBuffer('Pending', '');
+            $this->SetBuffer('Buffer', '');
+        }
+
+        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
+        $this->SendRequest('/zrap/chscan', 'scan');
     }
 
-    private function ResetNotifyState(): void { $this->WriteAttributeString('ReceiveBuffer', ''); $this->WriteAttributeBoolean('NotifyPending', false); }
-    private function GetParentID(): int { $i = IPS_GetInstance($this->InstanceID); $id = (int)($i['ConnectionID'] ?? 0); return ($id > 0 && IPS_InstanceExists($id)) ? $id : 0; }
-    private function IsParentConnected(): bool { $id = $this->GetParentID(); if ($id <= 0) return false; $p = IPS_GetInstance($id); return (int)($p['InstanceStatus'] ?? 0) === 102; }
-    private function StartRecovery(string $reason): void { $this->SendDebug('Recovery', 'Aktiviert: ' . $reason, 0); $this->ResetNotifyState(); $this->SetStatus(104); $this->SetTimerInterval('Recovery', 10000); }
-
-    private function HttpRequest(string $method, string $path, ?array $form = null): array
+    public function ReceiveData(string $JSONString): string
     {
-        $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') return ['success' => false, 'body' => '', 'error' => 'Host fehlt'];
-        $curl = curl_init(); if ($curl === false) return ['success' => false, 'body' => '', 'error' => 'cURL konnte nicht initialisiert werden'];
-        $options = [CURLOPT_URL => 'http://' . $host . $path, CURLOPT_RETURNTRANSFER => true, CURLOPT_CONNECTTIMEOUT_MS => 1500, CURLOPT_TIMEOUT_MS => 5000, CURLOPT_FOLLOWLOCATION => false, CURLOPT_CUSTOMREQUEST => strtoupper($method), CURLOPT_HTTPHEADER => ['Connection: close']];
-        if ($form !== null) { $options[CURLOPT_POSTFIELDS] = http_build_query($form); $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/x-www-form-urlencoded', 'Connection: close']; }
-        curl_setopt_array($curl, $options); $body = curl_exec($curl); $error = curl_error($curl); $code = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE); curl_close($curl);
-        return ['success' => $body !== false && $error === '' && $code >= 200 && $code < 400, 'body' => is_string($body) ? $body : '', 'error' => $error !== '' ? $error : ('HTTP ' . $code)];
+        $d = json_decode($JSONString, true);
+        if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer'] === '') {
+            return '';
+        }
+
+        // Wie im funktionierenden Test: Buffer unveraendert uebernehmen.
+        $buffer = $this->GetBuffer('Buffer') . (string)$d['Buffer'];
+
+        while (true) {
+            $r = $this->Extract($buffer);
+            if ($r === null) {
+                break;
+            }
+            $buffer = $r['rest'];
+
+            $kind = $this->GetBuffer('Pending');
+            $this->SetBuffer('Pending', '');
+            $this->SetBuffer('Online', '1');
+            $this->SendDebug('HTTP', (string)$r['status'] . ' ' . $kind, 0);
+
+            if ($r['status'] !== 200 && $r['status'] !== 302) {
+                $this->EnterRecovery('HTTP Status ' . $r['status']);
+                continue;
+            }
+
+            if ($kind === 'scan') {
+                $this->ProcessScan($r['body']);
+                $this->SetTimerInterval('RecoveryTimer', 0);
+                $this->SetStatus(102);
+                $this->SendDebug('RECOVERY', 'chscan OK -> Recovery AUS', 0);
+                if ($this->GetBuffer('Listening') === '1') {
+                    $this->SendDebug('STATE', 'chscan OK -> chnotify aktivieren', 0);
+                }
+            } elseif ($kind === 'notify') {
+                $this->ProcessNotify($r['body']);
+            }
+
+            if ($this->GetBuffer('Listening') === '1' && $this->GetBuffer('Pending') === '') {
+                $this->SendRequest('/zrap/chnotify', 'notify');
+            }
+        }
+
+        $this->SetBuffer('Buffer', $buffer);
+        return '';
     }
 
-    private function ApplyXmlChannelValues(string $xmlText): void
+    private function EnterRecovery(string $reason): void
     {
-        $start = strpos($xmlText, '<?xml'); if ($start !== false) $xmlText = substr($xmlText, $start);
-        libxml_use_internal_errors(true); $xml = simplexml_load_string(trim($xmlText), 'SimpleXMLElement', LIBXML_NOCDATA);
-        if ($xml === false) { libxml_clear_errors(); $this->SendDebug('XML', 'Ungültige Antwort: ' . $xmlText, 0); return; }
+        $this->SetBuffer('Online', '0');
+        $this->SetBuffer('Pending', '');
+        $this->SetBuffer('Buffer', '');
+        $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
+        $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
+        $this->SetStatus(104);
+        $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s chscan versuchen', 0);
+    }
+
+    private function SendRequest(string $path, string $kind): bool
+    {
+        if ($this->GetBuffer('Listening') !== '1' || !$this->HasActiveParent()) {
+            $this->EnterRecovery('Senden nicht moeglich');
+            return false;
+        }
+        if ($this->GetBuffer('Pending') !== '') {
+            return false;
+        }
+
+        // Exakt aus dem funktionierenden ZeptrionChnotifyTest.
+        $q = "GET " . $path . " HTTP/1.1\r\n" .
+             "Host: zeptrion\r\n" .
+             "Accept: application/xml,text/xml,*/*\r\n" .
+             "Cache-Control: no-cache\r\n" .
+             "Connection: keep-alive\r\n\r\n";
+
+        $this->SetBuffer('Pending', $kind);
+        $this->SendDebug('TX', $kind . ' ' . $path, 0);
+        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => $q]));
+
+        if ($ok === false) {
+            $this->SetBuffer('Pending', '');
+            $this->EnterRecovery('SendDataToParent fehlgeschlagen');
+            return false;
+        }
+        return true;
+    }
+
+    private function ProcessScan(string $body): void
+    {
+        $this->SendDebug('CHSCAN RAW', trim($body), 0);
+        $x = @simplexml_load_string(trim($body));
+        if ($x === false) {
+            return;
+        }
         $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        for ($channel = 1; $channel <= $max; $channel++) { $key = 'ch' . $channel; if (!isset($xml->{$key})) continue; $node = $xml->{$key}; $raw = isset($node->val) ? (string)$node->val : (string)$node; if (!is_numeric($raw)) continue; $this->SetValue('Ch' . $channel . 'Value', max(0, min(100, (int)round((float)$raw)))); }
+        foreach ($x->children() as $c => $n) {
+            $v = isset($n->val) ? (string)$n->val : '';
+            $this->SendDebug('SYNC', (string)$c . ' = ' . $v, 0);
+            if (preg_match('/^ch([1-4])$/', (string)$c, $m) && (int)$m[1] <= $max && is_numeric($v)) {
+                $this->SetValue('Ch' . $m[1] . 'Value', max(0, min(100, (int)round((float)$v))));
+            }
+        }
     }
 
-    private function ExtractHttpResponse(string $buffer): ?array
+    private function ProcessNotify(string $body): void
     {
-        $headerEnd = strpos($buffer, "\r\n\r\n"); if ($headerEnd === false) return null;
-        $header = substr($buffer, 0, $headerEnd); $bodyStart = $headerEnd + 4; $status = 0;
-        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/i', $header, $m)) $status = (int)$m[1];
-        $length = null; if (preg_match('/\r\nContent-Length:\s*(\d+)/i', $header, $m)) $length = (int)$m[1];
-        if ($length !== null) { if (strlen($buffer) < $bodyStart + $length) return null; return ['status' => $status, 'body' => substr($buffer, $bodyStart, $length), 'rest' => substr($buffer, $bodyStart + $length)]; }
-        $body = substr($buffer, $bodyStart);
-        foreach (['</chnotify>', '</chscan>'] as $closing) { $end = strpos($body, $closing); if ($end !== false) { $end += strlen($closing); return ['status' => $status, 'body' => substr($body, 0, $end), 'rest' => substr($body, $end)]; } }
-        if ($status >= 400) return ['status' => $status, 'body' => $body, 'rest' => ''];
+        $this->SendDebug('NOTIFY RAW', trim($body), 0);
+        $x = @simplexml_load_string(trim($body));
+        if ($x === false) {
+            return;
+        }
+        $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        foreach ($x->children() as $c => $n) {
+            $v = isset($n->val) ? (string)$n->val : '';
+            $this->SendDebug('EVENT', (string)$c . ' = ' . $v, 0);
+            if (preg_match('/^ch([1-4])$/', (string)$c, $m) && (int)$m[1] <= $max && is_numeric($v)) {
+                $this->SetValue('Ch' . $m[1] . 'Value', max(0, min(100, (int)round((float)$v))));
+            }
+        }
+    }
+
+    private function GetSocketID(): int
+    {
+        $instance = IPS_GetInstance($this->InstanceID);
+        return (int)($instance['ConnectionID'] ?? 0);
+    }
+
+    private function HasActiveParent(): bool
+    {
+        $socketID = $this->GetSocketID();
+        if ($socketID <= 0 || !IPS_InstanceExists($socketID)) {
+            return false;
+        }
+        $socket = IPS_GetInstance($socketID);
+        return (int)($socket['InstanceStatus'] ?? 0) === 102;
+    }
+
+    private function Extract(string $b): ?array
+    {
+        $he = strpos($b, "\r\n\r\n");
+        if ($he === false) return null;
+        $h = substr($b, 0, $he);
+        $bs = $he + 4;
+        $ls = explode("\r\n", $h);
+        $sl = array_shift($ls);
+        $st = 0;
+        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/', (string)$sl, $m)) $st = (int)$m[1];
+
+        $hs = [];
+        foreach ($ls as $l) {
+            $p = strpos($l, ':');
+            if ($p !== false) $hs[strtolower(trim(substr($l, 0, $p)))] = trim(substr($l, $p + 1));
+        }
+
+        if (isset($hs['content-length'])) {
+            $n = (int)$hs['content-length'];
+            if (strlen($b) < $bs + $n) return null;
+            return ['status' => $st, 'body' => substr($b, $bs, $n), 'rest' => substr($b, $bs + $n)];
+        }
+
+        if ($st === 302 || $st === 204) {
+            return ['status' => $st, 'body' => '', 'rest' => substr($b, $bs)];
+        }
+
+        foreach (['</chnotify>', '</chscan>'] as $tag) {
+            $p = strpos($b, $tag, $bs);
+            if ($p !== false) {
+                $e = $p + strlen($tag);
+                return ['status' => $st, 'body' => substr($b, $bs, $e - $bs), 'rest' => substr($b, $e)];
+            }
+        }
         return null;
     }
 }
