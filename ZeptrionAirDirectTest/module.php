@@ -13,7 +13,6 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterAttributeString('ReceiveBuffer', '');
         $this->RegisterAttributeBoolean('NotifyPending', false);
-        $this->RegisterTimer('Watchdog', 0, 'ZEPADT_EnsureNotify($_IPS[\'TARGET\']);');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterVariableInteger('Ch' . $channel . 'Value', 'Kanal ' . $channel, '~Intensity.100', $channel * 10);
         }
@@ -30,7 +29,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             'elements' => [
                 ['type' => 'ValidationTextBox', 'name' => 'Host', 'caption' => 'IP-Adresse / Hostname'],
                 ['type' => 'NumberSpinner', 'name' => 'Channels', 'caption' => 'Kanäle', 'minimum' => 1, 'maximum' => 4],
-                ['type' => 'Label', 'caption' => 'Testaufbau: eigener Client Socket pro zeptrionAIR-Gerät. chnotify läuft direkt über TCP; Steuerbefehle gehen ohne zentralen Splitter direkt per HTTP an das Gerät.']
+                ['type' => 'Label', 'caption' => 'Testaufbau: eigener dauerhaft geöffneter Client Socket pro zeptrionAIR-Gerät. Nach jeder chnotify-Antwort wird sofort die nächste Anfrage auf derselben TCP-Verbindung gesendet.']
             ],
             'actions' => [
                 ['type' => 'Button', 'caption' => 'chscan jetzt lesen', 'onClick' => 'echo ZEPADT_Scan($id);'],
@@ -50,24 +49,34 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->SetReceiveDataFilter('.*');
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', false);
+
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') {
-            $this->SetTimerInterval('Watchdog', 0);
             $this->SetStatus(201);
             return;
         }
+
         $instance = IPS_GetInstance($this->InstanceID);
         $parentID = (int)($instance['ConnectionID'] ?? 0);
         if ($parentID <= 0 || !IPS_InstanceExists($parentID)) {
-            $this->SetTimerInterval('Watchdog', 0);
             $this->SetStatus(202);
             return;
         }
-        @IPS_SetProperty($parentID, 'Host', $host);
-        @IPS_SetProperty($parentID, 'Port', 80);
-        @IPS_SetProperty($parentID, 'Open', true);
-        @IPS_ApplyChanges($parentID);
-        $this->SetTimerInterval('Watchdog', 5000);
+
+        // Client Socket einmal konfigurieren und dauerhaft geöffnet lassen.
+        $parentConfig = json_decode(IPS_GetConfiguration($parentID), true);
+        $needsApply = !is_array($parentConfig)
+            || (string)($parentConfig['Host'] ?? '') !== $host
+            || (int)($parentConfig['Port'] ?? 0) !== 80
+            || !((bool)($parentConfig['Open'] ?? false));
+
+        if ($needsApply) {
+            IPS_SetProperty($parentID, 'Host', $host);
+            IPS_SetProperty($parentID, 'Port', 80);
+            IPS_SetProperty($parentID, 'Open', true);
+            IPS_ApplyChanges($parentID);
+        }
+
         $this->SetStatus(102);
         $this->EnsureNotify();
     }
@@ -78,18 +87,25 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         if (!is_array($data)) return '';
         $chunk = (string)($data['Buffer'] ?? '');
         if ($chunk === '') return '';
+
         $buffer = $this->ReadAttributeString('ReceiveBuffer') . $chunk;
         $this->WriteAttributeString('ReceiveBuffer', $buffer);
         $this->SendDebug('chNotify RX', $chunk, 0);
+
         $response = $this->ExtractHttpResponse($buffer);
         if ($response === null) return '';
+
         $this->WriteAttributeString('ReceiveBuffer', (string)$response['rest']);
         $this->WriteAttributeBoolean('NotifyPending', false);
+
         if ((int)$response['status'] >= 200 && (int)$response['status'] < 300) {
             $this->ApplyXmlChannelValues((string)$response['body']);
         } else {
             $this->SendDebug('chNotify HTTP', 'Status ' . (int)$response['status'], 0);
         }
+
+        // Laut zApp-API muss nach jeder Antwort sofort ein neues chnotify gestartet werden.
+        // Kein Poll-Timer und kein Socket-Neustart: dieselbe offene TCP-Verbindung wird weiter benutzt.
         $this->EnsureNotify();
         return '';
     }
@@ -99,12 +115,23 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         if ($this->ReadAttributeBoolean('NotifyPending')) return;
         $host = trim($this->ReadPropertyString('Host'));
         if ($host === '') return;
-        $request = "GET /zrap/chnotify HTTP/1.1\r\nHost: " . $host . "\r\nAccept: application/xml,text/xml,*/*\r\nConnection: keep-alive\r\n\r\n";
-        $payload = json_encode(['DataID' => self::TX_DATA_ID, 'Buffer' => $request], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $request = "GET /zrap/chnotify HTTP/1.1\r\n"
+            . 'Host: ' . $host . "\r\n"
+            . "Accept: application/xml,text/xml,*/*\r\n"
+            . "Connection: keep-alive\r\n"
+            . "Keep-Alive: timeout=60, max=1000\r\n"
+            . "\r\n";
+
+        $payload = json_encode([
+            'DataID' => self::TX_DATA_ID,
+            'Buffer' => $request
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', true);
         $this->SendDataToParent((string)$payload);
-        $this->SendDebug('chNotify TX', 'GET /zrap/chnotify', 0);
+        $this->SendDebug('chNotify TX', 'GET /zrap/chnotify (keep-alive)', 0);
     }
 
     public function RestartNotify(): void
