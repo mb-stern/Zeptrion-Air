@@ -9,7 +9,6 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     public function Create(): void
     {
         parent::Create();
-        $this->ConnectParent(self::CLIENT_SOCKET_ID);
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyInteger('Channels', 2);
         $this->RegisterAttributeString('ReceiveBuffer', '');
@@ -76,20 +75,14 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     public function ReceiveData(string $JSONString): string
     {
         $data = json_decode($JSONString, true);
-        if (!is_array($data)) {
-            return '';
-        }
+        if (!is_array($data)) return '';
         $chunk = (string)($data['Buffer'] ?? '');
-        if ($chunk === '') {
-            return '';
-        }
+        if ($chunk === '') return '';
         $buffer = $this->ReadAttributeString('ReceiveBuffer') . $chunk;
         $this->WriteAttributeString('ReceiveBuffer', $buffer);
         $this->SendDebug('chNotify RX', $chunk, 0);
         $response = $this->ExtractHttpResponse($buffer);
-        if ($response === null) {
-            return '';
-        }
+        if ($response === null) return '';
         $this->WriteAttributeString('ReceiveBuffer', (string)$response['rest']);
         $this->WriteAttributeBoolean('NotifyPending', false);
         if ((int)$response['status'] >= 200 && (int)$response['status'] < 300) {
