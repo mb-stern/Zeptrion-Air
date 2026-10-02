@@ -1,0 +1,18 @@
+{
+  "id": "{E6A3F4B1-6C9D-4A42-8F10-2D6E7B91C503}",
+  "name": "ZeptrionAirDirectTest",
+  "type": 3,
+  "vendor": "Feller",
+  "aliases": [
+    "zeptrionAIR Direkt-Test"
+  ],
+  "parentRequirements": [
+    "{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}"
+  ],
+  "childRequirements": [],
+  "implemented": [
+    "{018EF6B5-AB94-40C6-AA53-46943E824ACF}"
+  ],
+  "prefix": "ZEPADT",
+  "url": "https://github.com/mb-stern/Zeptrion-Air/tree/direct-client-socket-test/ZeptrionAirDirectTest"
+}
