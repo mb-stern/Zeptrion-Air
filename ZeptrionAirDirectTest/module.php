@@ -64,7 +64,6 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             $this->SetStatus(202);
             return;
         }
-        // Der Parent gehört exklusiv zu dieser Geräteinstanz.
         @IPS_SetProperty($parentID, 'Host', $host);
         @IPS_SetProperty($parentID, 'Port', 80);
         @IPS_SetProperty($parentID, 'Open', true);
@@ -74,23 +73,22 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $this->EnsureNotify();
     }
 
-    public function ReceiveData(string $JSONString): void
+    public function ReceiveData(string $JSONString): string
     {
         $data = json_decode($JSONString, true);
         if (!is_array($data)) {
-            return;
+            return '';
         }
         $chunk = (string)($data['Buffer'] ?? '');
         if ($chunk === '') {
-            return;
+            return '';
         }
         $buffer = $this->ReadAttributeString('ReceiveBuffer') . $chunk;
         $this->WriteAttributeString('ReceiveBuffer', $buffer);
         $this->SendDebug('chNotify RX', $chunk, 0);
-
         $response = $this->ExtractHttpResponse($buffer);
         if ($response === null) {
-            return;
+            return '';
         }
         $this->WriteAttributeString('ReceiveBuffer', (string)$response['rest']);
         $this->WriteAttributeBoolean('NotifyPending', false);
@@ -100,25 +98,16 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
             $this->SendDebug('chNotify HTTP', 'Status ' . (int)$response['status'], 0);
         }
         $this->EnsureNotify();
+        return '';
     }
 
     public function EnsureNotify(): void
     {
-        if ($this->ReadAttributeBoolean('NotifyPending')) {
-            return;
-        }
+        if ($this->ReadAttributeBoolean('NotifyPending')) return;
         $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') {
-            return;
-        }
-        $request = "GET /zrap/chnotify HTTP/1.1\r\n" .
-            'Host: ' . $host . "\r\n" .
-            "Accept: application/xml,text/xml,*/*\r\n" .
-            "Connection: keep-alive\r\n\r\n";
-        $payload = json_encode([
-            'DataID' => self::TX_DATA_ID,
-            'Buffer' => $request
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($host === '') return;
+        $request = "GET /zrap/chnotify HTTP/1.1\r\nHost: " . $host . "\r\nAccept: application/xml,text/xml,*/*\r\nConnection: keep-alive\r\n\r\n";
+        $payload = json_encode(['DataID' => self::TX_DATA_ID, 'Buffer' => $request], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $this->WriteAttributeString('ReceiveBuffer', '');
         $this->WriteAttributeBoolean('NotifyPending', true);
         $this->SendDataToParent((string)$payload);
@@ -135,9 +124,7 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     public function Scan(): string
     {
         $result = $this->HttpRequest('GET', '/zrap/chscan');
-        if (!$result['success']) {
-            return 'chscan fehlgeschlagen: ' . $result['error'];
-        }
+        if (!$result['success']) return 'chscan fehlgeschlagen: ' . $result['error'];
         $this->ApplyXmlChannelValues($result['body']);
         return 'chscan erfolgreich';
     }
@@ -145,41 +132,22 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     public function SetChannel(int $Channel, int $Value): bool
     {
         $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
-        if ($Channel < 1 || $Channel > $max) {
-            throw new InvalidArgumentException('Ungültiger Kanal');
-        }
+        if ($Channel < 1 || $Channel > $max) throw new InvalidArgumentException('Ungültiger Kanal');
         $value = max(0, min(100, $Value));
         $command = $value === 0 ? 'off' : ($value === 100 ? 'on' : null);
-        if ($command === null) {
-            throw new InvalidArgumentException('Der Direkt-Test schaltet vorerst nur 0 oder 100 Prozent.');
-        }
+        if ($command === null) throw new InvalidArgumentException('Der Direkt-Test schaltet vorerst nur 0 oder 100 Prozent.');
         $result = $this->HttpRequest('POST', '/zrap/chctrl/ch' . $Channel, ['cmd' => $command]);
-        if ($result['success']) {
-            $this->SetValue('Ch' . $Channel . 'Value', $value);
-        }
+        if ($result['success']) $this->SetValue('Ch' . $Channel . 'Value', $value);
         return $result['success'];
     }
 
     private function HttpRequest(string $method, string $path, ?array $form = null): array
     {
         $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') {
-            return ['success' => false, 'body' => '', 'error' => 'Host fehlt'];
-        }
+        if ($host === '') return ['success' => false, 'body' => '', 'error' => 'Host fehlt'];
         $curl = curl_init();
-        if ($curl === false) {
-            return ['success' => false, 'body' => '', 'error' => 'cURL konnte nicht initialisiert werden'];
-        }
-        $headers = ['Connection: close'];
-        $options = [
-            CURLOPT_URL => 'http://' . $host . $path,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT_MS => 1500,
-            CURLOPT_TIMEOUT_MS => 5000,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_HTTPHEADER => $headers
-        ];
+        if ($curl === false) return ['success' => false, 'body' => '', 'error' => 'cURL konnte nicht initialisiert werden'];
+        $options = [CURLOPT_URL => 'http://' . $host . $path, CURLOPT_RETURNTRANSFER => true, CURLOPT_CONNECTTIMEOUT_MS => 1500, CURLOPT_TIMEOUT_MS => 5000, CURLOPT_FOLLOWLOCATION => false, CURLOPT_CUSTOMREQUEST => strtoupper($method), CURLOPT_HTTPHEADER => ['Connection: close']];
         if ($form !== null) {
             $options[CURLOPT_POSTFIELDS] = http_build_query($form);
             $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/x-www-form-urlencoded', 'Connection: close'];
@@ -189,19 +157,13 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $error = curl_error($curl);
         $code = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
         curl_close($curl);
-        return [
-            'success' => $body !== false && $error === '' && $code >= 200 && $code < 400,
-            'body' => is_string($body) ? $body : '',
-            'error' => $error !== '' ? $error : ('HTTP ' . $code)
-        ];
+        return ['success' => $body !== false && $error === '' && $code >= 200 && $code < 400, 'body' => is_string($body) ? $body : '', 'error' => $error !== '' ? $error : ('HTTP ' . $code)];
     }
 
     private function ApplyXmlChannelValues(string $xmlText): void
     {
         $start = strpos($xmlText, '<?xml');
-        if ($start !== false) {
-            $xmlText = substr($xmlText, $start);
-        }
+        if ($start !== false) $xmlText = substr($xmlText, $start);
         libxml_use_internal_errors(true);
         $xml = simplexml_load_string(trim($xmlText), 'SimpleXMLElement', LIBXML_NOCDATA);
         if ($xml === false) {
@@ -212,14 +174,10 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
         $max = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         for ($channel = 1; $channel <= $max; $channel++) {
             $key = 'ch' . $channel;
-            if (!isset($xml->{$key})) {
-                continue;
-            }
+            if (!isset($xml->{$key})) continue;
             $node = $xml->{$key};
             $raw = isset($node->val) ? (string)$node->val : (string)$node;
-            if (!is_numeric($raw)) {
-                continue;
-            }
+            if (!is_numeric($raw)) continue;
             $value = max(0, min(100, (int)round((float)$raw)));
             $this->SetValue('Ch' . $channel . 'Value', $value);
         }
@@ -228,39 +186,23 @@ class ZeptrionAirDirectTest extends IPSModuleStrict
     private function ExtractHttpResponse(string $buffer): ?array
     {
         $headerEnd = strpos($buffer, "\r\n\r\n");
-        if ($headerEnd === false) {
-            return null;
-        }
+        if ($headerEnd === false) return null;
         $header = substr($buffer, 0, $headerEnd);
         $bodyStart = $headerEnd + 4;
         $status = 0;
-        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/i', $header, $m)) {
-            $status = (int)$m[1];
-        }
+        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/i', $header, $m)) $status = (int)$m[1];
         $length = null;
-        if (preg_match('/\r\nContent-Length:\s*(\d+)/i', $header, $m)) {
-            $length = (int)$m[1];
-        }
+        if (preg_match('/\r\nContent-Length:\s*(\d+)/i', $header, $m)) $length = (int)$m[1];
         if ($length !== null) {
-            if (strlen($buffer) < $bodyStart + $length) {
-                return null;
-            }
-            return [
-                'status' => $status,
-                'body' => substr($buffer, $bodyStart, $length),
-                'rest' => substr($buffer, $bodyStart + $length)
-            ];
+            if (strlen($buffer) < $bodyStart + $length) return null;
+            return ['status' => $status, 'body' => substr($buffer, $bodyStart, $length), 'rest' => substr($buffer, $bodyStart + $length)];
         }
         $body = substr($buffer, $bodyStart);
         foreach (['</chnotify>', '</chscan>'] as $closing) {
             $end = strpos($body, $closing);
             if ($end !== false) {
                 $end += strlen($closing);
-                return [
-                    'status' => $status,
-                    'body' => substr($body, 0, $end),
-                    'rest' => substr($body, $end)
-                ];
+                return ['status' => $status, 'body' => substr($body, 0, $end), 'rest' => substr($body, $end)];
             }
         }
         return null;
