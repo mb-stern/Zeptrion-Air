@@ -312,7 +312,6 @@ class ZeptrionAir extends IPSModule
             $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
         }
         $this->RegisterHook($this->SmartButtonHookName());
-        $this->ConfigureClientSocket();
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
@@ -1728,20 +1727,14 @@ class ZeptrionAir extends IPSModule
         return 'zeptrionair-' . $this->InstanceID;
     }
 
-    private function ConfigureClientSocket(): void
+    public function GetConfigurationForParent(): string
     {
         $host = trim($this->ReadPropertyString('Host'));
-        if ($host === '') return;
-        $instance = IPS_GetInstance($this->InstanceID);
-        $socketID = (int)($instance['ConnectionID'] ?? 0);
-        if ($socketID <= 0 || !IPS_InstanceExists($socketID)) return;
-        $cfg = json_decode(IPS_GetConfiguration($socketID), true);
-        if (!is_array($cfg) || (string)($cfg['Host'] ?? '') !== $host || (int)($cfg['Port'] ?? 0) !== 80 || !((bool)($cfg['Open'] ?? false))) {
-            IPS_SetProperty($socketID, 'Host', $host);
-            IPS_SetProperty($socketID, 'Port', 80);
-            IPS_SetProperty($socketID, 'Open', true);
-            IPS_ApplyChanges($socketID);
-        }
+        return json_encode([
+            'Host' => $host,
+            'Port' => 80,
+            'Open' => ($host !== '')
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     public function StartNotifyListener(): bool
