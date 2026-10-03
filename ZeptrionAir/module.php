@@ -45,7 +45,7 @@ class ZeptrionAir extends IPSModuleStrict
     {
         return json_encode([
             'type' => 'require',
-            'moduleIDs' => ['{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}']
+            'moduleIDs' => ['{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}']
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
