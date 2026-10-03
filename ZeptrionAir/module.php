@@ -1212,7 +1212,11 @@ class ZeptrionAir extends IPSModule
                 $learnedDown=max(100,(int)($t['down']??0));
                 IPS_SetProperty($this->InstanceID, 'Channel'.$channel.'UpTimeMs', $learnedUp);
                 IPS_SetProperty($this->InstanceID, 'Channel'.$channel.'DownTimeMs', $learnedDown);
-                $this->SendDebug('LERNEN','ch'.$channel.': FERTIG | RUNTER '.number_format($learnedDown/1000,3,'.','').'s | HOCH '.number_format($learnedUp/1000,3,'.','').'s | Werte in Konfiguration übernommen | Position 0%',0);
+                // IPS_SetProperty schreibt die neue Konfiguration zunächst nur vor.
+                // Erst ApplyChanges übernimmt sie dauerhaft und aktualisiert auch
+                // die im Konfigurationsformular sichtbaren NumberSpinner.
+                IPS_ApplyChanges($this->InstanceID);
+                $this->SendDebug('LERNEN','ch'.$channel.': FERTIG | RUNTER '.number_format($learnedDown/1000,3,'.','').'s | HOCH '.number_format($learnedUp/1000,3,'.','').'s | Werte dauerhaft in Konfiguration übernommen | Position 0%',0);
                 return;
             }
             return;
