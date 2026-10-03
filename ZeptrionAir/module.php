@@ -37,8 +37,6 @@ class ZeptrionAir extends IPSModule
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
-        $this->SetBuffer('PositionCommandLocks', '{}');
-        $this->SetBuffer('PositionNotifyIgnore', '{}');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
@@ -724,18 +722,11 @@ class ZeptrionAir extends IPSModule
                 if ($target === $current) {
                     return;
                 }
-                $key = (string)$channel;
-                $this->SetPositionCommandLock($channel, [
-                    'active' => true,
-                    'start' => $current,
-                    'target' => $target,
-                    'direction' => $target > $current ? 'down' : 'up'
-                ]);
                 $state = $this->ReadMotorState();
+                $key = (string)$channel;
                 $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
                     'commandDirection' => $target > $current ? 'down' : 'up',
                     'commandTarget' => $target,
-                    'commandActive' => true,
                     // Physische Ausgangsposition separat merken. Die sichtbare
                     // Positionsvariable darf sofort den angeforderten Sollwert
                     // anzeigen und bleibt dort bis die Fahrt beendet ist.
@@ -753,27 +744,10 @@ class ZeptrionAir extends IPSModule
                     $time = max(100, min(32000, $time));
                     $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
                 }
-                // Eigene Positionsfahrt: chnotify ist waehrend der erwarteten
-                // Befehlsdauer nur Rueckmeldung und darf Position/Lamelle nicht
-                // berechnen oder veraendern. Etwas Nachlauf deckt verzögerte
-                // START/ENDE-Events ab.
-                if ($target === 0 || $target === 100) {
-                    $ownDuration = $target === 0
-                        ? (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100)
-                        : (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100);
-                    // Endlagenbefehle duerfen physisch etwas laenger laufen.
-                    $ownDuration += 2000;
-                } else {
-                    $ownDuration = $time;
-                }
-                $this->SetPositionNotifyIgnore($channel, $target, max(500, $ownDuration + 1500));
-
                 if (!$this->SendCommand($channel, $command)) {
                     $state = $this->ReadMotorState();
-                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition'], $state[$key]['commandActive']);
+                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition']);
                     $this->WriteMotorState($state);
-                    $this->ClearPositionCommandLock($channel);
-                    $this->ClearPositionNotifyIgnore($channel);
                 } else {
                     // Bedienvariable als Sollwert behandeln: Nach dem Schalten
                     // bleibt der gewählte Wert sichtbar und springt nicht auf die
@@ -1248,58 +1222,12 @@ class ZeptrionAir extends IPSModule
             return;
         }
 
-        $notifyIgnore=$this->GetPositionNotifyIgnore($channel);
-        if ((bool)($notifyIgnore['active']??false)) {
-            $until=(int)($notifyIgnore['until']??0);
-            if ($now <= $until) {
-                $target=max(0,min(100,(int)($notifyIgnore['target']??$this->GetMotorPosition($channel))));
-                $this->SendDebug('ROLLO SOLL','ch'.$channel.' chnotify nur Rueckmeldung | Event='.$value.' | Soll='.$target.'% | keine Positions-/Lamellenberechnung',0);
-                return;
-            }
-            $this->ClearPositionNotifyIgnore($channel);
-            $this->ClearPositionCommandLock($channel);
-            unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['commandActive'],$m['startLamella']);
-            $state[$key]=$m;
-            $this->WriteMotorState($state);
-        }
-
         if ($value === 100) {
-            $commandLock=$this->GetPositionCommandLock($channel);
-            $commandActive=(bool)($commandLock['active']??false);
-            $position=$commandActive
-                ? max(0,min(100,(int)($commandLock['start']??$this->GetMotorPosition($channel))))
-                : (array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel));
-            if ($commandActive) {
-                $direction=(string)($commandLock['direction']??'');
-                $target=max(0,min(100,(int)($commandLock['target']??$position)));
-                if ($direction!=='up' && $direction!=='down') {
-                    $direction=$target>$position?'down':($target<$position?'up':'unknown');
-                }
-                // Runtime-State nur spiegeln; die unabhaengige Sperre ist massgeblich.
-                $m['commandActive']=true;
-                $m['commandDirection']=$direction;
-                $m['commandTarget']=$target;
-                $m['commandStartPosition']=$position;
-                $this->SendDebug('ROLLO SOLL','ch'.$channel.' START eigener Positionsbefehl | Start='.$position.'% | Ziel='.$target.'% | Richtung='.$direction,0);
-            } else {
-                $direction=(string)($m['commandDirection']??'');
-                if ($direction==='') {
-                    $direction=$position===0?'down':($position===100?'up':'unknown');
-                }
+            $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
+            $direction=(string)($m['commandDirection']??'');
+            if ($direction==='') {
+                $direction=$position===0?'down':($position===100?'up':'unknown');
             }
-
-            // Drehgrad und Rollo-Position bewusst getrennt behandeln. Bei einer
-            // echten Fahrt gilt: HOCH = 100 %, RUNTER = 0 %. Den bisherigen
-            // Drehgrad merken wir jedoch, damit eine sehr kurze Gegenfahrt am
-            // Fahrtende noch als reine Lamellenverstellung erkannt werden kann.
-            $lamellaID=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
-            $startLamella=$lamellaID>0 ? max(0,min(100,(int)GetValue($lamellaID))) : ($direction==='up'?0:100);
-            $m['startLamella']=$startLamella;
-            if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
-                if ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
-                elseif ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-            }
-
             $m['moving']=true; $m['moveStartMs']=$now; $m['direction']=$direction;
             $state[$key]=$m; $this->WriteMotorState($state);
             $this->SendDebug('ROLLO','ch'.$channel.' START | Position='.$position.'% | Richtung='.$direction,0);
@@ -1310,108 +1238,78 @@ class ZeptrionAir extends IPSModule
         $elapsed=max(0,$now-(int)($m['moveStartMs']??$now));
         $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
         $direction=(string)($m['direction']??'unknown');
-        $commandLock=$this->GetPositionCommandLock($channel);
-        $commandActive=(bool)($commandLock['active']??false);
-        $commandTarget=$commandActive
-            ? max(0,min(100,(int)($commandLock['target']??$this->GetMotorPosition($channel))))
-            : (array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null);
-        if ($commandActive) {
-            $position=max(0,min(100,(int)($commandLock['start']??$position)));
-            $lockDirection=(string)($commandLock['direction']??'');
-            if ($lockDirection==='up' || $lockDirection==='down') $direction=$lockDirection;
-        }
+        $commandTarget=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null;
         $up=$this->EffectiveMotorTime($channel,'up');
         $down=$this->EffectiveMotorTime($channel,'down');
         $expectUp=(int)round($position*$up/100);
         $expectDown=(int)round((100-$position)*$down/100);
         $errUp=abs($elapsed-$expectUp); $errDown=abs($elapsed-$expectDown);
 
-        if ($commandActive && $direction!=='up' && $direction!=='down') {
-            $direction=$commandTarget!==null && $commandTarget>$position?'down':'up';
-            $this->SendDebug('ROLLO SOLL','ch'.$channel.' Richtung am Fahrtende aus Sollziel wiederhergestellt -> '.$direction,0);
+        // Eigene Fahrt ueber die Positionsvariable: Die Variable wurde bereits
+        // im RequestAction auf das Soll gesetzt. chnotify ist hier nur Rueckmeldung
+        // und darf Position oder Blende nicht veraendern.
+        if ($commandTarget!==null) {
+            $newPosition=max(0,min(100,$commandTarget));
+            $this->SendDebug('ROLLO SOLL','ch'.$channel.' chnotify nur Rueckmeldung | Soll='.$newPosition.'% | keine Aenderung',0);
+            $m['moving']=false; $m['direction']=''; $m['lastDirection']=$direction;
+            unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
+            $state[$key]=$m; $this->WriteMotorState($state);
+            return;
         }
 
-        // Kurze externe Fahrt bei einer Jalousie zuerst als Lamellenbewegung
-        // beurteilen, BEVOR eine unbekannte Richtung per Laufzeit-Match bestimmt
-        // wird. Nach einer sicheren RUNTER-Fahrt bedeutet die kurze Gegenfahrt
-        // HOCH (= Drehgrad Richtung 100 %); nach HOCH entsprechend RUNTER.
+        $type=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
-        $isShortLamella = !$commandActive && $commandTarget===null
-            && strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter'
-            && $elapsed>0 && $elapsed<$lamellaTime
-            && ($lastDirection==='down' || $lastDirection==='up');
 
-        if ($isShortLamella) {
-            $direction=$lastDirection==='down' ? 'up' : 'down';
-        } else {
-            if (!$commandActive && $direction==='unknown') {
-                // Plausibilitaet vor Best-Match: Eine Richtung ist ausgeschlossen,
-                // wenn die gemessene Fahrt deutlich laenger als die von der aktuellen
-                // Position maximal moegliche Restfahrt bis zu diesem Anschlag dauert.
-                // Beispiel: Position 8 %, HOCH bis 0 % braucht nur ~2 s. Dauert die
-                // Fahrt 11 s, kann sie nicht HOCH gewesen sein -> also RUNTER.
-                $tolUp=max(750,(int)round($expectUp*0.10));
-                $tolDown=max(750,(int)round($expectDown*0.10));
-                $upPossible=$elapsed <= ($expectUp+$tolUp);
-                $downPossible=$elapsed <= ($expectDown+$tolDown);
-
-                if (!$upPossible && $downPossible) {
-                    $direction='down';
-                    $this->SendDebug('ROLLO PLAUSI','ch'.$channel.' HOCH ausgeschlossen: gemessen='.number_format($elapsed/1000,3,'.','').'s > max. '.number_format(($expectUp+$tolUp)/1000,3,'.','').'s | -> down',0);
-                } elseif (!$downPossible && $upPossible) {
-                    $direction='up';
-                    $this->SendDebug('ROLLO PLAUSI','ch'.$channel.' RUNTER ausgeschlossen: gemessen='.number_format($elapsed/1000,3,'.','').'s > max. '.number_format(($expectDown+$tolDown)/1000,3,'.','').'s | -> up',0);
-                } elseif ($upPossible && $downPossible) {
-                    // Beide Richtungen sind physikalisch moeglich: erst jetzt den
-                    // bisherigen Best-Match als nachrangige Entscheidung verwenden.
-                    $direction=$errUp<=$errDown?'up':'down';
-                    $this->SendDebug('ROLLO MATCH','ch'.$channel.' beide Richtungen moeglich | gemessen='.number_format($elapsed/1000,3,'.','').'s | UP→0='.number_format($expectUp/1000,3,'.','').'s Fehler='.number_format($errUp/1000,3,'.','').'s | DOWN→100='.number_format($expectDown/1000,3,'.','').'s Fehler='.number_format($errDown/1000,3,'.','').'s -> '.$direction,0);
-                } else {
-                    // Keine der beiden Restfahrten passt plausibel. Nicht auf einen
-                    // Anschlag springen. Als letzte Information nur die Gegenrichtung
-                    // der letzten sicher erkannten Fahrt verwenden.
-                    $last=(string)($m['lastDirection']??'');
-                    $direction=$last==='up'?'down':($last==='down'?'up':'unknown');
-                    $this->SendDebug('ROLLO PLAUSI','ch'.$channel.' keine Richtung passt zur Restfahrzeit | gemessen='.number_format($elapsed/1000,3,'.','').'s | letzte Richtung='.$last.' -> '.$direction,0);
-                }
-            }
-
-        }
-
-        if ($isShortLamella) {
-            $startLamella=max(0,min(100,(int)($m['startLamella']??($direction==='up'?0:100))));
+        // Kurze externe Gegenfahrt = nur Blendenverstellung.
+        // Nach RUNTER oeffnet eine kurze Gegenfahrt die Blende Richtung 100 %.
+        // Nach HOCH schliesst sie entsprechend Richtung 0 %.
+        if ($type==='shutter' && $elapsed>0 && $elapsed<$lamellaTime && ($lastDirection==='down' || $lastDirection==='up')) {
+            $direction=$lastDirection==='down'?'up':'down';
+            $lamellaID=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
+            $currentLamella=$lamellaID>0?max(0,min(100,(int)GetValue($lamellaID))):($lastDirection==='down'?0:100);
             $delta=(int)round($elapsed*100/max(1,$lamellaTime));
-            $newLamella=$direction==='up' ? min(100,$startLamella+$delta) : max(0,$startLamella-$delta);
-            $newPosition=$position;
+            $newLamella=$direction==='up'?min(100,$currentLamella+$delta):max(0,$currentLamella-$delta);
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
-            $this->SendDebug('LAMELLE','ch'.$channel.' kurze Gegenfahrt '.$elapsed.'ms | Richtung='.$direction.' | Drehgrad='.$newLamella.'% | Position bleibt '.$newPosition.'%',0);
-        } else {
-            if ($commandActive && $commandTarget!==null) {
-                // Eigener Positionsbefehl: Der Benutzer-Sollwert wurde bereits
-                // beim RequestAction gesetzt. chnotify darf ihn waehrend dieser
-                // Fahrt weder zuruecksetzen noch mit Zwischenwerten ueberschreiben.
-                $newPosition=max(0,min(100,$commandTarget));
-                $this->SendDebug('ROLLO SOLL','ch'.$channel.' eigener Positionsbefehl aktiv -> Variable bleibt '.$newPosition.'%',0);
-            } elseif ($direction==='up') {
-                $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
-                if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
-                $this->SetMotorPosition($channel,$newPosition);
-            } else {
-                $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
-                if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
-                $this->SetMotorPosition($channel,$newPosition);
-            }
-            if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
-                if ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
-                elseif ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-            }
-            $m['lastDirection']=$direction;
+            $newPosition=$position;
+            $this->SendDebug('LAMELLE','ch'.$channel.' kurze externe Gegenfahrt '.$elapsed.'ms | Richtung='.$direction.' | Drehgrad='.$newLamella.'% | Position bleibt '.$position.'%',0);
+            $m['moving']=false; $m['direction']='';
+            // lastDirection bleibt die letzte echte Behangfahrt.
+            $state[$key]=$m; $this->WriteMotorState($state);
+            return;
         }
-        $m['moving']=false; $m['direction']='';
-        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['commandActive'],$m['startLamella']);
+
+        if ($direction==='unknown') {
+            // Zuerst physikalisch unmoegliche Richtungen anhand der maximalen
+            // Restlaufzeit ausschliessen; nur wenn beide moeglich sind Best-Match.
+            $tolUp=max(750,(int)round($expectUp*0.10));
+            $tolDown=max(750,(int)round($expectDown*0.10));
+            $upPossible=$elapsed<=($expectUp+$tolUp);
+            $downPossible=$elapsed<=($expectDown+$tolDown);
+            if (!$upPossible && $downPossible) {
+                $direction='down';
+            } elseif (!$downPossible && $upPossible) {
+                $direction='up';
+            } else {
+                $direction=$errUp<=$errDown?'up':'down';
+            }
+            $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | gemessen='.number_format($elapsed/1000,3,'.','').'s | UP→0='.number_format($expectUp/1000,3,'.','').'s | DOWN→100='.number_format($expectDown/1000,3,'.','').'s -> '.$direction,0);
+        }
+
+        if ($direction==='up') {
+            $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
+            if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
+        } else {
+            $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
+            if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
+        }
+        $this->SetMotorPosition($channel,$newPosition);
+        if ($type==='shutter') {
+            $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
+        }
+        $m['moving']=false; $m['direction']=''; $m['lastDirection']=$direction;
+        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
         $state[$key]=$m; $this->WriteMotorState($state);
-        if ($commandActive) $this->ClearPositionCommandLock($channel);
         $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Position='.$newPosition.'%',0);
     }
 
@@ -1423,54 +1321,6 @@ class ZeptrionAir extends IPSModule
             ? 'Gelernte Fahrzeiten: HOCH '.number_format($up/1000,3,'.','').' s | RUNTER '.number_format($down/1000,3,'.','').' s'
             : 'Gelernte Fahrzeiten: noch nicht eingelernt';
     }
-    private function GetPositionNotifyIgnore(int $channel): array
-    {
-        $all=json_decode($this->GetBuffer('PositionNotifyIgnore'),true);
-        if (!is_array($all)) return [];
-        $entry=$all[(string)$channel]??[];
-        return is_array($entry)?$entry:[];
-    }
-    private function SetPositionNotifyIgnore(int $channel,int $target,int $durationMs): void
-    {
-        $all=json_decode($this->GetBuffer('PositionNotifyIgnore'),true);
-        if (!is_array($all)) $all=[];
-        $all[(string)$channel]=[
-            'active'=>true,
-            'target'=>max(0,min(100,$target)),
-            'until'=>(int)round(microtime(true)*1000)+max(500,$durationMs)
-        ];
-        $this->SetBuffer('PositionNotifyIgnore',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-    }
-    private function ClearPositionNotifyIgnore(int $channel): void
-    {
-        $all=json_decode($this->GetBuffer('PositionNotifyIgnore'),true);
-        if (!is_array($all)) $all=[];
-        unset($all[(string)$channel]);
-        $this->SetBuffer('PositionNotifyIgnore',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-    }
-
-    private function GetPositionCommandLock(int $channel): array
-    {
-        $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
-        if (!is_array($all)) return [];
-        $lock=$all[(string)$channel]??[];
-        return is_array($lock)?$lock:[];
-    }
-    private function SetPositionCommandLock(int $channel,array $lock): void
-    {
-        $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
-        if (!is_array($all)) $all=[];
-        $all[(string)$channel]=$lock;
-        $this->SetBuffer('PositionCommandLocks',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-    }
-    private function ClearPositionCommandLock(int $channel): void
-    {
-        $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
-        if (!is_array($all)) $all=[];
-        unset($all[(string)$channel]);
-        $this->SetBuffer('PositionCommandLocks',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-    }
-
     private function ReadMotorState(): array
     {
         $d=json_decode($this->ReadAttributeString('MotorRuntimeState'),true);
@@ -1506,16 +1356,7 @@ class ZeptrionAir extends IPSModule
     }
     private function SetMotorPosition(int $channel,int $position): void
     {
-        $position=max(0,min(100,$position));
-        $lock=$this->GetPositionCommandLock($channel);
-        if ((bool)($lock['active']??false)) {
-            $target=max(0,min(100,(int)($lock['target']??$position)));
-            if ($position!==$target) {
-                $this->SendDebug('ROLLO SOLL','ch'.$channel.' Positionsschreibzugriff '.$position.'% blockiert | Soll='.$target.'%',0);
-                return;
-            }
-        }
-        $this->SetValueIfChanged('Ch'.$channel.'Position',$position);
+        $this->SetValueIfChanged('Ch'.$channel.'Position',max(0,min(100,$position)));
         if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
             if ($position===0) $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
             elseif ($position===100) $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
