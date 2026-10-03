@@ -1259,8 +1259,35 @@ class ZeptrionAir extends IPSModule
         $errUp=abs($elapsed-$expectUp); $errDown=abs($elapsed-$expectDown);
 
         if ($direction==='unknown') {
-            $direction=$errUp<=$errDown?'up':'down';
-            $this->SendDebug('ROLLO MATCH','ch'.$channel.' gemessen='.number_format($elapsed/1000,3,'.','').'s | UP→0='.number_format($expectUp/1000,3,'.','').'s Fehler='.number_format($errUp/1000,3,'.','').'s | DOWN→100='.number_format($expectDown/1000,3,'.','').'s Fehler='.number_format($errDown/1000,3,'.','').'s -> '.$direction,0);
+            // Plausibilitaet vor Best-Match: Eine Richtung ist ausgeschlossen,
+            // wenn die gemessene Fahrt deutlich laenger als die von der aktuellen
+            // Position maximal moegliche Restfahrt bis zu diesem Anschlag dauert.
+            // Beispiel: Position 8 %, HOCH bis 0 % braucht nur ~2 s. Dauert die
+            // Fahrt 11 s, kann sie nicht HOCH gewesen sein -> also RUNTER.
+            $tolUp=max(750,(int)round($expectUp*0.10));
+            $tolDown=max(750,(int)round($expectDown*0.10));
+            $upPossible=$elapsed <= ($expectUp+$tolUp);
+            $downPossible=$elapsed <= ($expectDown+$tolDown);
+
+            if (!$upPossible && $downPossible) {
+                $direction='down';
+                $this->SendDebug('ROLLO PLAUSI','ch'.$channel.' HOCH ausgeschlossen: gemessen='.number_format($elapsed/1000,3,'.','').'s > max. '.number_format(($expectUp+$tolUp)/1000,3,'.','').'s | -> down',0);
+            } elseif (!$downPossible && $upPossible) {
+                $direction='up';
+                $this->SendDebug('ROLLO PLAUSI','ch'.$channel.' RUNTER ausgeschlossen: gemessen='.number_format($elapsed/1000,3,'.','').'s > max. '.number_format(($expectDown+$tolDown)/1000,3,'.','').'s | -> up',0);
+            } elseif ($upPossible && $downPossible) {
+                // Beide Richtungen sind physikalisch moeglich: erst jetzt den
+                // bisherigen Best-Match als nachrangige Entscheidung verwenden.
+                $direction=$errUp<=$errDown?'up':'down';
+                $this->SendDebug('ROLLO MATCH','ch'.$channel.' beide Richtungen moeglich | gemessen='.number_format($elapsed/1000,3,'.','').'s | UP→0='.number_format($expectUp/1000,3,'.','').'s Fehler='.number_format($errUp/1000,3,'.','').'s | DOWN→100='.number_format($expectDown/1000,3,'.','').'s Fehler='.number_format($errDown/1000,3,'.','').'s -> '.$direction,0);
+            } else {
+                // Keine der beiden Restfahrten passt plausibel. Nicht auf einen
+                // Anschlag springen. Als letzte Information nur die Gegenrichtung
+                // der letzten sicher erkannten Fahrt verwenden.
+                $last=(string)($m['lastDirection']??'');
+                $direction=$last==='up'?'down':($last==='down'?'up':'unknown');
+                $this->SendDebug('ROLLO PLAUSI','ch'.$channel.' keine Richtung passt zur Restfahrzeit | gemessen='.number_format($elapsed/1000,3,'.','').'s | letzte Richtung='.$last.' -> '.$direction,0);
+            }
         }
 
         // Nur eine *externe* kurze Gegenfahrt darf als reine Lamellenfahrt
