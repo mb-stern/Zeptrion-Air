@@ -1727,16 +1727,6 @@ class ZeptrionAir extends IPSModule
         return 'zeptrionair-' . $this->InstanceID;
     }
 
-    public function GetConfigurationForParent(): string
-    {
-        $host = trim($this->ReadPropertyString('Host'));
-        return json_encode([
-            'Host' => $host,
-            'Port' => 80,
-            'Open' => ($host !== '')
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    }
-
     public function StartNotifyListener(): bool
     {
         $this->SetBuffer('NotifyListening', '1');
