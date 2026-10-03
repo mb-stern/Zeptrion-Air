@@ -1,14 +1,18 @@
 {
   "id": "{5F3B61D8-5D55-4A88-B79C-A2C8742B3E40}",
-  "name": "Zeptrion Air Discovery",
+  "name": "zeptrionAIR Discovery",
   "type": 5,
   "vendor": "Feller",
   "aliases": [
-    "Feller zeptrionAIR Discovery"
+    "zeptrionAIR Discovery"
   ],
-  "parentRequirements": [],
+  "parentRequirements": [
+    "{8D8D7A31-3A9E-4D8C-B19A-7B4D0E76A201}"
+  ],
   "childRequirements": [],
-  "implemented": [],
+  "implemented": [
+    "{B13D5C24-91F2-4D38-A08C-2C6A9E45F710}"
+  ],
   "prefix": "ZEPAD",
   "url": "https://github.com/mb-stern/Zeptrion-Air/tree/development/ZeptrionAirDiscovery"
 }
