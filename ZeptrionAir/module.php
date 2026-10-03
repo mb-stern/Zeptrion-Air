@@ -1390,10 +1390,10 @@ class ZeptrionAir extends IPSModule
         }
         $fullTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $calculatedTime=max(1,(int)round(abs($target-$current)*$fullTime/100));
-        // Sehr kurze Pulse werden vom Aktor nicht immer als sichtbare
-        // Lamellenfahrt ausgefuehrt. Fuer eigene Lamellenbefehle mindestens
-        // 500 ms senden; die Sollvariable bleibt trotzdem der gewaehlte Wert.
-        $time=max(500,min(32000,$calculatedTime));
+        // Die Lamellen-Fahrzeit wird ausschliesslich proportional aus der
+        // konfigurierten Lamellenzeit berechnet. Die separate 500-ms-Pause
+        // gilt nur nach einer gepufferten Positionsfahrt.
+        $time=max(100,min(32000,$calculatedTime));
         $direction=$target>$current?'up':'down';
         $command=$direction==='up'?'move_open_'.$time:'move_close_'.$time;
         $this->SendDebug('LAMELLE EXEC','ch'.$channel.' Puffer/Variablenbefehl '.$current.'% -> '.$target.'% | berechnet='.$calculatedTime.'ms | gesendet='.$time.'ms',0);
