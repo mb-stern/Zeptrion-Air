@@ -770,8 +770,24 @@ class ZeptrionAir extends IPSModule
                 $time = (int)round(abs($target - $current) * $fullTime / 100);
                 $time = max(100, min(32000, $time));
                 $command = $target > $current ? 'move_open_' . $time : 'move_close_' . $time;
+
+                // Eigene Blendenverstellung markieren. Das folgende chnotify ist
+                // nur die Rueckmeldung unseres Befehls und darf weder Position
+                // noch den bereits gesetzten Drehgrad neu berechnen.
+                $state = $this->ReadMotorState();
+                $key = (string)$channel;
+                $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
+                    'lamellaCommandTarget' => $target,
+                    'lamellaCommandDirection' => $target > $current ? 'up' : 'down'
+                ]);
+                $this->WriteMotorState($state);
+
                 if ($this->SendCommand($channel, $command)) {
                     $this->SetValueIfChanged($ident, $target);
+                } else {
+                    $state = $this->ReadMotorState();
+                    unset($state[$key]['lamellaCommandTarget'],$state[$key]['lamellaCommandDirection']);
+                    $this->WriteMotorState($state);
                 }
                 return;
             case 'Switch':
@@ -1224,9 +1240,21 @@ class ZeptrionAir extends IPSModule
 
         if ($value === 100) {
             $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
-            $direction=(string)($m['commandDirection']??'');
-            if ($direction==='') {
-                $direction=$position===0?'down':($position===100?'up':'unknown');
+            $ownLamella=array_key_exists('lamellaCommandTarget',$m);
+            if ($ownLamella) {
+                $direction=(string)($m['lamellaCommandDirection']??'unknown');
+            } else {
+                $direction=(string)($m['commandDirection']??'');
+                if ($direction==='') {
+                    $direction=$position===0?'down':($position===100?'up':'unknown');
+                }
+            }
+            // Bei einer eindeutig erkannten externen Behangfahrt ist die
+            // Blendenstellung durch die Fahrtrichtung fest definiert:
+            // RUNTER = 0 % geschlossen, HOCH = 100 % offen.
+            if (!$ownLamella && strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
+                if ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+                elseif ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
             }
             $m['moving']=true; $m['moveStartMs']=$now; $m['direction']=$direction;
             $state[$key]=$m; $this->WriteMotorState($state);
@@ -1244,6 +1272,19 @@ class ZeptrionAir extends IPSModule
         $expectUp=(int)round($position*$up/100);
         $expectDown=(int)round((100-$position)*$down/100);
         $errUp=abs($elapsed-$expectUp); $errDown=abs($elapsed-$expectDown);
+
+        // Eigene Blendenfahrt: chnotify bestaetigt nur unseren Befehl.
+        // Der Drehgrad wurde bereits in RequestAction gesetzt und bleibt dort;
+        // die Rollo-Position wird dabei nicht veraendert.
+        if (array_key_exists('lamellaCommandTarget',$m)) {
+            $targetLamella=max(0,min(100,(int)$m['lamellaCommandTarget']));
+            $newPosition=$position;
+            $this->SendDebug('LAMELLE SOLL','ch'.$channel.' chnotify nur Rueckmeldung | Soll='.$targetLamella.'% | Position bleibt '.$position.'%',0);
+            $m['moving']=false; $m['direction']='';
+            unset($m['lamellaCommandTarget'],$m['lamellaCommandDirection']);
+            $state[$key]=$m; $this->WriteMotorState($state);
+            return;
+        }
 
         // Eigene Fahrt ueber die Positionsvariable: Die Variable wurde bereits
         // im RequestAction auf das Soll gesetzt. chnotify ist hier nur Rueckmeldung
