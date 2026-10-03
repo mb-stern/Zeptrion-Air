@@ -727,6 +727,7 @@ class ZeptrionAir extends IPSModule
                 $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
                     'commandDirection' => $target > $current ? 'down' : 'up',
                     'commandTarget' => $target,
+                    'commandActive' => true,
                     // Physische Ausgangsposition separat merken. Die sichtbare
                     // Positionsvariable darf sofort den angeforderten Sollwert
                     // anzeigen und bleibt dort bis die Fahrt beendet ist.
@@ -746,7 +747,7 @@ class ZeptrionAir extends IPSModule
                 }
                 if (!$this->SendCommand($channel, $command)) {
                     $state = $this->ReadMotorState();
-                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition']);
+                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition'], $state[$key]['commandActive']);
                     $this->WriteMotorState($state);
                 } else {
                     // Bedienvariable als Sollwert behandeln: Nach dem Schalten
@@ -1252,6 +1253,7 @@ class ZeptrionAir extends IPSModule
         $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
         $direction=(string)($m['direction']??'unknown');
         $commandTarget=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null;
+        $commandActive=(bool)($m['commandActive']??false);
         $up=$this->EffectiveMotorTime($channel,'up');
         $down=$this->EffectiveMotorTime($channel,'down');
         $expectUp=(int)round($position*$up/100);
@@ -1264,7 +1266,7 @@ class ZeptrionAir extends IPSModule
         // HOCH (= Drehgrad Richtung 100 %); nach HOCH entsprechend RUNTER.
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
-        $isShortLamella = $commandTarget===null
+        $isShortLamella = !$commandActive && $commandTarget===null
             && strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter'
             && $elapsed>0 && $elapsed<$lamellaTime
             && ($lastDirection==='down' || $lastDirection==='up');
@@ -1314,16 +1316,21 @@ class ZeptrionAir extends IPSModule
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
             $this->SendDebug('LAMELLE','ch'.$channel.' kurze Gegenfahrt '.$elapsed.'ms | Richtung='.$direction.' | Drehgrad='.$newLamella.'% | Position bleibt '.$newPosition.'%',0);
         } else {
-            if ($commandTarget!==null) {
+            if ($commandActive && $commandTarget!==null) {
+                // Eigener Positionsbefehl: Der Benutzer-Sollwert wurde bereits
+                // beim RequestAction gesetzt. chnotify darf ihn waehrend dieser
+                // Fahrt weder zuruecksetzen noch mit Zwischenwerten ueberschreiben.
                 $newPosition=max(0,min(100,$commandTarget));
+                $this->SendDebug('ROLLO SOLL','ch'.$channel.' eigener Positionsbefehl aktiv -> Variable bleibt '.$newPosition.'%',0);
             } elseif ($direction==='up') {
                 $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
                 if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
+                $this->SetMotorPosition($channel,$newPosition);
             } else {
                 $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
                 if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
+                $this->SetMotorPosition($channel,$newPosition);
             }
-            $this->SetMotorPosition($channel,$newPosition);
             if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                 if ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
                 elseif ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
@@ -1331,7 +1338,7 @@ class ZeptrionAir extends IPSModule
             $m['lastDirection']=$direction;
         }
         $m['moving']=false; $m['direction']='';
-        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['startLamella']);
+        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['commandActive'],$m['startLamella']);
         $state[$key]=$m; $this->WriteMotorState($state);
         $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Position='.$newPosition.'%',0);
     }
