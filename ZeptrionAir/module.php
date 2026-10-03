@@ -37,6 +37,7 @@ class ZeptrionAir extends IPSModule
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
+        $this->SetBuffer('PositionCommandLocks', '{}');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
@@ -722,8 +723,14 @@ class ZeptrionAir extends IPSModule
                 if ($target === $current) {
                     return;
                 }
-                $state = $this->ReadMotorState();
                 $key = (string)$channel;
+                $this->SetPositionCommandLock($channel, [
+                    'active' => true,
+                    'start' => $current,
+                    'target' => $target,
+                    'direction' => $target > $current ? 'down' : 'up'
+                ]);
+                $state = $this->ReadMotorState();
                 $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
                     'commandDirection' => $target > $current ? 'down' : 'up',
                     'commandTarget' => $target,
@@ -749,6 +756,7 @@ class ZeptrionAir extends IPSModule
                     $state = $this->ReadMotorState();
                     unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition'], $state[$key]['commandActive']);
                     $this->WriteMotorState($state);
+                    $this->ClearPositionCommandLock($channel);
                 } else {
                     // Bedienvariable als Sollwert behandeln: Nach dem Schalten
                     // bleibt der gewählte Wert sichtbar und springt nicht auf die
@@ -1224,16 +1232,23 @@ class ZeptrionAir extends IPSModule
         }
 
         if ($value === 100) {
-            $commandActive=(bool)($m['commandActive']??false);
-            $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
+            $commandLock=$this->GetPositionCommandLock($channel);
+            $commandActive=(bool)($commandLock['active']??false);
+            $position=$commandActive
+                ? max(0,min(100,(int)($commandLock['start']??$this->GetMotorPosition($channel))))
+                : (array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel));
             if ($commandActive) {
-                $direction=(string)($m['commandDirection']??'');
+                $direction=(string)($commandLock['direction']??'');
+                $target=max(0,min(100,(int)($commandLock['target']??$position)));
                 if ($direction!=='up' && $direction!=='down') {
-                    $target=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:$position;
                     $direction=$target>$position?'down':($target<$position?'up':'unknown');
-                    $m['commandDirection']=$direction;
                 }
-                $this->SendDebug('ROLLO SOLL','ch'.$channel.' START eigener Positionsbefehl | Start='.$position.'% | Ziel='.(int)($m['commandTarget']??$position).'% | Richtung='.$direction,0);
+                // Runtime-State nur spiegeln; die unabhaengige Sperre ist massgeblich.
+                $m['commandActive']=true;
+                $m['commandDirection']=$direction;
+                $m['commandTarget']=$target;
+                $m['commandStartPosition']=$position;
+                $this->SendDebug('ROLLO SOLL','ch'.$channel.' START eigener Positionsbefehl | Start='.$position.'% | Ziel='.$target.'% | Richtung='.$direction,0);
             } else {
                 $direction=(string)($m['commandDirection']??'');
                 if ($direction==='') {
@@ -1263,8 +1278,16 @@ class ZeptrionAir extends IPSModule
         $elapsed=max(0,$now-(int)($m['moveStartMs']??$now));
         $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
         $direction=(string)($m['direction']??'unknown');
-        $commandTarget=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null;
-        $commandActive=(bool)($m['commandActive']??false);
+        $commandLock=$this->GetPositionCommandLock($channel);
+        $commandActive=(bool)($commandLock['active']??false);
+        $commandTarget=$commandActive
+            ? max(0,min(100,(int)($commandLock['target']??$this->GetMotorPosition($channel))))
+            : (array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null);
+        if ($commandActive) {
+            $position=max(0,min(100,(int)($commandLock['start']??$position)));
+            $lockDirection=(string)($commandLock['direction']??'');
+            if ($lockDirection==='up' || $lockDirection==='down') $direction=$lockDirection;
+        }
         $up=$this->EffectiveMotorTime($channel,'up');
         $down=$this->EffectiveMotorTime($channel,'down');
         $expectUp=(int)round($position*$up/100);
@@ -1356,6 +1379,7 @@ class ZeptrionAir extends IPSModule
         $m['moving']=false; $m['direction']='';
         unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['commandActive'],$m['startLamella']);
         $state[$key]=$m; $this->WriteMotorState($state);
+        if ($commandActive) $this->ClearPositionCommandLock($channel);
         $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Position='.$newPosition.'%',0);
     }
 
@@ -1367,6 +1391,28 @@ class ZeptrionAir extends IPSModule
             ? 'Gelernte Fahrzeiten: HOCH '.number_format($up/1000,3,'.','').' s | RUNTER '.number_format($down/1000,3,'.','').' s'
             : 'Gelernte Fahrzeiten: noch nicht eingelernt';
     }
+    private function GetPositionCommandLock(int $channel): array
+    {
+        $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
+        if (!is_array($all)) return [];
+        $lock=$all[(string)$channel]??[];
+        return is_array($lock)?$lock:[];
+    }
+    private function SetPositionCommandLock(int $channel,array $lock): void
+    {
+        $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
+        if (!is_array($all)) $all=[];
+        $all[(string)$channel]=$lock;
+        $this->SetBuffer('PositionCommandLocks',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+    }
+    private function ClearPositionCommandLock(int $channel): void
+    {
+        $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
+        if (!is_array($all)) $all=[];
+        unset($all[(string)$channel]);
+        $this->SetBuffer('PositionCommandLocks',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+    }
+
     private function ReadMotorState(): array
     {
         $d=json_decode($this->ReadAttributeString('MotorRuntimeState'),true);
@@ -1402,7 +1448,16 @@ class ZeptrionAir extends IPSModule
     }
     private function SetMotorPosition(int $channel,int $position): void
     {
-        $this->SetValueIfChanged('Ch'.$channel.'Position',max(0,min(100,$position)));
+        $position=max(0,min(100,$position));
+        $lock=$this->GetPositionCommandLock($channel);
+        if ((bool)($lock['active']??false)) {
+            $target=max(0,min(100,(int)($lock['target']??$position)));
+            if ($position!==$target) {
+                $this->SendDebug('ROLLO SOLL','ch'.$channel.' Positionsschreibzugriff '.$position.'% blockiert | Soll='.$target.'%',0);
+                return;
+            }
+        }
+        $this->SetValueIfChanged('Ch'.$channel.'Position',$position);
         if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
             if ($position===0) $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
             elseif ($position===100) $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
