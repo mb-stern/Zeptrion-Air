@@ -208,19 +208,22 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             if (($responses[$chdesKey] ?? null) !== null) {
                 continue;
             }
-            for ($attempt = 2; $attempt <= 3; $attempt++) {
-                $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/3', 0);
-                usleep(200000);
+            // zApps beantworten /zrap/chdes teilweise deutlich später als /zrap/id.
+            // Deshalb gezielt länger nachladen, damit beim Anlegen die erkannten
+            // Kanaltypen/-namen vorhanden sind und nicht auf "unused" zurückfallen.
+            for ($attempt = 2; $attempt <= 6; $attempt++) {
+                $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/6', 0);
+                usleep($attempt <= 3 ? 300000 : 600000);
                 $single = $this->HttpXmlGetMulti([
                     $chdesKey => ['host' => $host, 'path' => '/zrap/chdes']
-                ], 2500, 5000);
+                ], 3000, 6500);
                 if (($single[$chdesKey] ?? null) !== null) {
                     $responses[$chdesKey] = $single[$chdesKey];
-                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - erfolgreich bei Versuch ' . $attempt . '/3', 0);
+                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - erfolgreich bei Versuch ' . $attempt . '/6', 0);
                     break;
                 }
-                if ($attempt === 3) {
-                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - nach 3 Versuchen keine Antwort', 0);
+                if ($attempt === 6) {
+                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - nach 6 Versuchen keine Antwort', 0);
                 }
             }
         }
