@@ -738,21 +738,10 @@ class ZeptrionAir extends IPSModule
                     // Endlagen immer komplett anfahren -> sicherer Synchronpunkt.
                     $command = $target === 0 ? 'open' : 'close';
                 } else {
-                    // Bei Jalousien muss vor der eigentlichen Positionsfahrt zuerst
-                    // der Drehgrad in Fahrtrichtung laufen: RUNTER -> 0 %, HOCH -> 100 %.
-                    // Diese Lamellenzeit wird zur Positionsfahrzeit addiert.
-                    $positionTime = $target > $current
+                    $time = $target > $current
                         ? (int)round(($target - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
                         : (int)round(($current - $target) * $this->EffectiveMotorTime($channel, 'up') / 100);
-                    $lamellaTime = 0;
-                    if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'shutter') {
-                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
-                        $currentLamella = $lamellaID > 0 ? max(0, min(100, (int)GetValue($lamellaID))) : ($target > $current ? 100 : 0);
-                        $fullLamellaTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
-                        $lamellaDelta = $target > $current ? $currentLamella : (100 - $currentLamella);
-                        $lamellaTime = (int)round($lamellaDelta * $fullLamellaTime / 100);
-                    }
-                    $time = max(100, min(32000, $positionTime + $lamellaTime));
+                    $time = max(100, min(32000, $time));
                     $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
                 }
                 if (!$this->SendCommand($channel, $command)) {
@@ -1239,6 +1228,19 @@ class ZeptrionAir extends IPSModule
             if ($direction==='') {
                 $direction=$position===0?'down':($position===100?'up':'unknown');
             }
+
+            // Drehgrad und Rollo-Position bewusst getrennt behandeln. Bei einer
+            // echten Fahrt gilt: HOCH = 100 %, RUNTER = 0 %. Den bisherigen
+            // Drehgrad merken wir jedoch, damit eine sehr kurze Gegenfahrt am
+            // Fahrtende noch als reine Lamellenverstellung erkannt werden kann.
+            $lamellaID=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
+            $startLamella=$lamellaID>0 ? max(0,min(100,(int)GetValue($lamellaID))) : ($direction==='up'?0:100);
+            $m['startLamella']=$startLamella;
+            if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
+                if ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
+                elseif ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+            }
+
             $m['moving']=true; $m['moveStartMs']=$now; $m['direction']=$direction;
             $state[$key]=$m; $this->WriteMotorState($state);
             $this->SendDebug('ROLLO','ch'.$channel.' START | Position='.$position.'% | Richtung='.$direction,0);
@@ -1261,58 +1263,45 @@ class ZeptrionAir extends IPSModule
             $this->SendDebug('ROLLO MATCH','ch'.$channel.' gemessen='.number_format($elapsed/1000,3,'.','').'s | UP→0='.number_format($expectUp/1000,3,'.','').'s Fehler='.number_format($errUp/1000,3,'.','').'s | DOWN→100='.number_format($expectDown/1000,3,'.','').'s Fehler='.number_format($errDown/1000,3,'.','').'s -> '.$direction,0);
         }
 
-        // Jalousie: Eine kurze Gegenfahrt dreht zuerst nur die Lamellen.
-        // RUNTER bedeutet Drehgrad 0 %, HOCH bedeutet Drehgrad 100 %.
-        // Erst die Zeit oberhalb der noch notwendigen Lamellen-Drehzeit zählt
-        // als echte Positionsfahrt. Dadurch bleibt bei kurzen Fahrten die
-        // Rollo-Position unverändert und nur der Drehgrad ändert sich.
-        $positionElapsed=$elapsed;
-        $lamellaOnly=false;
-        if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
-            $lamellaID=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
-            $currentLamella=$lamellaID>0?max(0,min(100,(int)GetValue($lamellaID))):($direction==='up'?0:100);
-            $fullLamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
-            if ($direction==='up') {
-                $neededLamellaTime=(int)round((100-$currentLamella)*$fullLamellaTime/100);
-                if ($elapsed <= $neededLamellaTime && $neededLamellaTime>0) {
-                    $newLamella=min(100,$currentLamella+(int)round($elapsed*100/$fullLamellaTime));
-                    $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
-                    $positionElapsed=0; $lamellaOnly=true;
-                } else {
-                    $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
-                    $positionElapsed=max(0,$elapsed-$neededLamellaTime);
-                }
-            } elseif ($direction==='down') {
-                $neededLamellaTime=(int)round($currentLamella*$fullLamellaTime/100);
-                if ($elapsed <= $neededLamellaTime && $neededLamellaTime>0) {
-                    $newLamella=max(0,$currentLamella-(int)round($elapsed*100/$fullLamellaTime));
-                    $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
-                    $positionElapsed=0; $lamellaOnly=true;
-                } else {
-                    $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-                    $positionElapsed=max(0,$elapsed-$neededLamellaTime);
-                }
-            }
-        }
+        // Nur eine *externe* kurze Gegenfahrt darf als reine Lamellenfahrt
+        // gewertet werden. Eigene Positionsbefehle behalten immer ihr Sollziel;
+        // dadurch springt die Bedienvariable während/kurz nach der Fahrt nicht
+        // auf einen berechneten Zwischenwert zurück.
+        $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
+        $lastDirection=(string)($m['lastDirection']??'');
+        $isShortLamella = $commandTarget===null
+            && strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter'
+            && $elapsed>0 && $elapsed<$lamellaTime
+            && (($lastDirection==='down' && $direction==='up') || ($lastDirection==='up' && $direction==='down'));
 
-        if ($commandTarget!==null) {
-            $newPosition=max(0,min(100,$commandTarget));
-        } elseif ($lamellaOnly) {
+        if ($isShortLamella) {
+            $startLamella=max(0,min(100,(int)($m['startLamella']??($direction==='up'?0:100))));
+            $delta=(int)round($elapsed*100/max(1,$lamellaTime));
+            $newLamella=$direction==='up' ? min(100,$startLamella+$delta) : max(0,$startLamella-$delta);
             $newPosition=$position;
-        } elseif ($direction==='up') {
-            $newPosition=max(0,$position-(int)round($positionElapsed*100/max(1,$up)));
-            if ($positionElapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
+            $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
+            $this->SendDebug('LAMELLE','ch'.$channel.' kurze Gegenfahrt '.$elapsed.'ms | Richtung='.$direction.' | Drehgrad='.$newLamella.'% | Position bleibt '.$newPosition.'%',0);
         } else {
-            $newPosition=min(100,$position+(int)round($positionElapsed*100/max(1,$down)));
-            if ($positionElapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
+            if ($commandTarget!==null) {
+                $newPosition=max(0,min(100,$commandTarget));
+            } elseif ($direction==='up') {
+                $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
+                if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
+            } else {
+                $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
+                if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
+            }
+            $this->SetMotorPosition($channel,$newPosition);
+            if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
+                if ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
+                elseif ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+            }
+            $m['lastDirection']=$direction;
         }
-        // Nicht SetMotorPosition() verwenden: Bei Jalousien wurde der Drehgrad
-        // oben bereits aus der real gemessenen Fahrtdauer bestimmt.
-        $this->SetValueIfChanged('Ch'.$channel.'Position',max(0,min(100,$newPosition)));
-        $m['moving']=false; $m['direction']=''; $m['lastDirection']=$direction;
-        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
+        $m['moving']=false; $m['direction']='';
+        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['startLamella']);
         $state[$key]=$m; $this->WriteMotorState($state);
-        $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Positionszeit='.$positionElapsed.'ms | Position='.$newPosition.'%'.($lamellaOnly?' | nur Drehgrad':''),0);
+        $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Position='.$newPosition.'%',0);
     }
 
     private function MotorLearnedTimeCaption(int $channel): string
