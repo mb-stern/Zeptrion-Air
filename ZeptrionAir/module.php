@@ -1324,13 +1324,25 @@ class ZeptrionAir extends IPSModule
 
             $channel=(int)$k;
             if (($v['type']??'')==='position' && array_key_exists('pendingLamella',$v)) {
+                // Positionsfahrt ist beendet. Gepufferte Blende NICHT sofort
+                // senden, sondern dem Aktor 500 ms zum Stillstand geben.
                 $target=max(0,min(100,(int)$v['pendingLamella']));
-                // Nach der Positionsfahrt ist die Blende entsprechend der
-                // Fahrtrichtung eindeutig 0 (runter) bzw. 100 (hoch).
                 $current=($v['direction']??'down')==='down'?0:100;
+                $all[$k]=[
+                    'type'=>'pendingLamellaDelay',
+                    'until'=>$now+500,
+                    'target'=>$target,
+                    'startLamella'=>$current
+                ];
+                $this->SendDebug('LAMELLE PUFFER','ch'.$channel.' Positionsfahrt beendet | 500ms Wartezeit vor Blende '.$target.'%',0);
+                continue;
+            }
+            if (($v['type']??'')==='pendingLamellaDelay') {
+                $target=max(0,min(100,(int)($v['target']??0)));
+                $current=max(0,min(100,(int)($v['startLamella']??0)));
                 unset($all[$k]);
                 $this->WriteOwnMotorStates($all);
-                $this->SetValueIfChanged('Ch'.$channel.'Lamella',$target);
+                $this->SendDebug('LAMELLE PUFFER','ch'.$channel.' Wartezeit beendet | Blende '.$current.'% -> '.$target.'%',0);
                 $this->StartOwnLamellaMove($channel,$target,$current);
                 $all=$this->ReadOwnMotorStates();
                 continue;
@@ -1374,9 +1386,14 @@ class ZeptrionAir extends IPSModule
             return;
         }
         $fullTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
-        $time=max(100,min(32000,(int)round(abs($target-$current)*$fullTime/100)));
+        $calculatedTime=max(1,(int)round(abs($target-$current)*$fullTime/100));
+        // Sehr kurze Pulse werden vom Aktor nicht immer als sichtbare
+        // Lamellenfahrt ausgefuehrt. Fuer eigene Lamellenbefehle mindestens
+        // 500 ms senden; die Sollvariable bleibt trotzdem der gewaehlte Wert.
+        $time=max(500,min(32000,$calculatedTime));
         $direction=$target>$current?'up':'down';
         $command=$direction==='up'?'move_open_'.$time:'move_close_'.$time;
+        $this->SendDebug('LAMELLE EXEC','ch'.$channel.' Puffer/Variablenbefehl '.$current.'% -> '.$target.'% | berechnet='.$calculatedTime.'ms | gesendet='.$time.'ms',0);
         if ($this->SendCommand($channel,$command)) {
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$target);
             $now=(int)round(microtime(true)*1000);
