@@ -55,6 +55,54 @@ class ZeptrionAir extends IPSModule
             }
         }
     }
+    private function RegisterHook(string $hook): void
+    {
+        $hook = trim($hook, '/');
+        if ($hook === '') {
+            return;
+        }
+
+        $webHookControls = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F05AE9B93}');
+        if ($webHookControls === []) {
+            $this->SendDebug('Smart-Taster', 'WebHook Control nicht gefunden', 0);
+            return;
+        }
+
+        $webHookID = (int)$webHookControls[0];
+        $hooks = json_decode(IPS_GetProperty($webHookID, 'Hooks'), true);
+        if (!is_array($hooks)) {
+            $hooks = [];
+        }
+
+        $changed = false;
+        $found = false;
+        foreach ($hooks as &$entry) {
+            if (!is_array($entry) || (string)($entry['Hook'] ?? '') !== '/' . $hook) {
+                continue;
+            }
+            $found = true;
+            if ((int)($entry['TargetID'] ?? 0) !== $this->InstanceID) {
+                $entry['TargetID'] = $this->InstanceID;
+                $changed = true;
+            }
+            break;
+        }
+        unset($entry);
+
+        if (!$found) {
+            $hooks[] = [
+                'Hook' => '/' . $hook,
+                'TargetID' => $this->InstanceID
+            ];
+            $changed = true;
+        }
+
+        if ($changed) {
+            IPS_SetProperty($webHookID, 'Hooks', json_encode($hooks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            IPS_ApplyChanges($webHookID);
+        }
+    }
+
     public function GetCompatibleParents(): string
     {
         return json_encode(['type' => 'require', 'moduleIDs' => [self::CS]], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
