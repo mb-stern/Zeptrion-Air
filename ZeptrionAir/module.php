@@ -1224,10 +1224,21 @@ class ZeptrionAir extends IPSModule
         }
 
         if ($value === 100) {
+            $commandActive=(bool)($m['commandActive']??false);
             $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
-            $direction=(string)($m['commandDirection']??'');
-            if ($direction==='') {
-                $direction=$position===0?'down':($position===100?'up':'unknown');
+            if ($commandActive) {
+                $direction=(string)($m['commandDirection']??'');
+                if ($direction!=='up' && $direction!=='down') {
+                    $target=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:$position;
+                    $direction=$target>$position?'down':($target<$position?'up':'unknown');
+                    $m['commandDirection']=$direction;
+                }
+                $this->SendDebug('ROLLO SOLL','ch'.$channel.' START eigener Positionsbefehl | Start='.$position.'% | Ziel='.(int)($m['commandTarget']??$position).'% | Richtung='.$direction,0);
+            } else {
+                $direction=(string)($m['commandDirection']??'');
+                if ($direction==='') {
+                    $direction=$position===0?'down':($position===100?'up':'unknown');
+                }
             }
 
             // Drehgrad und Rollo-Position bewusst getrennt behandeln. Bei einer
@@ -1260,6 +1271,11 @@ class ZeptrionAir extends IPSModule
         $expectDown=(int)round((100-$position)*$down/100);
         $errUp=abs($elapsed-$expectUp); $errDown=abs($elapsed-$expectDown);
 
+        if ($commandActive && $direction!=='up' && $direction!=='down') {
+            $direction=$commandTarget!==null && $commandTarget>$position?'down':'up';
+            $this->SendDebug('ROLLO SOLL','ch'.$channel.' Richtung am Fahrtende aus Sollziel wiederhergestellt -> '.$direction,0);
+        }
+
         // Kurze externe Fahrt bei einer Jalousie zuerst als Lamellenbewegung
         // beurteilen, BEVOR eine unbekannte Richtung per Laufzeit-Match bestimmt
         // wird. Nach einer sicheren RUNTER-Fahrt bedeutet die kurze Gegenfahrt
@@ -1274,7 +1290,7 @@ class ZeptrionAir extends IPSModule
         if ($isShortLamella) {
             $direction=$lastDirection==='down' ? 'up' : 'down';
         } else {
-            if ($direction==='unknown') {
+            if (!$commandActive && $direction==='unknown') {
                 // Plausibilitaet vor Best-Match: Eine Richtung ist ausgeschlossen,
                 // wenn die gemessene Fahrt deutlich laenger als die von der aktuellen
                 // Position maximal moegliche Restfahrt bis zu diesem Anschlag dauert.
