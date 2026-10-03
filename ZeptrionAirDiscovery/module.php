@@ -3,6 +3,7 @@ declare(strict_types=1);
 class ZeptrionAirDiscovery extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
+    private const CLIENT_SOCKET_MODULE_ID = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
     private const ZEROCONF_MODULE_ID = '{780B2D48-916C-4D59-AD35-5A429B2355A5}';
 
     public function Create(): void
@@ -69,11 +70,25 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'ShowSoftwareInfo' => false,
                         'ShowChannelActualValues' => false
                     ]
+                ], [
+                    'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host,
+                        'Port' => 80,
+                        'Open' => true
+                    ]
                 ]];
             } elseif ($reachable && $instance !== null) {
                 $rows[$host]['create'] = [[
                     'moduleID' => self::DEVICE_MODULE_ID,
                     'configuration' => ['Host' => $host]
+                ], [
+                    'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host,
+                        'Port' => 80,
+                        'Open' => true
+                    ]
                 ]];
             }
         }
