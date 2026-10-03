@@ -38,6 +38,7 @@ class ZeptrionAir extends IPSModule
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
         $this->SetBuffer('PositionCommandLocks', '{}');
+        $this->SetBuffer('PositionNotifyIgnore', '{}');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
@@ -752,11 +753,27 @@ class ZeptrionAir extends IPSModule
                     $time = max(100, min(32000, $time));
                     $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
                 }
+                // Eigene Positionsfahrt: chnotify ist waehrend der erwarteten
+                // Befehlsdauer nur Rueckmeldung und darf Position/Lamelle nicht
+                // berechnen oder veraendern. Etwas Nachlauf deckt verzögerte
+                // START/ENDE-Events ab.
+                if ($target === 0 || $target === 100) {
+                    $ownDuration = $target === 0
+                        ? (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100)
+                        : (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100);
+                    // Endlagenbefehle duerfen physisch etwas laenger laufen.
+                    $ownDuration += 2000;
+                } else {
+                    $ownDuration = $time;
+                }
+                $this->SetPositionNotifyIgnore($channel, $target, max(500, $ownDuration + 1500));
+
                 if (!$this->SendCommand($channel, $command)) {
                     $state = $this->ReadMotorState();
                     unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition'], $state[$key]['commandActive']);
                     $this->WriteMotorState($state);
                     $this->ClearPositionCommandLock($channel);
+                    $this->ClearPositionNotifyIgnore($channel);
                 } else {
                     // Bedienvariable als Sollwert behandeln: Nach dem Schalten
                     // bleibt der gewählte Wert sichtbar und springt nicht auf die
@@ -1231,6 +1248,21 @@ class ZeptrionAir extends IPSModule
             return;
         }
 
+        $notifyIgnore=$this->GetPositionNotifyIgnore($channel);
+        if ((bool)($notifyIgnore['active']??false)) {
+            $until=(int)($notifyIgnore['until']??0);
+            if ($now <= $until) {
+                $target=max(0,min(100,(int)($notifyIgnore['target']??$this->GetMotorPosition($channel))));
+                $this->SendDebug('ROLLO SOLL','ch'.$channel.' chnotify nur Rueckmeldung | Event='.$value.' | Soll='.$target.'% | keine Positions-/Lamellenberechnung',0);
+                return;
+            }
+            $this->ClearPositionNotifyIgnore($channel);
+            $this->ClearPositionCommandLock($channel);
+            unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition'],$m['commandActive'],$m['startLamella']);
+            $state[$key]=$m;
+            $this->WriteMotorState($state);
+        }
+
         if ($value === 100) {
             $commandLock=$this->GetPositionCommandLock($channel);
             $commandActive=(bool)($commandLock['active']??false);
@@ -1391,6 +1423,32 @@ class ZeptrionAir extends IPSModule
             ? 'Gelernte Fahrzeiten: HOCH '.number_format($up/1000,3,'.','').' s | RUNTER '.number_format($down/1000,3,'.','').' s'
             : 'Gelernte Fahrzeiten: noch nicht eingelernt';
     }
+    private function GetPositionNotifyIgnore(int $channel): array
+    {
+        $all=json_decode($this->GetBuffer('PositionNotifyIgnore'),true);
+        if (!is_array($all)) return [];
+        $entry=$all[(string)$channel]??[];
+        return is_array($entry)?$entry:[];
+    }
+    private function SetPositionNotifyIgnore(int $channel,int $target,int $durationMs): void
+    {
+        $all=json_decode($this->GetBuffer('PositionNotifyIgnore'),true);
+        if (!is_array($all)) $all=[];
+        $all[(string)$channel]=[
+            'active'=>true,
+            'target'=>max(0,min(100,$target)),
+            'until'=>(int)round(microtime(true)*1000)+max(500,$durationMs)
+        ];
+        $this->SetBuffer('PositionNotifyIgnore',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+    }
+    private function ClearPositionNotifyIgnore(int $channel): void
+    {
+        $all=json_decode($this->GetBuffer('PositionNotifyIgnore'),true);
+        if (!is_array($all)) $all=[];
+        unset($all[(string)$channel]);
+        $this->SetBuffer('PositionNotifyIgnore',json_encode($all,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+    }
+
     private function GetPositionCommandLock(int $channel): array
     {
         $all=json_decode($this->GetBuffer('PositionCommandLocks'),true);
