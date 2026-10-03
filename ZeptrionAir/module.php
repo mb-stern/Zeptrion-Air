@@ -108,6 +108,16 @@ class ZeptrionAir extends IPSModule
         return json_encode(['type' => 'require', 'moduleIDs' => [self::CS]], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
+    public function GetConfigurationForParent()
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        return json_encode([
+            'Host' => $host,
+            'Port' => 80,
+            'Open' => true
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
     public function GetConfigurationForm(): string
     {
         $elements = [];

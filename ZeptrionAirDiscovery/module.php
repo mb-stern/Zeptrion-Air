@@ -3,7 +3,8 @@ declare(strict_types=1);
 class ZeptrionAirDiscovery extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
-    private const SPLITTER_MODULE_ID = '{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}';
+    private const SPLITTER_MODULE_ID = '{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}'; // nur Migration/Bestand
+    private const CLIENT_SOCKET_MODULE_ID = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
     private const ZEROCONF_MODULE_ID = '{780B2D48-916C-4D59-AD35-5A429B2355A5}';
 
     public function Create(): void
@@ -79,16 +80,24 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'ShowChannelActualValues' => false
                     ]
                 ], [
-                    'moduleID' => self::SPLITTER_MODULE_ID,
-                    'configuration' => []
+                    'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host,
+                        'Port' => 80,
+                        'Open' => true
+                    ]
                 ]];
             } elseif ($reachable && $instance !== null) {
                 $rows[$host]['create'] = [[
                     'moduleID' => self::DEVICE_MODULE_ID,
                     'configuration' => ['Host' => $host]
                 ], [
-                    'moduleID' => self::SPLITTER_MODULE_ID,
-                    'configuration' => []
+                    'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host,
+                        'Port' => 80,
+                        'Open' => true
+                    ]
                 ]];
             }
         }
@@ -143,6 +152,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $count = count($found);
             if ($attempt > 1 && $count === $previousCount) break;
             $previousCount = $count;
+            if ($attempt < 3) usleep(250000);
         }
         $this->CollectServices($zcID, '_http._tcp', true, $found);
         $this->EnrichDevicesParallel($found);
@@ -209,6 +219,7 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             }
             for ($attempt = 2; $attempt <= 3; $attempt++) {
                 $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/3', 0);
+                usleep(200000);
                 $single = $this->HttpXmlGetMulti([
                     $chdesKey => ['host' => $host, 'path' => '/zrap/chdes']
                 ], 2500, 5000);
