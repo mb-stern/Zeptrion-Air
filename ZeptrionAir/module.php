@@ -1302,15 +1302,29 @@ class ZeptrionAir extends IPSModule
                 else $direction=$errUp<=$errDown?'up':'down';
                 $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
             }
-            if ($direction==='up') {
-                $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
-                if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
+            if ($type==='shutter' && $endPositionForcesTravel && $elapsed<$lamellaTime) {
+                // Direkt aus einer Endlage bewegt sich zuerst die Lamelle.
+                // Beispiel: Lamellenzeit 1000 ms, 300 ms HOCH aus 100 %
+                // => Position bleibt 100 %, Lamelle ca. 30 % geschlossen
+                // bzw. 70 % offen (Skala 0=geschlossen, 100=offen).
+                $newPosition=$position;
+                $fraction=max(0.0,min(1.0,$elapsed/max(1,$lamellaTime)));
+                $newLamella=$direction==='up'
+                    ? max(0,min(100,(int)round(100-(100*$fraction))))
+                    : max(0,min(100,(int)round(100*$fraction)));
+                $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
+                $this->SendDebug('LAMELLE ENDSLAGE','ch'.$channel.' '.$elapsed.'ms / '.$lamellaTime.'ms | Richtung='.$direction.' | Drehgrad='.$newLamella.'% | Position bleibt '.$position.'%',0);
             } else {
-                $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
-                if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
+                if ($direction==='up') {
+                    $newPosition=max(0,$position-(int)round($elapsed*100/max(1,$up)));
+                    if ($elapsed >= $expectUp-max(750,(int)round($expectUp*0.08))) $newPosition=0;
+                } else {
+                    $newPosition=min(100,$position+(int)round($elapsed*100/max(1,$down)));
+                    if ($elapsed >= $expectDown-max(750,(int)round($expectDown*0.08))) $newPosition=100;
+                }
+                $this->SetMotorPosition($channel,$newPosition);
+                if ($type==='shutter') $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
             }
-            $this->SetMotorPosition($channel,$newPosition);
-            if ($type==='shutter') $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
             $m['lastDirection']=$direction;
         }
         $m['moving']=false; $m['direction']=''; $m['lastDirection']=$direction;
