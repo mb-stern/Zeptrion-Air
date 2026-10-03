@@ -1309,9 +1309,14 @@ class ZeptrionAir extends IPSModule
                 // bzw. 70 % offen (Skala 0=geschlossen, 100=offen).
                 $newPosition=$position;
                 $fraction=max(0.0,min(1.0,$elapsed/max(1,$lamellaTime)));
+                // In den ersten Lamellenzeit-ms ab einer Endlage bewegt sich
+                // nur die Lamelle. Die Prozentzahl entspricht direkt dem bereits
+                // durchlaufenen Anteil dieser Lamellenzeit:
+                // unten -> HOCH: 0 % geschlossen -> Richtung 100 % offen
+                // oben  -> RUNTER: 100 % offen -> Richtung 0 % geschlossen.
                 $newLamella=$direction==='up'
-                    ? max(0,min(100,(int)round(100-(100*$fraction))))
-                    : max(0,min(100,(int)round(100*$fraction)));
+                    ? max(0,min(100,(int)round(100*$fraction)))
+                    : max(0,min(100,(int)round(100-(100*$fraction))));
                 $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
                 $this->SendDebug('LAMELLE ENDSLAGE','ch'.$channel.' '.$elapsed.'ms / '.$lamellaTime.'ms | Richtung='.$direction.' | Drehgrad='.$newLamella.'% | Position bleibt '.$position.'%',0);
             } else {
