@@ -9,7 +9,7 @@ class ZeptrionAir extends IPSModule
     public function Create(): void
     {
         parent::Create();
-        $this->RequireParent(self::CS);
+        $this->RequireParent(self::TX);
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -750,8 +750,7 @@ class ZeptrionAir extends IPSModule
                         'type'=>'position','startMs'=>$nowMs,'until'=>$nowMs+$duration,
                         'startPosition'=>$current,'target'=>$target,'direction'=>$direction
                     ]);
-                    $motorType=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
-                    $this->SendDebug($motorType==='awning'?'MARKISE SOLL':'ROLLO SOLL','ch'.$channel.' physisch~'.$current.'% -> Soll '.$target.'% | '.$direction.' | '.$duration.'ms',0);
+                    $this->SendDebug('ROLLO SOLL','ch'.$channel.' physisch~'.$current.'% -> Soll '.$target.'% | '.$direction.' | '.$duration.'ms',0);
                 }
                 return;
             case 'Lamella':
