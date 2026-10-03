@@ -1240,7 +1240,10 @@ class ZeptrionAir extends IPSModule
             $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
             $direction=(string)($m['commandDirection']??'');
             if ($direction==='') {
-                $direction=$position===0?'down':($position===100?'up':'unknown');
+                // Externer Schalter: An den Endlagen ist die Richtung physisch
+                // eindeutig. 100%=unten -> nur HOCH moeglich; 0%=oben -> nur
+                // RUNTER moeglich. (Positionsskala: 0 offen/oben, 100 unten.)
+                $direction=$position===100?'up':($position===0?'down':'unknown');
             }
             if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                 if ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
