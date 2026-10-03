@@ -714,54 +714,43 @@ class ZeptrionAir extends IPSModule
                 }
                 return;
             case 'Position':
-                // Rollo/Markise: 0 % = offen/eingefahren, 100 % = geschlossen/ausgefahren.
-                $target = max(0, min(100, (int)$Value));
-                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-                $target = max(0, min(100, (int)round($target / $step) * $step));
-                $ident = 'Ch' . $channel . 'Position';
-                $id = $this->FindManagedVariableID($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-                if ($target === $current) {
-                    return;
-                }
-                $state = $this->ReadMotorState();
-                $key = (string)$channel;
-                $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
-                    'commandDirection' => $target > $current ? 'down' : 'up',
-                    'commandTarget' => $target,
-                    // Physische Ausgangsposition separat merken. Die sichtbare
-                    // Positionsvariable darf sofort den angeforderten Sollwert
-                    // anzeigen und bleibt dort bis die Fahrt beendet ist.
-                    'commandStartPosition' => $current
-                ]);
-                $this->WriteMotorState($state);
-
-                if ($target === 0 || $target === 100) {
-                    // Endlagen immer komplett anfahren -> sicherer Synchronpunkt.
-                    $command = $target === 0 ? 'open' : 'close';
+                $target=max(0,min(100,(int)$Value));
+                $step=max(1,min(100,$this->ReadPropertyInteger('Channel'.$channel.'StepPercent')));
+                $target=max(0,min(100,(int)round($target/$step)*$step));
+                $ident='Ch'.$channel.'Position';
+                $nowMs=(int)round(microtime(true)*1000);
+                $own=$this->GetOwnMotorState($channel);
+                if (($own['type']??'')==='position' && $nowMs<=(int)($own['until']??0)) {
+                    $current=$this->EstimateOwnPhysicalPosition($channel,$own,$nowMs);
                 } else {
-                    $time = $target > $current
-                        ? (int)round(($target - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
-                        : (int)round(($current - $target) * $this->EffectiveMotorTime($channel, 'up') / 100);
-                    $time = max(100, min(32000, $time));
-                    $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
+                    $id=$this->FindManagedVariableID($ident); $current=$id>0?(int)GetValue($id):0;
                 }
-                if (!$this->SendCommand($channel, $command)) {
-                    $state = $this->ReadMotorState();
-                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition']);
-                    $this->WriteMotorState($state);
+                $current=max(0,min(100,$current));
+                if ($target===$current) { $this->SetMotorPosition($channel,$target); return; }
+                $direction=$target>$current?'down':'up';
+                if ($target===0 || $target===100) {
+                    $command=$target===0?'open':'close';
+                    $duration=$direction==='down'
+                        ? (int)round((100-$current)*$this->EffectiveMotorTime($channel,'down')/100)
+                        : (int)round($current*$this->EffectiveMotorTime($channel,'up')/100);
+                    $duration=max(500,$duration)+1500;
                 } else {
-                    // Eigene Bedienung: Sollwert ist allein massgeblich.
-                    $this->SetMotorPosition($channel, $target);
-                    $duration = ($target === 0 || $target === 100)
-                        ? max(500, ($target === 0
-                            ? (int)round($current * $this->EffectiveMotorTime($channel,'up') / 100)
-                            : (int)round((100-$current) * $this->EffectiveMotorTime($channel,'down') / 100)) + 1500)
-                        : $time;
-                    $this->SetOwnMotorState($channel, [
-                        'type'=>'position','until'=>(int)round(microtime(true)*1000)+$duration,
-                        'target'=>$target
+                    $duration=$direction==='down'
+                        ? (int)round(($target-$current)*$this->EffectiveMotorTime($channel,'down')/100)
+                        : (int)round(($current-$target)*$this->EffectiveMotorTime($channel,'up')/100);
+                    $duration=max(100,min(32000,$duration));
+                    $command=$direction==='down'?'move_close_'.$duration:'move_open_'.$duration;
+                }
+                if ($this->SendCommand($channel,$command)) {
+                    $this->SetMotorPosition($channel,$target);
+                    if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
+                        $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='down'?0:100);
+                    }
+                    $this->SetOwnMotorState($channel,[
+                        'type'=>'position','startMs'=>$nowMs,'until'=>$nowMs+$duration,
+                        'startPosition'=>$current,'target'=>$target,'direction'=>$direction
                     ]);
+                    $this->SendDebug('ROLLO SOLL','ch'.$channel.' physisch~'.$current.'% -> Soll '.$target.'% | '.$direction.' | '.$duration.'ms',0);
                 }
                 return;
             case 'Lamella':
@@ -1351,6 +1340,20 @@ class ZeptrionAir extends IPSModule
     private function ClearOwnMotorState(int $channel): void
     {
         $all=$this->ReadOwnMotorStates(); unset($all[(string)$channel]); $this->WriteOwnMotorStates($all);
+    }
+
+    private function EstimateOwnPhysicalPosition(int $channel,array $own,int $nowMs): int
+    {
+        $start=max(0,min(100,(int)($own['startPosition']??0)));
+        $elapsed=max(0,$nowMs-(int)($own['startMs']??$nowMs));
+        $direction=(string)($own['direction']??'');
+        if ($direction==='down') {
+            return min(100,$start+(int)round($elapsed*100/max(1,$this->EffectiveMotorTime($channel,'down'))));
+        }
+        if ($direction==='up') {
+            return max(0,$start-(int)round($elapsed*100/max(1,$this->EffectiveMotorTime($channel,'up'))));
+        }
+        return $start;
     }
 
     private function ReadMotorState(): array
