@@ -30,10 +30,12 @@ class ZeptrionAir extends IPSModule
         $this->RegisterPropertyInteger('RecoveryInterval', 10);
         $this->RegisterTimer('RecoveryTimer', 0, 'ZEPA_RecoveryTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('LearnKickTimer', 0, 'ZEPA_LearnKickTick($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('MotorCommandTimer', 0, 'ZEPA_MotorCommandTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
         $this->RegisterAttributeInteger('CommunicationFailures', 0);
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
         $this->RegisterAttributeString('MotorRuntimeState', '{}');
+        $this->RegisterAttributeString('MotorCommandState', '{}');
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
@@ -712,83 +714,61 @@ class ZeptrionAir extends IPSModule
                 }
                 return;
             case 'Position':
-                // Rollo/Markise: 0 % = offen/eingefahren, 100 % = geschlossen/ausgefahren.
-                $target = max(0, min(100, (int)$Value));
-                $step = max(1, min(100, $this->ReadPropertyInteger('Channel' . $channel . 'StepPercent')));
-                $target = max(0, min(100, (int)round($target / $step) * $step));
-                $ident = 'Ch' . $channel . 'Position';
-                $id = $this->FindManagedVariableID($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-                if ($target === $current) {
-                    return;
-                }
-                $state = $this->ReadMotorState();
-                $key = (string)$channel;
-                $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
-                    'commandDirection' => $target > $current ? 'down' : 'up',
-                    'commandTarget' => $target,
-                    // Physische Ausgangsposition separat merken. Die sichtbare
-                    // Positionsvariable darf sofort den angeforderten Sollwert
-                    // anzeigen und bleibt dort bis die Fahrt beendet ist.
-                    'commandStartPosition' => $current
-                ]);
-                $this->WriteMotorState($state);
-
-                if ($target === 0 || $target === 100) {
-                    // Endlagen immer komplett anfahren -> sicherer Synchronpunkt.
-                    $command = $target === 0 ? 'open' : 'close';
+                $target=max(0,min(100,(int)$Value));
+                $step=max(1,min(100,$this->ReadPropertyInteger('Channel'.$channel.'StepPercent')));
+                $target=max(0,min(100,(int)round($target/$step)*$step));
+                $ident='Ch'.$channel.'Position';
+                $cmdState=$this->ReadMotorCommandState(); $ckey=(string)$channel;
+                $cs=is_array($cmdState[$ckey]??null)?$cmdState[$ckey]:[];
+                $nowMs=(int)round(microtime(true)*1000);
+                if (($cs['type']??'')==='position' && $nowMs<(int)($cs['endMs']??0)) {
+                    $current=$this->EstimateOwnMotorPosition($cs,$nowMs);
                 } else {
-                    $time = $target > $current
-                        ? (int)round(($target - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
-                        : (int)round(($current - $target) * $this->EffectiveMotorTime($channel, 'up') / 100);
-                    $time = max(100, min(32000, $time));
-                    $command = $target > $current ? 'move_close_' . $time : 'move_open_' . $time;
+                    $id=$this->FindManagedVariableID($ident); $current=$id>0?(int)GetValue($id):0;
                 }
-                if (!$this->SendCommand($channel, $command)) {
-                    $state = $this->ReadMotorState();
-                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition']);
-                    $this->WriteMotorState($state);
+                if ($target===$current && (($cs['type']??'')!=='position')) return;
+                $direction=$target>$current?'down':'up';
+                if ($target===0 || $target===100) {
+                    $command=$target===0?'open':'close';
+                    $duration=$direction==='down'
+                        ? (int)round((100-$current)*$this->EffectiveMotorTime($channel,'down')/100)
+                        : (int)round($current*$this->EffectiveMotorTime($channel,'up')/100);
+                    $duration=max(100,$duration)+1500;
                 } else {
-                    // Bedienvariable als Sollwert behandeln: Nach dem Schalten
-                    // bleibt der gewählte Wert sichtbar und springt nicht auf die
-                    // alte Position zurück, während der Rollo noch fährt.
-                    $this->SetMotorPosition($channel, $target);
+                    $duration=$direction==='down'
+                        ? (int)round(($target-$current)*$this->EffectiveMotorTime($channel,'down')/100)
+                        : (int)round(($current-$target)*$this->EffectiveMotorTime($channel,'up')/100);
+                    $duration=max(100,min(32000,$duration));
+                    $command=$direction==='down'?'move_close_'.$duration:'move_open_'.$duration;
+                }
+                if ($this->SendCommand($channel,$command)) {
+                    $this->SetMotorPosition($channel,$target);
+                    $oldPending=$cs['pendingLamella']??null;
+                    $cmdState=$this->ReadMotorCommandState();
+                    $cmdState[$ckey]=['type'=>'position','startMs'=>$nowMs,'endMs'=>$nowMs+$duration,
+                        'startPosition'=>$current,'target'=>$target,'direction'=>$direction,'pendingLamella'=>$oldPending];
+                    $this->WriteMotorCommandState($cmdState);
+                    $this->SetTimerInterval('MotorCommandTimer',100);
+                    $this->SendDebug('ROLLO SOLL','ch'.$channel.' '.$current.'% -> '.$target.'% | '.$direction.' | '.$duration.'ms',0);
                 }
                 return;
             case 'Lamella':
-                // Berechnete Lamellenstellung: 0 % = geschlossen, 100 % = offen.
-                // Die konfigurierte Lamellenzeit beschreibt die komplette Fahrt
-                // von geschlossen nach offen (Standard 1000 ms).
-                $target = max(0, min(100, (int)$Value));
-                $ident = 'Ch' . $channel . 'Lamella';
-                $id = $this->FindManagedVariableID($ident);
-                $current = $id > 0 ? (int)GetValue($id) : 0;
-                if ($target === $current) {
+                $target=max(0,min(100,(int)$Value));
+                $ident='Ch'.$channel.'Lamella';
+                $id=$this->FindManagedVariableID($ident); $current=$id>0?(int)GetValue($id):0;
+                if ($target===$current) return;
+                $cmdState=$this->ReadMotorCommandState(); $ckey=(string)$channel;
+                $cs=is_array($cmdState[$ckey]??null)?$cmdState[$ckey]:[];
+                $nowMs=(int)round(microtime(true)*1000);
+                if (($cs['type']??'')==='position' && $nowMs<(int)($cs['endMs']??0)) {
+                    $cs['pendingLamella']=$target; $cmdState[$ckey]=$cs;
+                    $this->WriteMotorCommandState($cmdState);
+                    $this->SetValueIfChanged($ident,$target);
+                    $this->SetTimerInterval('MotorCommandTimer',100);
+                    $this->SendDebug('LAMELLE SOLL','ch'.$channel.' '.$target.'% vorgemerkt bis Positionsfahrt beendet',0);
                     return;
                 }
-                $fullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
-                $time = (int)round(abs($target - $current) * $fullTime / 100);
-                $time = max(100, min(32000, $time));
-                $command = $target > $current ? 'move_open_' . $time : 'move_close_' . $time;
-
-                // Eigene Blendenverstellung markieren. Das folgende chnotify ist
-                // nur die Rueckmeldung unseres Befehls und darf weder Position
-                // noch den bereits gesetzten Drehgrad neu berechnen.
-                $state = $this->ReadMotorState();
-                $key = (string)$channel;
-                $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
-                    'lamellaCommandTarget' => $target,
-                    'lamellaCommandDirection' => $target > $current ? 'up' : 'down'
-                ]);
-                $this->WriteMotorState($state);
-
-                if ($this->SendCommand($channel, $command)) {
-                    $this->SetValueIfChanged($ident, $target);
-                } else {
-                    $state = $this->ReadMotorState();
-                    unset($state[$key]['lamellaCommandTarget'],$state[$key]['lamellaCommandDirection']);
-                    $this->WriteMotorState($state);
-                }
+                $this->StartOwnLamellaCommand($channel,$target,$current);
                 return;
             case 'Switch':
                 $command = (bool)$Value ? 'on' : 'off';
@@ -845,6 +825,27 @@ class ZeptrionAir extends IPSModule
                 return;
         }
     }
+    public function MotorCommandTick(): void
+    {
+        $all=$this->ReadMotorCommandState(); $now=(int)round(microtime(true)*1000); $active=false;
+        foreach ($all as $key=>$cs) {
+            if (!is_array($cs)) continue;
+            $channel=(int)$key;
+            if ($now<(int)($cs['endMs']??0)) { $active=true; continue; }
+            if (($cs['type']??'')==='position' && ($cs['pendingLamella']??null)!==null) {
+                $target=max(0,min(100,(int)$cs['pendingLamella']));
+                $base=($cs['direction']??'down')==='down'?0:100;
+                unset($all[$key]); $this->WriteMotorCommandState($all);
+                $this->SetValueIfChanged('Ch'.$channel.'Lamella',$base);
+                $this->StartOwnLamellaCommand($channel,$target,$base);
+                $all=$this->ReadMotorCommandState(); $active=true; continue;
+            }
+            unset($all[$key]);
+        }
+        $this->WriteMotorCommandState($all);
+        if (!$active && count($all)===0) $this->SetTimerInterval('MotorCommandTimer',0);
+    }
+
     public function SendCommand(int $Channel, string $Command): bool
     {
         $this->ValidateChannel($Channel);
@@ -1362,6 +1363,35 @@ class ZeptrionAir extends IPSModule
             ? 'Gelernte Fahrzeiten: HOCH '.number_format($up/1000,3,'.','').' s | RUNTER '.number_format($down/1000,3,'.','').' s'
             : 'Gelernte Fahrzeiten: noch nicht eingelernt';
     }
+    private function ReadMotorCommandState(): array
+    {
+        $d=json_decode($this->ReadAttributeString('MotorCommandState'),true);
+        return is_array($d)?$d:[];
+    }
+    private function WriteMotorCommandState(array $state): void
+    {
+        $this->WriteAttributeString('MotorCommandState',json_encode($state,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+    }
+    private function EstimateOwnMotorPosition(array $cs,int $nowMs): int
+    {
+        $start=(int)($cs['startPosition']??0); $target=(int)($cs['target']??$start);
+        $startMs=(int)($cs['startMs']??$nowMs); $endMs=max($startMs+1,(int)($cs['endMs']??($startMs+1)));
+        $f=max(0.0,min(1.0,($nowMs-$startMs)/($endMs-$startMs)));
+        return max(0,min(100,(int)round($start+($target-$start)*$f)));
+    }
+    private function StartOwnLamellaCommand(int $channel,int $target,int $current): void
+    {
+        $full=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
+        $duration=max(100,min(32000,(int)round(abs($target-$current)*$full/100)));
+        $command=$target>$current?'move_open_'.$duration:'move_close_'.$duration;
+        if (!$this->SendCommand($channel,$command)) return;
+        $this->SetValueIfChanged('Ch'.$channel.'Lamella',$target);
+        $all=$this->ReadMotorCommandState(); $now=(int)round(microtime(true)*1000);
+        $all[(string)$channel]=['type'=>'lamella','startMs'=>$now,'endMs'=>$now+$duration,'target'=>$target];
+        $this->WriteMotorCommandState($all); $this->SetTimerInterval('MotorCommandTimer',100);
+        $this->SendDebug('LAMELLE SOLL','ch'.$channel.' '.$current.'% -> '.$target.'% | '.$duration.'ms',0);
+    }
+
     private function ReadMotorState(): array
     {
         $d=json_decode($this->ReadAttributeString('MotorRuntimeState'),true);
