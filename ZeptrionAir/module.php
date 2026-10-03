@@ -1271,7 +1271,11 @@ class ZeptrionAir extends IPSModule
         $lastDirection=(string)($m['lastDirection']??'');
 
         // Kurze EXTERNE Gegenfahrt: nur Blende, keine Positionsaenderung.
-        if ($type==='shutter' && $elapsed>0 && $elapsed<$lamellaTime && ($lastDirection==='down'||$lastDirection==='up')) {
+        $endPositionForcesTravel =
+            ($position===0 && $direction==='down') ||
+            ($position===100 && $direction==='up');
+
+        if ($type==='shutter' && !$endPositionForcesTravel && $elapsed>0 && $elapsed<$lamellaTime && ($lastDirection==='down'||$lastDirection==='up')) {
             $direction=$lastDirection==='down'?'up':'down';
             $lid=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
             $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):($lastDirection==='down'?0:100);
@@ -1281,6 +1285,13 @@ class ZeptrionAir extends IPSModule
             $newPosition=$position;
             $this->SendDebug('LAMELLE','ch'.$channel.' externe Gegenfahrt '.$elapsed.'ms | '.$newLamella.'% | Position bleibt '.$position.'%',0);
         } else {
+            if ($endPositionForcesTravel) {
+                $this->SendDebug(
+                    'ROLLO ENDSLAGE',
+                    'ch'.$channel.' Position='.$position.'% | Richtung='.$direction.' eindeutig | keine Lamellen-Gegenfahrt',
+                    0
+                );
+            }
             if ($direction==='unknown') {
                 $tolUp=max(750,(int)round($expectUp*0.10));
                 $tolDown=max(750,(int)round($expectDown*0.10));
