@@ -726,7 +726,11 @@ class ZeptrionAir extends IPSModule
                 $key = (string)$channel;
                 $state[$key] = array_merge(is_array($state[$key] ?? null) ? $state[$key] : [], [
                     'commandDirection' => $target > $current ? 'down' : 'up',
-                    'commandTarget' => $target
+                    'commandTarget' => $target,
+                    // Physische Ausgangsposition separat merken. Die sichtbare
+                    // Positionsvariable darf sofort den angeforderten Sollwert
+                    // anzeigen und bleibt dort bis die Fahrt beendet ist.
+                    'commandStartPosition' => $current
                 ]);
                 $this->WriteMotorState($state);
 
@@ -742,8 +746,13 @@ class ZeptrionAir extends IPSModule
                 }
                 if (!$this->SendCommand($channel, $command)) {
                     $state = $this->ReadMotorState();
-                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget']);
+                    unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition']);
                     $this->WriteMotorState($state);
+                } else {
+                    // Bedienvariable als Sollwert behandeln: Nach dem Schalten
+                    // bleibt der gewählte Wert sichtbar und springt nicht auf die
+                    // alte Position zurück, während der Rollo noch fährt.
+                    $this->SetMotorPosition($channel, $target);
                 }
                 return;
             case 'Lamella':
@@ -1196,14 +1205,21 @@ class ZeptrionAir extends IPSModule
                 unset($m['commandDirection'],$m['commandTarget']);
                 $state[$key]=$m; $this->WriteMotorState($state);
                 $t=$this->ReadLearnedMotorTimes()[$key]??[];
-                $this->SendDebug('LERNEN','ch'.$channel.': FERTIG | RUNTER '.number_format(((int)($t['down']??0))/1000,3,'.','').'s | HOCH '.number_format($elapsed/1000,3,'.','').'s | Position 0%',0);
+                // Die gemessenen Werte zusätzlich dauerhaft in die sichtbare
+                // Instanzkonfiguration übernehmen. Die Attribute bleiben die
+                // Laufzeitquelle; die Properties zeigen danach denselben Stand.
+                $learnedUp=max(100,(int)($t['up']??$elapsed));
+                $learnedDown=max(100,(int)($t['down']??0));
+                IPS_SetProperty($this->InstanceID, 'Channel'.$channel.'UpTimeMs', $learnedUp);
+                IPS_SetProperty($this->InstanceID, 'Channel'.$channel.'DownTimeMs', $learnedDown);
+                $this->SendDebug('LERNEN','ch'.$channel.': FERTIG | RUNTER '.number_format($learnedDown/1000,3,'.','').'s | HOCH '.number_format($learnedUp/1000,3,'.','').'s | Werte in Konfiguration übernommen | Position 0%',0);
                 return;
             }
             return;
         }
 
         if ($value === 100) {
-            $position=$this->GetMotorPosition($channel);
+            $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
             $direction=(string)($m['commandDirection']??'');
             if ($direction==='') {
                 $direction=$position===0?'down':($position===100?'up':'unknown');
@@ -1216,7 +1232,7 @@ class ZeptrionAir extends IPSModule
         if (!(bool)($m['moving']??false)) return;
 
         $elapsed=max(0,$now-(int)($m['moveStartMs']??$now));
-        $position=$this->GetMotorPosition($channel);
+        $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
         $direction=(string)($m['direction']??'unknown');
         $commandTarget=array_key_exists('commandTarget',$m)?(int)$m['commandTarget']:null;
         $up=$this->EffectiveMotorTime($channel,'up');
@@ -1241,7 +1257,7 @@ class ZeptrionAir extends IPSModule
         }
         $this->SetMotorPosition($channel,$newPosition);
         $m['moving']=false; $m['direction']=''; $m['lastDirection']=$direction;
-        unset($m['commandDirection'],$m['commandTarget']);
+        unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
         $state[$key]=$m; $this->WriteMotorState($state);
         $this->SendDebug('ROLLO','ch'.$channel.' ENDE | '.$elapsed.'ms | Richtung='.$direction.' | Position='.$newPosition.'%',0);
     }
