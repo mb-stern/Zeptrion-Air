@@ -2,6 +2,7 @@
 declare(strict_types=1);
 class ZeptrionAir extends IPSModuleStrict
 {
+    private const SOCKET_TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
     private const CHANNEL_TYPES = ['unused', 'light', 'dimmer', 'shutter', 'awning'];
     public function Create(): void
     {
@@ -27,6 +28,9 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
         $this->RegisterAttributeString('MotorRuntimeState', '{}');
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
+        $this->SetBuffer('SocketBuffer', '');
+        $this->SetBuffer('SocketPending', '');
+        $this->SetBuffer('SocketListening', '1');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -278,8 +282,12 @@ class ZeptrionAir extends IPSModuleStrict
         $state['_notifySynced']=false;
         $this->WriteMotorState($state);
         $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
+        $this->SetBuffer('SocketBuffer', '');
+        $this->SetBuffer('SocketPending', '');
+        $this->SetBuffer('SocketListening', '1');
         $this->SetTimerInterval('NotifyTimer', 0);
         $this->SetStatus(102);
+        $this->StartSocketListener();
         if ($this->IsMotorOnlyDevice()) {
             $this->SetTimerInterval('PollTimer', 0);
             $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
@@ -953,9 +961,168 @@ class ZeptrionAir extends IPSModuleStrict
     }
     public function NotifyTick(): void
     {
-        // FIX8: chnotify is handled by the Splitter/Client Socket.
-        // No long-poll and no recovery polling timer in the device instance.
-        $this->SetTimerInterval('NotifyTimer', 0);
+        // Recovery wie im erfolgreichen Direct-Test: alle 10 s mit chscan
+        // pruefen. Sobald chscan wieder antwortet, wird chnotify erneut gestartet.
+        if ($this->GetBuffer('SocketListening') !== '1') {
+            $this->SetTimerInterval('NotifyTimer', 0);
+            return;
+        }
+        if (!$this->HasActiveParent()) {
+            $this->SendDebug('RECOVERY', 'Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten', 0);
+            $this->SetTimerInterval('NotifyTimer', 10000);
+            return;
+        }
+        $this->SetBuffer('SocketPending', '');
+        $this->SetBuffer('SocketBuffer', '');
+        $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
+        $this->SocketSendRequest('/zrap/chscan', 'scan');
+    }
+
+    public function ReceiveData(string $JSONString): string
+    {
+        $data = json_decode($JSONString, true);
+        if (!is_array($data) || !isset($data['Buffer']) || (string)$data['Buffer'] === '') {
+            return '';
+        }
+
+        $buffer = $this->GetBuffer('SocketBuffer') . (string)$data['Buffer'];
+        while (true) {
+            $response = $this->ExtractSocketHttpResponse($buffer);
+            if ($response === null) {
+                break;
+            }
+            $buffer = $response['rest'];
+            $kind = $this->GetBuffer('SocketPending');
+            $this->SetBuffer('SocketPending', '');
+            $this->SendDebug('CHNOTIFY HTTP', (string)$response['status'] . ' ' . $kind, 0);
+
+            if ($response['status'] !== 200 && $response['status'] !== 302) {
+                $this->EnterSocketRecovery('HTTP Status ' . $response['status']);
+                continue;
+            }
+
+            if ($kind === 'scan') {
+                $this->SendDebug('CHSCAN RAW', trim($response['body']), 0);
+                $xml = @simplexml_load_string(trim($response['body']));
+                if ($xml !== false) {
+                    $decoded = json_decode((string)json_encode($xml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), true);
+                    if (is_array($decoded)) {
+                        $this->ApplyChannelStates($decoded, 'chscan/socket');
+                    }
+                }
+                $this->SetTimerInterval('NotifyTimer', 0);
+                $this->SendDebug('RECOVERY', 'chscan OK -> Recovery AUS', 0);
+            } elseif ($kind === 'notify') {
+                $this->SendDebug('NOTIFY RAW', trim($response['body']), 0);
+                $this->ProcessNotifyData($response['body']);
+            }
+
+            if ($this->GetBuffer('SocketListening') === '1' && $this->GetBuffer('SocketPending') === '') {
+                $this->SocketSendRequest('/zrap/chnotify', 'notify');
+            }
+        }
+        $this->SetBuffer('SocketBuffer', $buffer);
+        return '';
+    }
+
+    private function StartSocketListener(): void
+    {
+        if ($this->GetBuffer('SocketListening') !== '1') {
+            $this->SetBuffer('SocketListening', '1');
+        }
+        $this->SetBuffer('SocketBuffer', '');
+        $this->SetBuffer('SocketPending', '');
+        if (!$this->HasActiveParent()) {
+            $this->EnterSocketRecovery('Client Socket nicht aktiv');
+            return;
+        }
+        $this->SendDebug('CHNOTIFY', 'Start -> zuerst chscan', 0);
+        if (!$this->SocketSendRequest('/zrap/chscan', 'scan')) {
+            $this->EnterSocketRecovery('chscan konnte nicht gesendet werden');
+        }
+    }
+
+    private function SocketSendRequest(string $path, string $kind): bool
+    {
+        if (!$this->HasActiveParent()) {
+            return false;
+        }
+        if ($this->GetBuffer('SocketPending') !== '') {
+            return false;
+        }
+        $request = "GET " . $path . " HTTP/1.1\r\n" .
+            "Host: zeptrion\r\n" .
+            "Accept: application/xml,text/xml,*/*\r\n" .
+            "Cache-Control: no-cache\r\n" .
+            "Connection: keep-alive\r\n\r\n";
+        $this->SetBuffer('SocketPending', $kind);
+        $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
+        $ok = $this->SendDataToParent(json_encode([
+            'DataID' => self::SOCKET_TX,
+            'Buffer' => $request
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if ($ok === false) {
+            $this->SetBuffer('SocketPending', '');
+            return false;
+        }
+        return true;
+    }
+
+    private function EnterSocketRecovery(string $reason): void
+    {
+        $this->SetBuffer('SocketPending', '');
+        $this->SetBuffer('SocketBuffer', '');
+        $this->SetTimerInterval('NotifyTimer', 10000);
+        $this->SendDebug('RECOVERY', $reason . ' -> alle 10 s chscan versuchen', 0);
+    }
+
+    private function ExtractSocketHttpResponse(string $buffer): ?array
+    {
+        $headerEnd = strpos($buffer, "\r\n\r\n");
+        if ($headerEnd === false) {
+            return null;
+        }
+        $header = substr($buffer, 0, $headerEnd);
+        $bodyStart = $headerEnd + 4;
+        $lines = explode("\r\n", $header);
+        $statusLine = array_shift($lines);
+        $status = 0;
+        if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/', (string)$statusLine, $m)) {
+            $status = (int)$m[1];
+        }
+        $headers = [];
+        foreach ($lines as $line) {
+            $pos = strpos($line, ':');
+            if ($pos !== false) {
+                $headers[strtolower(trim(substr($line, 0, $pos)))] = trim(substr($line, $pos + 1));
+            }
+        }
+        if (isset($headers['content-length'])) {
+            $length = (int)$headers['content-length'];
+            if (strlen($buffer) < $bodyStart + $length) {
+                return null;
+            }
+            return [
+                'status' => $status,
+                'body' => substr($buffer, $bodyStart, $length),
+                'rest' => substr($buffer, $bodyStart + $length)
+            ];
+        }
+        if ($status === 302 || $status === 204) {
+            return ['status' => $status, 'body' => '', 'rest' => substr($buffer, $bodyStart)];
+        }
+        foreach (['</chnotify>', '</chscan>'] as $tag) {
+            $pos = strpos($buffer, $tag, $bodyStart);
+            if ($pos !== false) {
+                $end = $pos + strlen($tag);
+                return [
+                    'status' => $status,
+                    'body' => substr($buffer, $bodyStart, $end - $bodyStart),
+                    'rest' => substr($buffer, $end)
+                ];
+            }
+        }
+        return null;
     }
 
     public function ProcessNotifyData(string $payload): void
