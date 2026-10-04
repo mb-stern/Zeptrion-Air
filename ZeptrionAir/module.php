@@ -2391,7 +2391,12 @@ class ZeptrionAir extends IPSModuleStrict
     private function ProgramScene(array $in): array
     {
         $name = trim((string)($in['name'] ?? '')) ?: 'Szene';
-        $targets = $this->NormalizeTargets(is_array($in['targets'] ?? null) ? $in['targets'] : []);
+        $rawTargets = is_array($in['targets'] ?? null) ? $in['targets'] : [];
+        $rawTargetsJSON = json_encode($rawTargets, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->SendDebug('SMARTBT TARGETS RAW', 'Anzahl=' . count($rawTargets) . ' | ' . (is_string($rawTargetsJSON) ? $rawTargetsJSON : 'JSON-Fehler'), 0);
+        $targets = $this->NormalizeTargets($rawTargets);
+        $normalizedTargetsJSON = json_encode($targets, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->SendDebug('SMARTBT TARGETS NORM', 'Anzahl=' . count($targets) . ' | ' . (is_string($normalizedTargetsJSON) ? $normalizedTargetsJSON : 'JSON-Fehler'), 0);
         if ($targets === []) {
             return ['ok' => false, 'message' => 'Bitte mindestens ein Ziel auswählen.'];
         }
@@ -2476,6 +2481,8 @@ class ZeptrionAir extends IPSModuleStrict
         if ($services === []) {
             return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
         }
+        $servicesJSON = json_encode($services, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->SendDebug('SMARTBT SERVICES', 'Anzahl=' . count($services) . ' | ' . (is_string($servicesJSON) ? $servicesJSON : 'JSON-Fehler'), 0);
         $payload = count($services) === 1 ? $services[0] : $services;
         $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if (!is_string($encoded)) {
