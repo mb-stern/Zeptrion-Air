@@ -2443,6 +2443,11 @@ class ZeptrionAir extends IPSModuleStrict
         // funktionieren. Der Symcon-Callback ist nur eine zusätzliche Meldung/Aktion
         // und wird immer NACH den direkten zeptrionAIR-Diensten eingetragen.
         $callbackExecutesZeptrion = false;
+        // Mehrere Ziele auf derselben zApp werden zu EINEM /zrap/chctrl-Aufruf gebündelt.
+        // Das entspricht dem zeptrionAIR-API-Beispiel (z.B. cmd2=on&cmd3=off) und verhindert,
+        // dass ein Smart-Taster mehrere unmittelbar aufeinanderfolgende Verbindungen zur
+        // gleichen zApp öffnen muss.
+        $zeptrionCommandsByHost = [];
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
             $instance = (int)($target['instance'] ?? 0);
@@ -2450,13 +2455,14 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
             }
-            // Exakt das von Feller für /zapi/smartbt/prgs dokumentierte Format verwenden.
-            // "typ" ist für diesen zeptrionAIR-POST nicht nötig und wird bewusst weggelassen.
+            $zeptrionCommandsByHost[$host][] = 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory'];
+        }
+        foreach ($zeptrionCommandsByHost as $host => $commands) {
             $services[] = [
                 'req' => 'POST',
-                'loc' => $host,
+                'loc' => (string)$host,
                 'pth' => '/zrap/chctrl',
-                'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
+                'bdy' => implode('&', $commands)
             ];
         }
         // Symcon soll jeden Druck einer von uns programmierten Smart-Taste mitbekommen,
