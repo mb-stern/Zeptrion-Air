@@ -104,8 +104,10 @@ class ZeptrionAir extends IPSModuleStrict
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         $smartButtonAssignments = json_decode($this->GetSmartButtonAssignments($this->InstanceID), true);
         if (!is_array($smartButtonAssignments)) { $smartButtonAssignments = []; }
+        // Ein Smartfront kann bis zu vier Smart-Taster/Belegungen besitzen.
+        // Alle gespeicherten Belegungen der Instanz am Smart-Taster-Kanal anzeigen;
+        // nicht eine Belegung pro unbenutztem Kanal verteilen.
         $smartButtonAssignments = array_slice($smartButtonAssignments, 0, 4);
-        $smartButtonIndex = 0;
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
             $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
                 'light' => 'Licht',
@@ -114,24 +116,25 @@ class ZeptrionAir extends IPSModuleStrict
                 'awning' => 'Markise',
                 default => 'Nicht verwendet'
             };
-            if ($typeLabel === 'Nicht verwendet' && isset($smartButtonAssignments[$smartButtonIndex])) {
-                $assignment = $smartButtonAssignments[$smartButtonIndex++];
+            if ($typeLabel === 'Nicht verwendet' && $smartButtonAssignments !== []) {
                 $items = [
                     [
                         'type' => 'Label',
                         'caption' => 'Art: Smart-Taster'
-                    ],
-                    [
-                        'type' => 'Label',
-                        'caption' => 'Szene: ' . (string)($assignment['name'] ?? 'Smart-Taster')
                     ]
                 ];
-                $targets = is_array($assignment['targets'] ?? null) ? $assignment['targets'] : [];
-                foreach ($targets as $target) {
+                foreach ($smartButtonAssignments as $assignment) {
                     $items[] = [
                         'type' => 'Label',
-                        'caption' => '→ ' . (string)$target
+                        'caption' => 'Szene: ' . (string)($assignment['name'] ?? 'Smart-Taster')
                     ];
+                    $targets = is_array($assignment['targets'] ?? null) ? $assignment['targets'] : [];
+                    foreach ($targets as $target) {
+                        $items[] = [
+                            'type' => 'Label',
+                            'caption' => '→ ' . (string)$target
+                        ];
+                    }
                 }
                 $items[] = [
                     'type' => 'Button',
@@ -2418,30 +2421,28 @@ class ZeptrionAir extends IPSModuleStrict
                 $hasSymconTargets = true;
             }
         }
-        // Ein einzelnes zeptrionAIR-Ziel bleibt wie bisher als direkter Smart-Taster-Dienst.
-        // Bei mehreren zeptrionAIR-Zielen übernimmt dagegen der Symcon-Callback die Ausführung.
-        // So werden zuerst ALLE Referenzsperren gesetzt und danach alle recall_sN-Befehle
-        // nacheinander an die jeweiligen Zielinstanzen gesendet. Das vermeidet sowohl die
-        // Service-Reihenfolge/Race-Probleme als auch die knappe 730-Byte-Grenze des zApp.
-        $callbackExecutesZeptrion = $zeptrionTargetCount > 1;
-        if (!$callbackExecutesZeptrion) {
-            foreach ($targets as $target) {
-                if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
-                $instance = (int)($target['instance'] ?? 0);
-                $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
-                if ($host === '') {
-                    return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
-                }
-                $services[] = [
-                    'typ' => 'application/x-www-form-urlencoded',
-                    'req' => 'POST',
-                    'loc' => $host,
-                    'pth' => '/zrap/chctrl',
-                    'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
-                ];
+        // Die zeptrionAIR-API unterstützt mehrere HTTP-Requests auf EINEM Smart-Taster
+        // ausdrücklich als JSON-Array. Deshalb alle zeptrionAIR-Ziele direkt auf den
+        // Smart-Taster programmieren. Der Symcon-Callback wird bei Referenzzielen
+        // weiterhin als erster Dienst vorgeschaltet, damit die Referenzsperren vor
+        // den direkten recall_sN-Befehlen aktiv sind.
+        $callbackExecutesZeptrion = false;
+        foreach ($targets as $target) {
+            if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
+            $instance = (int)($target['instance'] ?? 0);
+            $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
+            if ($host === '') {
+                return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
             }
+            $services[] = [
+                'typ' => 'application/x-www-form-urlencoded',
+                'req' => 'POST',
+                'loc' => $host,
+                'pth' => '/zrap/chctrl',
+                'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
+            ];
         }
-        if ($hasSymconTargets || $hasReferenceTargets || $callbackExecutesZeptrion) {
+        if ($hasSymconTargets || $hasReferenceTargets) {
             $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
             if ($hh === '') {
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
