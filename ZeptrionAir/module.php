@@ -2423,20 +2423,25 @@ class ZeptrionAir extends IPSModuleStrict
         $services = [];
         $hasSymconTargets = false;
         $hasReferenceTargets = false;
+        $hasZeptrionTargets = false;
         $zeptrionTargetCount = 0;
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') === 'zeptrion') {
                 $zeptrionTargetCount++;
-                if (is_array($target['reference'] ?? null)) $hasReferenceTargets = true;
+                $hasZeptrionTargets = true;
+                $reference = is_array($target['reference'] ?? null) ? $target['reference'] : null;
+                if ($reference !== null) {
+                    $hasReferenceTargets = true;
+                }
             } elseif ((string)($target['type'] ?? '') === 'symcon') {
                 $hasSymconTargets = true;
             }
         }
         // Die zeptrionAIR-API unterstützt mehrere HTTP-Requests auf EINEM Smart-Taster
-        // ausdrücklich als JSON-Array. Deshalb alle zeptrionAIR-Ziele direkt auf den
-        // Smart-Taster programmieren. Der Symcon-Callback wird bei Referenzzielen
-        // weiterhin als erster Dienst vorgeschaltet, damit die Referenzsperren vor
-        // den direkten recall_sN-Befehlen aktiv sind.
+        // ausdrücklich als JSON-Array. Alle zeptrionAIR-Ziele werden deshalb DIREKT
+        // auf den Smart-Taster programmiert. Diese Befehle müssen auch ohne Symcon
+        // funktionieren. Der Symcon-Callback ist nur eine zusätzliche Meldung/Aktion
+        // und wird immer NACH den direkten zeptrionAIR-Diensten eingetragen.
         $callbackExecutesZeptrion = false;
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
@@ -2454,7 +2459,9 @@ class ZeptrionAir extends IPSModuleStrict
                 'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
             ];
         }
-        if ($hasSymconTargets || $hasReferenceTargets) {
+        // Symcon soll jeden Druck einer von uns programmierten Smart-Taste mitbekommen,
+        // auch wenn die Taste ausschließlich direkte zeptrionAIR-Ziele enthält.
+        if ($hasZeptrionTargets || $hasSymconTargets || $hasReferenceTargets) {
             $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
             if ($hh === '') {
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
@@ -2464,19 +2471,19 @@ class ZeptrionAir extends IPSModuleStrict
             if (!$callback['success']) {
                 return ['ok' => false, 'message' => $callback['message']];
             }
-            // WICHTIG: Den Symcon-Callback als ERSTEN Smart-Taster-Dienst ausführen.
-            // Dadurch wird die S1-S4-Referenzsperre in der Zielinstanz gesetzt,
-            // bevor zeptrionAIR mit recall_sN die eigentliche Fahrt startet.
-            // Andernfalls kann das erste chnotify der Hauptfahrt noch in die normale
-            // Motor-Positionsberechnung gelangen, bevor ScheduleSceneReference aktiv ist.
-            array_unshift($services, [
+            $callbackService = [
                 'req' => 'GET',
                 'typ' => 'application/x-www-form-urlencoded',
                 'loc' => $p[0],
                 'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
                 'pth' => (string)$callback['path'],
                 'bdy' => ''
-            ]);
+            ];
+            // WICHTIG: Der Callback steht bewusst immer HINTER den direkten zeptrionAIR-
+            // Diensten. Damit funktionieren die internen zeptrion-Ziele auch dann,
+            // wenn Symcon nicht erreichbar ist. RunScene() führt diese direkten Ziele
+            // nicht erneut aus; es verarbeitet nur Referenzen und echte Symcon-Ziele.
+            $services[] = $callbackService;
         }
         if ($services === []) {
             return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
