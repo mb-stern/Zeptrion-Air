@@ -2443,11 +2443,12 @@ class ZeptrionAir extends IPSModuleStrict
         // funktionieren. Der Symcon-Callback ist nur eine zusätzliche Meldung/Aktion
         // und wird immer NACH den direkten zeptrionAIR-Diensten eingetragen.
         $callbackExecutesZeptrion = false;
-        // Mehrere Ziele auf derselben zApp werden zu EINEM /zrap/chctrl-Aufruf gebündelt.
-        // Das entspricht dem zeptrionAIR-API-Beispiel (z.B. cmd2=on&cmd3=off) und verhindert,
-        // dass ein Smart-Taster mehrere unmittelbar aufeinanderfolgende Verbindungen zur
-        // gleichen zApp öffnen muss.
-        $zeptrionCommandsByHost = [];
+        // API 5.2.4.3: Jedes zeptrionAIR-Ziel wird als eigener HTTP-Service gespeichert.
+        // Ab dem zweiten Array-Element dürfen Attribute weggelassen werden, wenn sie
+        // gegenüber dem vorherigen Service unverändert sind. Genau dieses Kurzformat
+        // verwenden wir hier. Wichtig: cmdX bleibt der Kanal des ZIELGERÄTS und wird
+        // nicht aus der Reihenfolge der Smart-Taster-Ziele erzeugt.
+        $previousZeptrionService = null;
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
             $instance = (int)($target['instance'] ?? 0);
@@ -2455,16 +2456,30 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
             }
-            $zeptrionCommandsByHost[$host][] = 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory'];
-        }
-        foreach ($zeptrionCommandsByHost as $host => $commands) {
-            $services[] = [
-                'typ' => 'application/x-www-form-urlencoded',
+
+            // Vollständiger logischer Service. "typ" wird bei zeptrion /chctrl bewusst
+            // nicht mitgesendet – genauso wie im zeptrionAIR-Beispiel auf API-Seite 5-38.
+            $fullService = [
                 'req' => 'POST',
                 'loc' => (string)$host,
                 'pth' => '/zrap/chctrl',
-                'bdy' => implode('&', $commands)
+                'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
             ];
+
+            if ($previousZeptrionService === null) {
+                $services[] = $fullService;
+            } else {
+                // Nur Werte übertragen, die sich gegenüber dem vorherigen Service ändern.
+                // bdy ändert sich für ein anderes Ziel praktisch immer und bleibt erhalten.
+                $shortService = [];
+                foreach ($fullService as $key => $value) {
+                    if (!array_key_exists($key, $previousZeptrionService) || $previousZeptrionService[$key] !== $value) {
+                        $shortService[$key] = $value;
+                    }
+                }
+                $services[] = $shortService;
+            }
+            $previousZeptrionService = $fullService;
         }
         // Symcon soll jeden Druck einer von uns programmierten Smart-Taste mitbekommen,
         // auch wenn die Taste ausschließlich direkte zeptrionAIR-Ziele enthält.
