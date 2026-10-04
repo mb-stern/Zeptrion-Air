@@ -1976,8 +1976,18 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $scenes = $this->ReadScenes();
             $found = false;
+            $entryTargets = json_encode($entry['targets'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             foreach ($scenes as &$scene) {
-                if ((string)($scene['id'] ?? '') === (string)$entry['id']) {
+                $sameID = (string)($scene['id'] ?? '') === (string)$entry['id'];
+                $sameSmartButton = (string)($scene['smartButtonHost'] ?? '') !== ''
+                    && (string)($scene['smartButtonHost'] ?? '') === (string)($entry['smartButtonHost'] ?? '');
+                $sameName = trim((string)($scene['name'] ?? '')) === trim((string)($entry['name'] ?? ''));
+                $sceneTargets = json_encode($scene['targets'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $sameTargets = is_string($entryTargets) && is_string($sceneTargets) && $sceneTargets === $entryTargets;
+
+                // Gleiche ID immer ersetzen. Zusätzlich eine bereits vorhandene, inhaltlich
+                // identische Szene desselben Smart-Tasters ersetzen statt erneut anzuhängen.
+                if ($sameID || ($sameSmartButton && $sameName && $sameTargets)) {
                     $scene = $entry;
                     $found = true;
                     break;
