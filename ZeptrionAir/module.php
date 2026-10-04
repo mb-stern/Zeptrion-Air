@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-class ZeptrionAir extends IPSModule
+class ZeptrionAir extends IPSModuleStrict
 {
     private const TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
     private const CS = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
@@ -9,7 +9,6 @@ class ZeptrionAir extends IPSModule
     public function Create(): void
     {
         parent::Create();
-        $this->RequireParent(self::TX);
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -58,60 +57,12 @@ class ZeptrionAir extends IPSModule
             }
         }
     }
-    private function RegisterHook(string $hook): void
-    {
-        $hook = trim($hook, '/');
-        if ($hook === '') {
-            return;
-        }
-
-        $webHookControls = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}');
-        if ($webHookControls === []) {
-            $this->SendDebug('Smart-Taster', 'WebHook Control nicht gefunden', 0);
-            return;
-        }
-
-        $webHookID = (int)$webHookControls[0];
-        $hooks = json_decode(IPS_GetProperty($webHookID, 'Hooks'), true);
-        if (!is_array($hooks)) {
-            $hooks = [];
-        }
-
-        $changed = false;
-        $found = false;
-        foreach ($hooks as &$entry) {
-            if (!is_array($entry) || (string)($entry['Hook'] ?? '') !== '/' . $hook) {
-                continue;
-            }
-            $found = true;
-            if ((int)($entry['TargetID'] ?? 0) !== $this->InstanceID) {
-                $entry['TargetID'] = $this->InstanceID;
-                $changed = true;
-            }
-            break;
-        }
-        unset($entry);
-
-        if (!$found) {
-            $hooks[] = [
-                'Hook' => '/' . $hook,
-                'TargetID' => $this->InstanceID
-            ];
-            $changed = true;
-        }
-
-        if ($changed) {
-            IPS_SetProperty($webHookID, 'Hooks', json_encode($hooks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-            IPS_ApplyChanges($webHookID);
-        }
-    }
-
     public function GetCompatibleParents(): string
     {
         return json_encode(['type' => 'require', 'moduleIDs' => [self::CS]], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
-    public function GetConfigurationForParent()
+    public function GetConfigurationForParent(): string
     {
         $host = trim($this->ReadPropertyString('Host'));
         return json_encode([
@@ -620,7 +571,7 @@ class ZeptrionAir extends IPSModule
             $this->SetValueIfChanged('Online', true);
         }
     }
-    public function RequestAction($Ident, $Value): void
+    public function RequestAction(string $Ident, mixed $Value): void
     {
         if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Lamella|Command|Scene)$/', (string)$Ident, $m)) {
             throw new Exception('Ungültiger Ident: ' . $Ident);
@@ -2007,11 +1958,16 @@ class ZeptrionAir extends IPSModule
         $this->SendNotifyRequest('/zrap/chscan', 'scan');
     }
 
-    public function ReceiveData($JSONString)
+    public function ReceiveData(string $JSONString): string
     {
         $d = json_decode($JSONString, true);
         if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer'] === '') return '';
-        $buffer = $this->GetBuffer('NotifyBuffer') . (string)$d['Buffer'];
+        $received = hex2bin((string)$d['Buffer']);
+        if ($received === false) {
+            $this->SendDebug('CHNOTIFY RX', 'Ungültiger HEX-Buffer vom Parent', 0);
+            return '';
+        }
+        $buffer = $this->GetBuffer('NotifyBuffer') . $received;
         while (true) {
             $r = $this->ExtractNotifyResponse($buffer);
             if ($r === null) break;
@@ -2063,7 +2019,7 @@ class ZeptrionAir extends IPSModule
              "Connection: keep-alive\r\n\r\n";
         $this->SetBuffer('NotifyPending', $kind);
         $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
-        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => $q], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         if ($ok === false) {
             $this->SetBuffer('NotifyPending', '');
             $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen');
