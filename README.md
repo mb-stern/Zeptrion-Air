@@ -115,6 +115,24 @@ Unterstützt werden die zeptrionAIR-mDNS-Dienste `_zapp._tcp` sowie für ältere
 
 Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **ZeptrionAir Device → Client Socket** automatisch angelegt.
 
+## Versionen
+
+### Version 1.2
+- Umbau auf CHNOTIFY Kommunikation um das aggressive Polling zu verhindern.
+
+### Version 1.1
+- Der Modulecode wurde überarbeitet und auf Store-Kompatibilität geprüft.
+
+### Version 1.0
+- Initiale Version
+
+### Entwicklung
+
+- Zentrale Kommunikation der Geräteinstanzen über den zeptrionAIR Splitter
+- Smart-Taster-Konfiguration über zentralen WebHook
+- Smart-Taster-Ziele für IP-Symcon Variablen, Skripte und eingebundene zeptrionAIR Geräte
+- Koordinierte Gerätekommunikation bei Polling und Smart-Taster-Programmierung
+
 ## Branches
 
 - **main** – stabil
