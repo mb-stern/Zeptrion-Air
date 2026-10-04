@@ -746,6 +746,45 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 return;
             case 'Command':
+                $value = (int)$Value;
+                $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+
+                // Bei Rollo und Markise liegen S1-S4 direkt in der Bedienungsvariable.
+                // 11..14 sind interne Werte für S1..S4 und kollidieren nicht mit
+                // den bestehenden Fahr-/Lamellenbefehlen 0..4.
+                if (in_array($type, ['shutter', 'awning'], true) && $value >= 11 && $value <= 14) {
+                    $scene = $value - 10;
+                    if ($this->RecallScene($channel, $scene)) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                        $reference = json_decode($referenceJSON, true);
+                        if (is_array($reference) && $reference !== []) {
+                            $this->ScheduleSceneReference($referenceJSON);
+                        }
+                    }
+                    return;
+                }
+
+                if ($type === 'awning') {
+                    $commands = [
+                        0 => 'open',
+                        2 => 'stop',
+                        4 => 'close'
+                    ];
+                    if (!isset($commands[$value])) {
+                        throw new InvalidArgumentException('Unbekannter Markisen-Befehl');
+                    }
+                    if ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValue($Ident, $value);
+                        if ($value === 0) {
+                            $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
+                        } elseif ($value === 4) {
+                            $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
+                        }
+                    }
+                    return;
+                }
+
                 $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
                 $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
                 $commands = [
@@ -755,7 +794,6 @@ class ZeptrionAir extends IPSModuleStrict
                     3 => 'move_close_' . $lamellaStepTime,
                     4 => 'close'
                 ];
-                $value = (int)$Value;
                 if (!isset($commands[$value])) {
                     throw new InvalidArgumentException('Unbekannter Store-Befehl');
                 }
@@ -1908,8 +1946,7 @@ class ZeptrionAir extends IPSModuleStrict
                     'SUFFIX' => ' %'
                 ], 20);
             } elseif ($active && $type === 'awning') {
-                // Markise: nur eine Positionsvariable direkt unter der Geräteinstanz.
-                // Kein Dummy nötig, da es keinen Drehgrad / keine Lamellen gibt.
+                // Markise: Position plus Bedienung wie beim Rollo, jedoch ohne Lamellen.
                 $this->RemoveShutterDummy($channel);
                 $positionIdent = 'Ch' . $channel . 'Position';
                 $this->RegisterVariableInteger($positionIdent, $name, [
@@ -1921,6 +1958,30 @@ class ZeptrionAir extends IPSModuleStrict
                 ], $channel * 10);
                 $this->SetVariableName($positionIdent, $name);
                 $this->EnableAction($positionIdent);
+
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Hoch',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
+                $commandIdent = 'Ch' . $channel . 'Command';
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
+                ], $channel * 10 + 2);
+                $this->SetVariableName($commandIdent, $name . ' Bedienung');
+                $this->EnableAction($commandIdent);
             } elseif ($active && $type === 'shutter') {
                 $dummyID = $this->EnsureShutterDummy($channel, $name);
                 $positionIdent = 'Ch' . $channel . 'Position';
@@ -1935,28 +1996,35 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnsureShutterVariable($dummyID, $lamellaIdent, 'Drehgrad', [
                     'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
                     'USAGE_TYPE' => 1,
-                    // Lamellenlogik des Moduls:
-                    // 0 = geschlossen/innen, 100 = offen/außen.
-                    // Die Rotation muss daher gegenüber der Rollo-Position
-                    // umgekehrt zugeordnet werden.
                     'CLOSE_INSIDE_VALUE' => 0,
                     'OPEN_OUTSIDE_VALUE' => 100,
                     'MAX_ROTATION_INSIDE' => 0,
                     'MAX_ROTATION_OUTSIDE' => 75,
                     'SUN_POSITION' => 1
                 ], 20);
+
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
                 $commandIdent = 'Ch' . $channel . 'Command';
                 $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
-                    'OPTIONS' => json_encode([
-                        ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                        ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                        ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                        ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                        ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
-                    ], JSON_UNESCAPED_UNICODE)
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
                 ], $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
                 $this->EnableAction($commandIdent);
@@ -1968,7 +2036,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && in_array($type, ['shutter', 'awning'], true),
                 'Lamella' => $active && $type === 'shutter',
-                'Command' => $active && $type === 'shutter'
+                'Command' => $active && in_array($type, ['shutter', 'awning'], true)
             ] as $suffix => $needed) {
                 if ($needed) {
                     continue;
@@ -1997,7 +2065,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             }
             $sceneIdent = 'Ch' . $channel . 'Scene';
-            if ($active && $showSceneVariable) {
+            if ($active && $showSceneVariable && !in_array($type, ['shutter', 'awning'], true)) {
                 $sceneName = $name . ' Szenen';
                 $sceneOptions = [];
                 for ($scene = 1; $scene <= 4; $scene++) {
