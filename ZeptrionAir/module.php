@@ -2798,7 +2798,7 @@ class ZeptrionAir extends IPSModuleStrict
         $pending[] = [
             // Die Zeit ist nur noch Sicherheits-Timeout. Normalerweise entscheidet
             // die chnotify-Folge über das tatsächliche Ende der Bewegung.
-            'fallbackDue' => $now + $delay + 3000,
+            'fallbackDue' => $now + $delay + 7000,
             'settleUntil' => 0,
             'applied' => false,
             'movementStarted' => false,
@@ -2809,7 +2809,7 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         $this->SetTimerInterval('SceneReferenceTimer', 100);
-        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Referenzfahrt gestartet; Abschluss per chnotify, Timeout in '.($delay + 3000).'ms', 0);
+        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Referenzfahrt gestartet; Abschluss per chnotify, Timeout in '.($delay + 7000).'ms', 0);
         return true;
     }
 
@@ -2833,7 +2833,7 @@ class ZeptrionAir extends IPSModuleStrict
                 // Lamellen-Gegenfahrt erst mit Verzögerung beginnen. Deshalb nicht
                 // schon nach 1,2 s freigeben. Erst nach einem großzügigen Wartefenster
                 // ohne erneuten START gilt der erste STOP als endgültig.
-                $lamellaWait = max(3000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 1500);
+                $lamellaWait = max(5000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 1500);
                 if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false) && $now >= $firstStopAt + $lamellaWait) {
                     $this->ApplySceneReferenceEnd($ref);
                     $item['applied'] = true;
@@ -2849,7 +2849,7 @@ class ZeptrionAir extends IPSModuleStrict
                 } elseif ($type === 'dimmer') {
                     // Beim Dimmer gibt es laut Gerät keine verwertbare Zwischenstufe
                     // über chnotify; hier bleibt die Zeitberechnung der Abschlussgeber.
-                    $fallback = (int)($item['fallbackDue'] ?? 0) - 3000;
+                    $fallback = (int)($item['fallbackDue'] ?? 0) - 7000;
                     if ($now >= $fallback) {
                         $this->ApplySceneReferenceEnd($ref);
                         $item['applied'] = true;
