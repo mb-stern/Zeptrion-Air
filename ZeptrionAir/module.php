@@ -1849,8 +1849,14 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
+            if (!IPS_VariableExists($childID)) {
+                continue;
+            }
+            $object = IPS_GetObject($childID);
+            $ident = (string)($object['ObjectIdent'] ?? '');
+            if ($ident !== '') {
+                // Modulvariablen ausschließlich über die Modul-API entfernen.
+                $this->UnregisterVariable($ident);
             }
         }
         IPS_DeleteInstance($id);
@@ -1903,8 +1909,14 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
+            if (!IPS_VariableExists($childID)) {
+                continue;
+            }
+            $object = IPS_GetObject($childID);
+            $ident = (string)($object['ObjectIdent'] ?? '');
+            if ($ident !== '') {
+                // Modulvariablen ausschließlich über die Modul-API entfernen.
+                $this->UnregisterVariable($ident);
             }
         }
         IPS_DeleteInstance($id);
@@ -2110,12 +2122,9 @@ class ZeptrionAir extends IPSModuleStrict
                     continue;
                 }
                 $oldIdent = 'Ch' . $channel . $suffix;
-                if (in_array($suffix, ['DimmerSwitch', 'Level', 'Position', 'Lamella'], true)) {
-                    $oldID = $this->FindManagedVariableID($oldIdent);
-                    if ($oldID > 0 && IPS_VariableExists($oldID)) {
-                        IPS_DeleteVariable($oldID);
-                    }
-                } elseif (@$this->GetIDForIdent($oldIdent) > 0) {
+                $oldID = $this->FindManagedVariableID($oldIdent);
+                if ($oldID > 0 && IPS_VariableExists($oldID)) {
+                    // Modulvariablen ausschließlich über UnregisterVariable() entfernen.
                     $this->UnregisterVariable($oldIdent);
                 }
             }
