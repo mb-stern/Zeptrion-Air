@@ -706,6 +706,9 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->SendCommand($channel,$command)) {
                     $this->SetMotorPosition($channel,$target);
+                    // Die Bedienungsvariable zeigt auch bei Bedienung über die
+                    // native Positionsvariable die zuletzt ausgeführte Aktion.
+                    $this->SyncMotorCommandStatus($channel, $target === 0 ? 0 : ($target === 100 ? 4 : 2));
                     if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                         $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='down'?0:100);
                     }
@@ -828,6 +831,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->RecallScene($channel, $scene)) {
                     $this->SetValueIfChanged((string)$Ident, $scene);
+                    $this->SyncMotorSceneCommandStatus($channel, $scene);
 
                     // Auch beim direkten Aufruf über die IP-Symcon-Szenenvariable
                     // die zu S1-S4 gespeicherte Referenz synchronisieren.
@@ -2936,6 +2940,25 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
+    private function SyncMotorCommandStatus(int $channel, int $value): void
+    {
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['shutter', 'awning'], true)) return;
+        if ($type === 'awning' && !in_array($value, [0, 2, 4], true)) return;
+        if ($type === 'shutter' && ($value < 0 || $value > 4)) return;
+        $this->SetValueIfChanged('Ch' . $channel . 'Command', $value);
+    }
+
+    private function SyncMotorSceneCommandStatus(int $channel, int $scene): void
+    {
+        if ($scene < 1 || $scene > 4) return;
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['shutter', 'awning'], true)) return;
+        // Nur sichtbare Szenen sind Bestandteil der Enumeration.
+        if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) return;
+        $this->SetValueIfChanged('Ch' . $channel . 'Command', 10 + $scene);
+    }
+
     public function ScheduleSceneReference(string $ReferenceJSON): bool
     {
         $ref = json_decode($ReferenceJSON, true);
@@ -2943,6 +2966,13 @@ class ZeptrionAir extends IPSModuleStrict
         $channel = (int)($ref['channel'] ?? 0);
         $type = (string)($ref['type'] ?? '');
         if ($channel < 1 || $channel > 4 || !in_array($type, ['dimmer', 'shutter', 'awning'], true)) return false;
+        // Referenzen enthalten die gespeicherte S1-S4-Nummer. Dadurch wird
+        // auch bei Smart-Taster-/Callback-Aufrufen die Bedienungsvariable
+        // auf die tatsächlich ausgelöste Speicherposition synchronisiert.
+        $scene = (int)($ref['scene'] ?? 0);
+        if ($scene >= 1 && $scene <= 4) {
+            $this->SyncMotorSceneCommandStatus($channel, $scene);
+        }
         $delay = 300;
         if ($type === 'dimmer') {
             $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Level');
