@@ -777,13 +777,16 @@ class ZeptrionAir extends IPSModuleStrict
                     if (!isset($commands[$value])) {
                         throw new InvalidArgumentException('Unbekannter Markisen-Befehl');
                     }
-                    if ($this->SendCommand($channel, $commands[$value])) {
-                        $this->SetValue($Ident, $value);
-                        if ($value === 0) {
-                            $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
-                        } elseif ($value === 4) {
-                            $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
-                        }
+                    if ($value === 0 || $value === 4) {
+                        // Hoch/Tief aus der Bedienungsvariable muss exakt dieselbe
+                        // interne Fahrverfolgung wie die Positionsvariable nutzen.
+                        $this->StartCommandEndPositionMove($channel, $value === 0 ? 0 : 100);
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                    } elseif ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        // Ein explizites Stopp beendet eine ggf. noch laufende
+                        // eigene Fahrverfolgung.
+                        $this->ClearOwnMotorState($channel);
                     }
                     return;
                 }
@@ -800,13 +803,16 @@ class ZeptrionAir extends IPSModuleStrict
                 if (!isset($commands[$value])) {
                     throw new InvalidArgumentException('Unbekannter Store-Befehl');
                 }
+                if ($value === 0 || $value === 4) {
+                    // Hoch/Tief über Bedienung: Startposition, Richtung, Ziel und
+                    // erwartete Fahrzeit wie bei Position 0/100 verfolgen.
+                    $this->StartCommandEndPositionMove($channel, $value === 0 ? 0 : 100);
+                    $this->SetValueIfChanged((string)$Ident, $value);
+                    return;
+                }
                 if ($this->SendCommand($channel, $commands[$value])) {
-                    $this->SetValue($Ident, $value);
-                    // Nur die Endlagen sind ohne Positionsrückmeldung sicher bekannt.
-                    if ($value === 0) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 100);
-                    } elseif ($value === 1) {
+                    $this->SetValueIfChanged((string)$Ident, $value);
+                    if ($value === 1) {
                         $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
@@ -814,9 +820,8 @@ class ZeptrionAir extends IPSModuleStrict
                         $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
-                    } elseif ($value === 4) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 0);
+                    } elseif ($value === 2) {
+                        $this->ClearOwnMotorState($channel);
                     }
                 }
                 return;
@@ -1499,6 +1504,50 @@ class ZeptrionAir extends IPSModuleStrict
     private function ClearOwnMotorState(int $channel): void
     {
         $all=$this->ReadOwnMotorStates(); unset($all[(string)$channel]); $this->WriteOwnMotorStates($all);
+    }
+
+    private function StartCommandEndPositionMove(int $channel, int $target): void
+    {
+        $target = $target <= 0 ? 0 : 100;
+        $nowMs = (int)round(microtime(true) * 1000);
+        $own = $this->GetOwnMotorState($channel);
+        if (($own['type'] ?? '') === 'position' && $nowMs <= (int)($own['until'] ?? 0)) {
+            $current = $this->EstimateOwnPhysicalPosition($channel, $own, $nowMs);
+        } else {
+            $current = $this->GetMotorPosition($channel);
+        }
+        $current = max(0, min(100, $current));
+
+        if ($target === $current) {
+            $this->SetMotorPosition($channel, $target);
+            $this->ClearOwnMotorState($channel);
+            return;
+        }
+
+        $direction = $target > $current ? 'down' : 'up';
+        $command = $target === 0 ? 'open' : 'close';
+        $duration = $direction === 'down'
+            ? (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
+            : (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100);
+        // Endlagenbefehle laufen bis zum Anschlag; derselbe Sicherheitsaufschlag
+        // wie bei einer 0/100-%-Fahrt über die Positionsvariable.
+        $duration = max(500, $duration) + 1500;
+
+        if (!$this->SendCommand($channel, $command)) return;
+
+        $this->SetMotorPosition($channel, $target);
+        if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'shutter') {
+            $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $direction === 'down' ? 0 : 100);
+        }
+        $this->SetOwnMotorState($channel, [
+            'type' => 'position',
+            'startMs' => $nowMs,
+            'until' => $nowMs + $duration,
+            'startPosition' => $current,
+            'target' => $target,
+            'direction' => $direction
+        ]);
+        $this->SendDebug('ROLLO BEDIENUNG', 'ch' . $channel . ' physisch~' . $current . '% -> Soll ' . $target . '% | ' . $direction . ' | ' . $duration . 'ms', 0);
     }
 
     private function StartOwnLamellaMove(int $channel,int $target,int $current): void
