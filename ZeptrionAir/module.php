@@ -2459,6 +2459,7 @@ class ZeptrionAir extends IPSModuleStrict
         }
         foreach ($zeptrionCommandsByHost as $host => $commands) {
             $services[] = [
+                'typ' => 'application/x-www-form-urlencoded',
                 'req' => 'POST',
                 'loc' => (string)$host,
                 'pth' => '/zrap/chctrl',
