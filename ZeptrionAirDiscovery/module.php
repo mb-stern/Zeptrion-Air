@@ -3,20 +3,12 @@ declare(strict_types=1);
 class ZeptrionAirDiscovery extends IPSModuleStrict
 {
     private const DEVICE_MODULE_ID = '{75F3D2A4-9D4E-4E5C-A07E-8EFA49D824C1}';
-    private const SPLITTER_MODULE_ID = '{C7B836D4-9DA7-4C88-9AA0-0E8D4A5B52A1}';
+    private const CLIENT_SOCKET_MODULE_ID = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
     private const ZEROCONF_MODULE_ID = '{780B2D48-916C-4D59-AD35-5A429B2355A5}';
 
     public function Create(): void
     {
         parent::Create();
-    }
-
-    public function GetCompatibleParents(): string
-    {
-        return json_encode([
-            'type' => 'connect',
-            'moduleIDs' => [self::SPLITTER_MODULE_ID]
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     public function GetConfigurationForm(): string
@@ -79,16 +71,24 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
                         'ShowChannelActualValues' => false
                     ]
                 ], [
-                    'moduleID' => self::SPLITTER_MODULE_ID,
-                    'configuration' => []
+                    'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host,
+                        'Port' => 80,
+                        'Open' => true
+                    ]
                 ]];
             } elseif ($reachable && $instance !== null) {
                 $rows[$host]['create'] = [[
                     'moduleID' => self::DEVICE_MODULE_ID,
                     'configuration' => ['Host' => $host]
                 ], [
-                    'moduleID' => self::SPLITTER_MODULE_ID,
-                    'configuration' => []
+                    'moduleID' => self::CLIENT_SOCKET_MODULE_ID,
+                    'configuration' => [
+                        'Host' => $host,
+                        'Port' => 80,
+                        'Open' => true
+                    ]
                 ]];
             }
         }
@@ -189,41 +189,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $requests[$host . '|rssi'] = ['host' => $host, 'path' => '/zrap/rssi'];
         }
         $responses = $this->HttpXmlGetMulti($requests);
-        $retry = [];
-        foreach ($requests as $key => $request) if (($responses[$key] ?? null) === null) $retry[$key] = $request;
-        if ($retry !== []) {
-            foreach ($this->HttpXmlGetMulti($retry, 2500, 5000) as $key => $response) {
-                if ($response !== null) $responses[$key] = $response;
-            }
-        }
-        // Wenn nur /zrap/chdes fehlt, obwohl /zrap/id erfolgreich war,
-        // die Kanaldaten dieses zApps gezielt noch zweimal einzeln nachladen.
-        foreach ($devices as $host => $device) {
-            $idKey = $host . '|id';
-            $chdesKey = $host . '|chdes';
-            $id = $responses[$idKey] ?? null;
-            if ($id === null || strtoupper((string)($id['sys'] ?? '')) !== 'ZEPTRION') {
-                continue;
-            }
-            if (($responses[$chdesKey] ?? null) !== null) {
-                continue;
-            }
-            for ($attempt = 2; $attempt <= 3; $attempt++) {
-                $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/3', 0);
-                usleep(200000);
-                $single = $this->HttpXmlGetMulti([
-                    $chdesKey => ['host' => $host, 'path' => '/zrap/chdes']
-                ], 2500, 5000);
-                if (($single[$chdesKey] ?? null) !== null) {
-                    $responses[$chdesKey] = $single[$chdesKey];
-                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - erfolgreich bei Versuch ' . $attempt . '/3', 0);
-                    break;
-                }
-                if ($attempt === 3) {
-                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - nach 3 Versuchen keine Antwort', 0);
-                }
-            }
-        }
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
             $device['ip'] = $this->ResolveIPv4($host);
