@@ -1518,13 +1518,10 @@ class ZeptrionAir extends IPSModuleStrict
         }
         $current = max(0, min(100, $current));
 
-        if ($target === $current) {
-            $this->SetMotorPosition($channel, $target);
-            $this->ClearOwnMotorState($channel);
-            return;
-        }
-
-        $direction = $target > $current ? 'down' : 'up';
+        // Ein expliziter Hoch-/Tief-Befehl aus der Bedienungsvariable muss
+        // IMMER an den Aktor gesendet werden. Die intern bekannte Position darf
+        // den Befehl nicht unterdrücken, da sie von der realen Position abweichen kann.
+        $direction = $target === 100 ? 'down' : 'up';
         $command = $target === 0 ? 'open' : 'close';
         $duration = $direction === 'down'
             ? (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
