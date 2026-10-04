@@ -2462,7 +2462,7 @@ class ZeptrionAir extends IPSModuleStrict
             $fullService = [
                 'req' => 'POST',
                 'loc' => (string)$host,
-                'pth' => '/zrap/chctrl',
+                'pth' => '/zrap/chctrl/ch',
                 'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
             ];
 
