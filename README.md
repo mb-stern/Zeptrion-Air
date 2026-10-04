@@ -1,152 +1,119 @@
-# zeptrionAIR für IP-Symcon
+# Zeptrion Air
 
-Dieses Modul bindet Feller zeptrionAIR Geräte in IP-Symcon ein.
+IP-Symcon-Modul für **Feller zeptrionAIR**.
 
-Vorhandene zeptrionAIR Geräte werden automatisch im Netzwerk erkannt und können als Geräteinstanzen angelegt werden. Die Kommunikation der Geräte läuft zentral über einen zeptrionAIR Splitter. Zusätzlich können zeptrionAIR Smart-Taster mit IP-Symcon Objekten und anderen eingebundenen zeptrionAIR Geräten verknüpft werden.
+Das Modul bindet zeptrionAIR-Geräte lokal über die HTTP-Schnittstelle in IP-Symcon ein. Die Kommunikation mit den zApps erfolgt direkt im lokalen Netzwerk.
 
 ## Funktionsumfang
 
-- Automatische Erkennung von zeptrionAIR Geräten im lokalen Netzwerk
-- Anzeige der erkannten Geräte und Kanäle im Discovery
-- Automatische Erkennung der vorhandenen Kanal- und Gerätetypen
-- Anlegen der erkannten Geräte als IP-Symcon Instanzen
-- Zentrale Gerätekommunikation über den zeptrionAIR Splitter
-- Steuerung der unterstützten zeptrionAIR Funktionen aus IP-Symcon
-- Unterstützung von Licht, Dimmer, Rollo und Markise entsprechend der erkannten Gerätekonfiguration
-- Unterstützung von zeptrionAIR Smart-Tastern
-- Zentrale Smart-Taster-Konfiguration über ein Webinterface
-- Auswahl von IP-Symcon Variablen und Skripten über den Objektbaum
-- Auswahl eingebundener zeptrionAIR Geräte als Smart-Taster-Ziel
-- Automatische Übernahme möglicher Werte aus Variablenprofilen
-- Mehrere Aktionen innerhalb einer Smart-Taster-Szene
-- Anzeige programmierter Smart-Taster in der zugehörigen Geräteinstanz
-- Zentraler WebHook für alle über IP-Symcon programmierten Smart-Taster
-
-## Voraussetzungen
-
-- IP-Symcon
-- Eine bereits eingerichtete zeptrionAIR Anlage
-- zeptrionAIR Geräte im gleichen bzw. erreichbaren lokalen Netzwerk
-- Netzwerkzugriff von IP-Symcon auf die zeptrionAIR Geräte
-- Originale zeptrionAIR App für die grundlegende Einrichtung der Anlage
-
-## Einrichtung der zeptrionAIR Anlage
-
-Die grundlegende Einrichtung der zeptrionAIR Anlage erfolgt weiterhin über die originale zeptrionAIR App. Dazu gehören insbesondere Erstinbetriebnahme, Einrichtung der zApps, Konfiguration der angeschlossenen Verbraucher sowie die grundlegende Kanal- und Gerätekonfiguration.
-
-Das IP-Symcon Modul ersetzt die originale zeptrionAIR App nicht. Die Anlage wird zuerst mit der originalen App eingerichtet und getestet. Anschließend übernimmt das Modul die vorhandenen Geräte und bindet sie in IP-Symcon ein.
-
-## Installation und Discovery
-
-Nach der Installation steht die zeptrionAIR Discovery zur Verfügung. Sie sucht nach erreichbaren zeptrionAIR Geräten im lokalen Netzwerk und zeigt je nach Gerät unter anderem folgende Informationen an:
-
-- zApp
-- IP-Adresse
-- Gerätetyp
-- Seriennummer
-- RSSI
-- erkannte Kanäle
-- konfigurierte Verbraucher
-
-Bereits vorhandene Geräteinstanzen werden berücksichtigt. Neue Geräte können direkt aus der Discovery als zeptrionAIR Geräteinstanz angelegt werden.
-
-Der benötigte zeptrionAIR Splitter wird zentral verwendet. Die Geräteinstanzen kommunizieren nicht unabhängig voneinander direkt mit den Geräten, sondern senden ihre Anforderungen über den Splitter. Dadurch wird die Kommunikation zu einem zeptrionAIR Gerät zentral koordiniert.
-
-## zeptrionAIR Geräteinstanz
-
-Für jedes eingebundene zeptrionAIR Gerät wird eine eigene Geräteinstanz angelegt. Die verfügbaren Kanäle und Funktionen richten sich nach der Konfiguration des jeweiligen Gerätes.
-
-Die erkannten Kanaltypen werden automatisch übernommen und in IP-Symcon entsprechend dargestellt. Die Geräteinstanz dient anschließend zur Steuerung und Statusanzeige der jeweiligen zeptrionAIR Funktionen.
-
-Die normale Statusabfrage erfolgt über die regulären Modul-Timer. Motoraktoren werden nicht unnötig über den normalen Kanal-Scan dauergepollt.
+- automatische Suche nach zeptrionAIR-Geräten im lokalen Netzwerk
+- automatische Anlage der gefundenen Geräte in IP-Symcon
+- Unterstützung von Licht, Dimmer, Rollo und Markise
+- Schalten von Licht und Erfassen des Schaltzustands
+- Dimmen und Verwaltung des bekannten Dimmwerts
+- Steuerung von Rollo und Markise
+- virtuelle Positionsberechnung für Rollo und Markise anhand der konfigurierten bzw. ermittelten Laufzeiten
+- Lamellensteuerung bei Rollos
+- ereignisbasierte Statusaktualisierung über `/zrap/chnotify`
+- kein permanentes 5-Sekunden-Polling für den Kanalstatus
+- automatische Wiederherstellung der Statusüberwachung nach Kommunikationsunterbrechungen
+- Anzeige von Geräteinformationen und RSSI
+- Unterstützung der zeptrionAIR-Speicher S1 bis S4
+- Speichern und Löschen von S1 bis S4 direkt aus der Geräteinstanz
+- Referenzwerte für gespeicherte Szenen:
+  - Dimmer: Dimmwert in %
+  - Rollo: Position und Lamellenposition
+  - Markise: Position
+- konfigurierbare Namen für Kanäle und Szenen
 
 ## Smart-Taster
 
-Das Modul unterstützt die Programmierung von zeptrionAIR Smart-Tastern für Aktionen, die über IP-Symcon ausgeführt werden.
+Smart-Taster können direkt aus dem Modul konfiguriert werden.
 
-Eine Smart-Taster-Szene kann folgende Ziele enthalten:
+Ein Smart-Taster kann sowohl zeptrionAIR-Ziele als auch IP-Symcon-Ziele enthalten.
 
-- IP-Symcon Variable
-- IP-Symcon Skript
-- eingebundenes zeptrionAIR Gerät
+### zeptrionAIR-Ziele
 
-Mehrere Ziele können innerhalb einer Szene kombiniert werden.
+zeptrionAIR-Ziele werden direkt auf dem Smart-Taster gespeichert. Beim Tastendruck führt der Smart-Taster die hinterlegten HTTP-Aufrufe direkt im zeptrionAIR-Netzwerk aus.
 
-### IP-Symcon Variablen
+Dadurch funktionieren die zeptrionAIR-Ziele auch dann, wenn IP-Symcon nicht erreichbar ist.
 
-Über den IP-Symcon Objektbaum kann eine Variable ausgewählt und der gewünschte Wert festgelegt werden. Besitzt die Variable ein Variablenprofil, werden die dort hinterlegten Werte automatisch zur Auswahl angeboten.
+Für die auf dem Smart-Taster gespeicherten zeptrionAIR-Aufrufe werden die Zielgeräte mit ihrer IPv4-Adresse hinterlegt.
 
-Damit können beispielsweise Ein/Aus, Öffnen/Stoppen/Schließen, Betriebsarten, Stufen oder Sollwerte verwendet werden, sofern das jeweilige Variablenprofil diese Werte bereitstellt.
+### IP-Symcon-Callback
 
-### IP-Symcon Skripte
+Zusätzlich wird ein Callback zu IP-Symcon auf dem Smart-Taster hinterlegt.
 
-Neben Variablen können IP-Symcon Skripte ausgewählt werden. Beim Drücken des programmierten Smart-Tasters wird das entsprechende Skript ausgeführt.
+Dieser Callback dient dazu,
 
-### zeptrionAIR Ziele
+- IP-Symcon über den Tastendruck zu informieren,
+- gespeicherte Referenzwerte nach einem Szenenaufruf zu synchronisieren und
+- reine IP-Symcon-Ziele auszuführen.
 
-Als Ziel einer Smart-Taster-Szene kann auch ein durch das Modul eingebundenes zeptrionAIR Gerät ausgewählt werden. Damit kann ein Smart-Taster beispielsweise eine Funktion eines anderen zeptrionAIR Gerätes über IP-Symcon auslösen.
+Direkte zeptrionAIR-Ziele werden durch den Callback nicht nochmals ausgeführt.
 
-Diese über das Modul konfigurierte Verknüpfung läuft über IP-Symcon und den zeptrionAIR Splitter. Sie ist deshalb nicht mit einer rein internen, von IP-Symcon unabhängigen zeptrionAIR Verknüpfung gleichzusetzen.
+Mehrere HTTP-Aufrufe können entsprechend der zeptrionAIR-Smartbutton-API auf einem Smart-Taster gespeichert werden.
 
-Direkte interne zeptrionAIR Verknüpfungen, die auch ohne IP-Symcon funktionieren sollen, werden weiterhin mit der originalen zeptrionAIR App eingerichtet.
+## Szenen S1–S4
 
-## Smart-Taster Webinterface
+Für jeden verwendeten Kanal können die zeptrionAIR-Speicher **S1 bis S4** verwaltet werden.
 
-Die Smart-Taster-Konfiguration erfolgt zentral über den zeptrionAIR Splitter. Das Webinterface ist über den zentralen WebHook erreichbar:
+Beim Speichern wird neben der Szene automatisch ein Referenzwert in IP-Symcon hinterlegt. Dadurch kann IP-Symcon nach einem späteren Szenenaufruf den bekannten Zustand wieder korrekt synchronisieren.
 
-`/hook/zeptrionair`
+Je nach Kanaltyp werden folgende Werte gespeichert:
 
-Die einzelnen Geräteinstanzen benötigen dafür keine eigenen WebHooks.
+- **Dimmer:** Dimmwert
+- **Rollo:** Position und Lamellenposition
+- **Markise:** Position
 
-## Smart-Taster programmieren
+Die Referenzwerte werden auch bei der Konfiguration von Smart-Tastern verwendet.
 
-1. Neue Szene anlegen.
-2. Einen Namen für die Szene vergeben.
-3. Ein Ziel hinzufügen.
-4. IP-Symcon Objekt oder zeptrionAIR Ziel auswählen.
-5. Bei einer Variable bzw. einem unterstützten Ziel den gewünschten Wert oder Befehl auswählen.
-6. Bei Bedarf weitere Ziele hinzufügen.
-7. Auf **Smart-Taste programmieren** klicken.
-8. Die zeptrionAIR Smart-Taster beginnen zu blinken.
-9. Die gewünschte blinkende Smart-Taste am Schalter drücken.
+## Statusaktualisierung
 
-Der Splitter erkennt das zugehörige zApp und speichert die Zuordnung der Smart-Taste zur angelegten Szene.
+Die Kanalzustände werden über den zeptrionAIR-Long-Poll-Endpunkt `/zrap/chnotify` überwacht.
 
-## Anzeige in der Geräteinstanz
+Nach einer Statusmeldung wird die Überwachung unmittelbar erneut gestartet. Ein zyklisches 5-Sekunden-`chscan`-Polling ist deshalb im normalen Betrieb nicht erforderlich.
 
-Ein programmierter Smart-Taster wird zusätzlich in der zugehörigen zeptrionAIR Geräteinstanz angezeigt.
+Bei Kommunikationsproblemen wird die Verbindung automatisch überwacht und die Benachrichtigung wieder gestartet.
 
-Da zeptrionAIR bei der Erkennung keine eindeutige Zuordnung des Smart-Tasters zu einem bestimmten Kanal liefert, wird die Smart-Taster-Funktion an einem ansonsten nicht verwendeten Kanal der Geräteinstanz dargestellt. Dort werden die gespeicherte Szene und die zugeordneten Ziele angezeigt.
+### Hinweis zu Dimmern
 
-Es können maximal zwei Smart-Taster pro entsprechendem Gerät dargestellt werden.
+Bei den getesteten zeptrionAIR-Dimmern liefert `chnotify` beim Dimmen nur den Ein-/Aus-Zustand und keinen zuverlässigen tatsächlichen Dimmwert. Deshalb wird ein vorhandener bekannter Dimmwert nicht durch diese Meldung überschrieben.
 
-## Smart-Taster löschen
+Bei über IP-Symcon ausgeführten Dimmvorgängen ist der Zielwert bekannt und kann entsprechend geführt werden.
 
-Über **Smart-Taster löschen** kann eine vorhandene Programmierung ausgewählt werden. Nach dem Start des Löschvorgangs beginnen die Smart-Taster zu blinken. Anschließend wird die gewünschte blinkende Smart-Taste am Schalter gedrückt, damit der Splitter das zugehörige zApp erkennt und die Programmierung löscht.
+## Rollo und Markise
 
-## Aus Splitter entfernen
+Rollo und Markise verwenden eine laufzeitbasierte Positionsberechnung.
 
-Eine gespeicherte Szene kann über **Aus Splitter entfernen** aus der Konfiguration des zeptrionAIR Splitters entfernt werden. Dabei wird der entsprechende Eintrag aus der in IP-Symcon gespeicherten Smart-Taster-Konfiguration entfernt.
+- **Rollo:** Position und Lamellenposition
+- **Markise:** Position ohne Lamellensteuerung
 
-## Zentraler WebHook
+Für Zwischenpositionen werden zeitgesteuerte Fahrbefehle verwendet.
 
-Für die über IP-Symcon programmierten Smart-Taster wird ausschließlich der zentrale WebHook des Splitters verwendet:
+## Modulaufbau
 
-`/hook/zeptrionair`
+Die Geräteinstanz kommuniziert direkt über einen IP-Symcon Client Socket mit dem jeweiligen zeptrionAIR-Gerät.
 
-Beim Drücken eines entsprechend programmierten Smart-Tasters ruft das zeptrionAIR Gerät diesen WebHook auf. Der Splitter ermittelt die gespeicherte Szene und führt die hinterlegten Aktionen aus.
+```text
+Discovery
+   ↓
+ZeptrionAir Device
+   ↓
+Client Socket
+   ↓
+zeptrionAIR zApp
+```
 
-## Verhalten ohne IP-Symcon
+Es wird kein zusätzlicher Splitter benötigt.
 
-Über dieses Modul programmierte Smart-Taster-Aktionen benötigen eine erreichbare IP-Symcon Installation. Das gilt auch für ein zeptrionAIR Ziel, wenn die Zuordnung über dieses Modul erstellt wurde.
+## Discovery
 
-Direkte zeptrionAIR Funktionen, die unabhängig von IP-Symcon arbeiten sollen, müssen weiterhin innerhalb des zeptrionAIR Systems mit der originalen App eingerichtet werden.
+Die Discovery-Instanz sucht nach zeptrionAIR-Geräten im Netzwerk und liest die benötigten Geräte- und Kanalinformationen aus.
 
-## Hinweise
+Unterstützt werden die zeptrionAIR-mDNS-Dienste `_zapp._tcp` sowie für ältere Geräte `_http._tcp`.
 
-Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit der originalen zeptrionAIR App eingerichtet und getestet werden.
-
-Änderungen an der grundlegenden zeptrionAIR Konfiguration sollten weiterhin über die originale App vorgenommen werden. Das IP-Symcon Modul dient anschließend zur Integration, Steuerung und Erweiterung der bestehenden Anlage.
+Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **ZeptrionAir Device → Client Socket** automatisch angelegt.
 
 ## Versionen
 
@@ -154,7 +121,7 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 - Umbau auf CHNOTIFY Kommunikation um das aggressive Polling zu verhindern.
 
 ### Version 1.1
-- Der Modulecode wurde überarbeitet und auf Store-Kompatibilität geprüft.
+- Der Modulcode wurde überarbeitet und auf Store-Kompatibilität geprüft.
 
 ### Version 1.0
 - Initiale Version
@@ -166,6 +133,14 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 - Smart-Taster-Ziele für IP-Symcon Variablen, Skripte und eingebundene zeptrionAIR Geräte
 - Koordinierte Gerätekommunikation bei Polling und Smart-Taster-Programmierung
 
-## Lizenz
+## Branches
 
-Siehe `LICENSE`.
+- **main** – stabil
+- **beta** – Testversion
+- **development** – laufende Entwicklung
+
+## Voraussetzungen
+
+- IP-Symcon ab Version 8.2
+- Feller zeptrionAIR
+- Netzwerkverbindung zwischen IP-Symcon und den verwendeten zeptrionAIR-Geräten
