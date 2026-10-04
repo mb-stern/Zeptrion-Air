@@ -2699,26 +2699,10 @@ class ZeptrionAir extends IPSModuleStrict
                     $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
                 }
             }
-            // Mehrere zeptrionAIR-Ziele werden bewusst erst NACH dem ersten Durchlauf
-            // ausgelöst. Damit sind die Referenzsperren aller Zielinstanzen bereits aktiv,
-            // bevor irgendeine Rollo-/Markisen-/Dimmer-Szene startet.
-            if ((bool)($scene['callbackExecutesZeptrion'] ?? false)) {
-                foreach (($scene['targets'] ?? []) as $target) {
-                    if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
-                    try {
-                        $instanceID = (int)($target['instance'] ?? 0);
-                        $channel = (int)($target['channel'] ?? 0);
-                        $memory = (int)($target['memory'] ?? 0);
-                        if (!$this->IsDeviceInstance($instanceID) || $channel < 1 || $channel > 4 || $memory < 1 || $memory > 4) continue;
-                        $ok = $instanceID === $this->InstanceID
-                            ? $this->RecallScene($channel, $memory)
-                            : (bool)call_user_func('ZEPA_RecallScene', $instanceID, $channel, $memory);
-                        $this->SendDebug('Smart-Taster Aktion', 'zeptrion Ziel #' . $instanceID . ' ch' . $channel . ' recall_s' . $memory . ' -> ' . ($ok ? 'OK' : 'FEHLER'), 0);
-                    } catch (Throwable $e) {
-                        $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
-                    }
-                }
-            }
+            // Direkte zeptrion-Ziele sind bereits im Smart-Taster selbst gespeichert
+            // und werden von diesem unabhängig von IP-Symcon ausgeführt.
+            // Der Callback synchronisiert nur Referenzen und führt echte Symcon-Ziele aus.
+
             echo 'OK';
             return;
         }
