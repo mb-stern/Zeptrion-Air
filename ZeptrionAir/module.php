@@ -2411,8 +2411,24 @@ class ZeptrionAir extends IPSModuleStrict
         $services = [];
         $hasSymconTargets = false;
         $hasReferenceTargets = false;
+        $zeptrionTargetCount = 0;
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') === 'zeptrion') {
+                $zeptrionTargetCount++;
+                if (is_array($target['reference'] ?? null)) $hasReferenceTargets = true;
+            } elseif ((string)($target['type'] ?? '') === 'symcon') {
+                $hasSymconTargets = true;
+            }
+        }
+        // Ein einzelnes zeptrionAIR-Ziel bleibt wie bisher als direkter Smart-Taster-Dienst.
+        // Bei mehreren zeptrionAIR-Zielen übernimmt dagegen der Symcon-Callback die Ausführung.
+        // So werden zuerst ALLE Referenzsperren gesetzt und danach alle recall_sN-Befehle
+        // nacheinander an die jeweiligen Zielinstanzen gesendet. Das vermeidet sowohl die
+        // Service-Reihenfolge/Race-Probleme als auch die knappe 730-Byte-Grenze des zApp.
+        $callbackExecutesZeptrion = $zeptrionTargetCount > 1;
+        if (!$callbackExecutesZeptrion) {
+            foreach ($targets as $target) {
+                if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
                 $instance = (int)($target['instance'] ?? 0);
                 $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
                 if ($host === '') {
@@ -2425,12 +2441,9 @@ class ZeptrionAir extends IPSModuleStrict
                     'pth' => '/zrap/chctrl',
                     'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
                 ];
-                if (is_array($target['reference'] ?? null)) $hasReferenceTargets = true;
-            } elseif ((string)($target['type'] ?? '') === 'symcon') {
-                $hasSymconTargets = true;
             }
         }
-        if ($hasSymconTargets || $hasReferenceTargets) {
+        if ($hasSymconTargets || $hasReferenceTargets || $callbackExecutesZeptrion) {
             $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
             if ($hh === '') {
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
@@ -2474,6 +2487,7 @@ class ZeptrionAir extends IPSModuleStrict
             'id' => $id,
             'name' => $name,
             'targets' => $targets,
+            'callbackExecutesZeptrion' => $callbackExecutesZeptrion,
             'smartButtonHost' => $sel['host'],
             'smartButtonName' => $sel['name'],
             'smartButtonInstance' => $sel['instance']
@@ -2661,6 +2675,26 @@ class ZeptrionAir extends IPSModuleStrict
                     }
                 } catch (Throwable $e) {
                     $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
+                }
+            }
+            // Mehrere zeptrionAIR-Ziele werden bewusst erst NACH dem ersten Durchlauf
+            // ausgelöst. Damit sind die Referenzsperren aller Zielinstanzen bereits aktiv,
+            // bevor irgendeine Rollo-/Markisen-/Dimmer-Szene startet.
+            if ((bool)($scene['callbackExecutesZeptrion'] ?? false)) {
+                foreach (($scene['targets'] ?? []) as $target) {
+                    if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
+                    try {
+                        $instanceID = (int)($target['instance'] ?? 0);
+                        $channel = (int)($target['channel'] ?? 0);
+                        $memory = (int)($target['memory'] ?? 0);
+                        if (!$this->IsDeviceInstance($instanceID) || $channel < 1 || $channel > 4 || $memory < 1 || $memory > 4) continue;
+                        $ok = $instanceID === $this->InstanceID
+                            ? $this->RecallScene($channel, $memory)
+                            : (bool)call_user_func('ZEPA_RecallScene', $instanceID, $channel, $memory);
+                        $this->SendDebug('Smart-Taster Aktion', 'zeptrion Ziel #' . $instanceID . ' ch' . $channel . ' recall_s' . $memory . ' -> ' . ($ok ? 'OK' : 'FEHLER'), 0);
+                    } catch (Throwable $e) {
+                        $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
+                    }
                 }
             }
             echo 'OK';
