@@ -1950,6 +1950,78 @@ class ZeptrionAir extends IPSModuleStrict
         return 'zeptrionair-' . $this->InstanceID;
     }
 
+    public function GetSmartButtonCallbackData(string $sceneID): string
+    {
+        $sceneID = preg_replace('/[^a-zA-Z0-9_-]/', '', $sceneID) ?? '';
+        if ($sceneID === '' || !$this->HasPotentialSmartButtonChannel()) {
+            return json_encode(['success' => false, 'message' => 'Zielinstanz ist kein potenzieller Smart-Taster.'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        $token = $this->ReadAttributeString('SmartButtonToken');
+        if ($token === '') {
+            $token = bin2hex(random_bytes(16));
+            $this->WriteAttributeString('SmartButtonToken', $token);
+        }
+        return json_encode([
+            'success' => true,
+            'path' => '/hook/' . $this->SmartButtonHookName() . '?action=run&scene=' . rawurlencode($sceneID) . '&token=' . rawurlencode($token)
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    public function StoreSmartButtonSceneData(string $sceneJSON): string
+    {
+        try {
+            $entry = json_decode($sceneJSON, true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($entry) || (string)($entry['id'] ?? '') === '') {
+                throw new RuntimeException('Ungültige Smart-Taster-Szene.');
+            }
+            $scenes = $this->ReadScenes();
+            $found = false;
+            foreach ($scenes as &$scene) {
+                if ((string)($scene['id'] ?? '') === (string)$entry['id']) {
+                    $scene = $entry;
+                    $found = true;
+                    break;
+                }
+            }
+            unset($scene);
+            if (!$found) {
+                $scenes[] = $entry;
+            }
+            $this->WriteScenes($scenes);
+            return json_encode(['success' => true, 'scenes' => $scenes], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            return json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+    }
+
+    private function GetSmartButtonCallbackForInstance(int $instanceID, string $sceneID): array
+    {
+        if (!$this->IsDeviceInstance($instanceID)) {
+            return ['success' => false, 'message' => 'Erkannte Smart-Taster-Instanz ist ungültig.'];
+        }
+        $raw = $instanceID === $this->InstanceID
+            ? $this->GetSmartButtonCallbackData($sceneID)
+            : (string)call_user_func('ZEPA_GetSmartButtonCallbackData', $instanceID, $sceneID);
+        $result = json_decode($raw, true);
+        return is_array($result) ? $result : ['success' => false, 'message' => 'Callback der Zielinstanz konnte nicht ermittelt werden.'];
+    }
+
+    private function StoreSmartButtonSceneForInstance(int $instanceID, array $entry): array
+    {
+        if (!$this->IsDeviceInstance($instanceID)) {
+            return ['success' => false, 'message' => 'Erkannte Smart-Taster-Instanz ist ungültig.'];
+        }
+        $json = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($json)) {
+            return ['success' => false, 'message' => 'Szene konnte nicht serialisiert werden.'];
+        }
+        $raw = $instanceID === $this->InstanceID
+            ? $this->StoreSmartButtonSceneData($json)
+            : (string)call_user_func('ZEPA_StoreSmartButtonSceneData', $instanceID, $json);
+        $result = json_decode($raw, true);
+        return is_array($result) ? $result : ['success' => false, 'message' => 'Antwort der Zielinstanz ist ungültig.'];
+    }
+
     public function StartNotifyListener(): bool
     {
         $this->SetBuffer('NotifyListening', '1');
@@ -2246,13 +2318,16 @@ class ZeptrionAir extends IPSModuleStrict
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
             }
             $p = explode(':', $hh, 2);
-            $token = $this->ReadAttributeString('SmartButtonToken');
+            $callback = $this->GetSmartButtonCallbackForInstance((int)$sel['instance'], $id);
+            if (!$callback['success']) {
+                return ['ok' => false, 'message' => $callback['message']];
+            }
             $services[] = [
                 'req' => 'GET',
                 'typ' => 'application/x-www-form-urlencoded',
                 'loc' => $p[0],
                 'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
-                'pth' => '/hook/' . $this->SmartButtonHookName() . '?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
+                'pth' => (string)$callback['path'],
                 'bdy' => ''
             ];
         }
@@ -2272,7 +2347,6 @@ class ZeptrionAir extends IPSModuleStrict
         if (!$r['success']) {
             return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
         }
-        $scenes = $this->ReadScenes();
         $entry = [
             'id' => $id,
             'name' => $name,
@@ -2281,20 +2355,15 @@ class ZeptrionAir extends IPSModuleStrict
             'smartButtonName' => $sel['name'],
             'smartButtonInstance' => $sel['instance']
         ];
-        $found = false;
-        foreach ($scenes as &$scene) {
-            if ((string)($scene['id'] ?? '') === $id) {
-                $scene = $entry;
-                $found = true;
-                break;
-            }
+        $stored = $this->StoreSmartButtonSceneForInstance((int)$sel['instance'], $entry);
+        if (!$stored['success']) {
+            return ['ok' => false, 'message' => 'Smart-Taste wurde programmiert, aber die Szene konnte nicht in der erkannten Zielinstanz gespeichert werden: ' . $stored['message']];
         }
-        unset($scene);
-        if (!$found) {
-            $scenes[] = $entry;
-        }
-        $this->WriteScenes($scenes);
-        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
+        return [
+            'ok' => true,
+            'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und in der zugehörigen Instanz #' . (int)$sel['instance'] . ' mit „' . $name . '“ programmiert.',
+            'scenes' => $stored['scenes']
+        ];
     }
     private function SelectDelete(): array
     {
