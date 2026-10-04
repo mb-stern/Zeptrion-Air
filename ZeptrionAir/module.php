@@ -1925,11 +1925,11 @@ class ZeptrionAir extends IPSModuleStrict
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
                     'OPTIONS' => json_encode([
-                        ['Value' => 0, 'Caption' => 'Hoch'],
-                        ['Value' => 1, 'Caption' => 'Lamellen auf'],
-                        ['Value' => 2, 'Caption' => 'Stopp'],
-                        ['Value' => 3, 'Caption' => 'Lamellen zu'],
-                        ['Value' => 4, 'Caption' => 'Tief']
+                        ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                        ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                        ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                        ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                        ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
                     ], JSON_UNESCAPED_UNICODE)
                 ], $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
@@ -1981,7 +1981,13 @@ class ZeptrionAir extends IPSModuleStrict
                     $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
                     $sceneOptions[] = [
                         'Value' => $scene,
-                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        // IP-Symcon 8.2 Enumeration erwartet diese Felder in jedem OPTIONS-Eintrag.
+                        // Fehlen sie, wirft enumerationForm.php u.a. "Undefined array key IconActive".
+                        'IconActive' => false,
+                        'IconValue' => '',
+                        'IconDisplay' => 'Default',
+                        'Color' => -1
                     ];
                 }
                 $this->RegisterVariableInteger($sceneIdent, $sceneName, [
@@ -2434,8 +2440,9 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
             }
+            // Exakt das von Feller für /zapi/smartbt/prgs dokumentierte Format verwenden.
+            // "typ" ist für diesen zeptrionAIR-POST nicht nötig und wird bewusst weggelassen.
             $services[] = [
-                'typ' => 'application/x-www-form-urlencoded',
                 'req' => 'POST',
                 'loc' => $host,
                 'pth' => '/zrap/chctrl',
@@ -2475,6 +2482,8 @@ class ZeptrionAir extends IPSModuleStrict
             return ['ok' => false, 'message' => 'Smart-Taster-Programm konnte nicht erzeugt werden.'];
         }
         $estimatedBytes = strlen($encoded) + strlen('Content-Type: application/json\r\nContent-Length: ' . strlen($encoded) . '\r\nConnection: close\r\n');
+        // Diagnose: exakt anzeigen, was tatsächlich auf die zuvor gedrückte Smart-Taste geschrieben wird.
+        $this->SendDebug('SMARTBT PRGS PAYLOAD', 'Bytes=' . $estimatedBytes . ' | ' . $encoded, 0);
         if ($estimatedBytes > 730) {
             return ['ok' => false, 'message' => 'Die Smart-Taster-Szene ist zu gross. zeptrionAIR erlaubt für /zapi/smartbt/prgs maximal 730 Byte inklusive HTTP-Header.'];
         }
