@@ -2440,14 +2440,19 @@ class ZeptrionAir extends IPSModuleStrict
             if (!$callback['success']) {
                 return ['ok' => false, 'message' => $callback['message']];
             }
-            $services[] = [
+            // WICHTIG: Den Symcon-Callback als ERSTEN Smart-Taster-Dienst ausführen.
+            // Dadurch wird die S1-S4-Referenzsperre in der Zielinstanz gesetzt,
+            // bevor zeptrionAIR mit recall_sN die eigentliche Fahrt startet.
+            // Andernfalls kann das erste chnotify der Hauptfahrt noch in die normale
+            // Motor-Positionsberechnung gelangen, bevor ScheduleSceneReference aktiv ist.
+            array_unshift($services, [
                 'req' => 'GET',
                 'typ' => 'application/x-www-form-urlencoded',
                 'loc' => $p[0],
                 'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
                 'pth' => (string)$callback['path'],
                 'bdy' => ''
-            ];
+            ]);
         }
         if ($services === []) {
             return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
