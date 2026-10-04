@@ -42,7 +42,6 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
-        $this->RegisterHook($this->SmartButtonHookName());
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -275,7 +274,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadAttributeString('SmartButtonToken') === '') {
             $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
         }
-        $this->RegisterHook($this->SmartButtonHookName());
+        $this->UpdateSmartButtonHook();
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
@@ -1920,6 +1919,30 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             }
         }
+    }
+
+    private function HasPotentialSmartButtonChannel(): bool
+    {
+        $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        for ($channel = 1; $channel <= $maxChannels; $channel++) {
+            if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'unused') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function UpdateSmartButtonHook(): void
+    {
+        $hook = $this->SmartButtonHookName();
+        if ($this->HasPotentialSmartButtonChannel()) {
+            $this->RegisterHook($hook);
+            $this->SendDebug('Smart-Taster', 'System-Hook registriert: /hook/' . $hook, 0);
+            return;
+        }
+
+        $this->UnregisterHook($hook);
+        $this->SendDebug('Smart-Taster', 'Kein freier Kanal – System-Hook entfernt: /hook/' . $hook, 0);
     }
 
     private function SmartButtonHookName(): string
