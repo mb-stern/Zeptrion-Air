@@ -2678,8 +2678,10 @@ class ZeptrionAir extends IPSModuleStrict
             if (!is_array($item)) continue;
             $ref = is_array($item['reference'] ?? null) ? $item['reference'] : [];
             if ((int)($ref['channel'] ?? 0) !== $channel) continue;
-            // Auch nach dem Setzen noch kurz sperren, damit ein verspätetes
-            // Stop-chnotify den gerade gesetzten Referenzwert nicht überschreibt.
+            // Solange die Referenz noch nicht angewendet wurde, muss der Kanal
+            // vollständig aus der normalen Motor-/Positionsauswertung herausgehalten werden.
+            // settleUntil ist nur die kurze Nachlaufsperre NACH dem finalen Referenzwert.
+            if (!(bool)($item['applied'] ?? false)) return true;
             if ((int)($item['settleUntil'] ?? 0) >= $now) return true;
         }
         return false;
@@ -2828,12 +2830,11 @@ class ZeptrionAir extends IPSModuleStrict
 
             if (!$applied) {
                 $firstStopAt = (int)($item['firstStopAt'] ?? 0);
-                // WICHTIG: Nach dem ersten STOP bleibt chnotify weiterhin vollständig für
-                // die normale Positionsberechnung gesperrt. zeptrionAIR kann die
-                // Lamellen-Gegenfahrt erst mit Verzögerung beginnen. Deshalb nicht
-                // schon nach 1,2 s freigeben. Erst nach einem großzügigen Wartefenster
-                // ohne erneuten START gilt der erste STOP als endgültig.
-                $lamellaWait = max(5000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 1500);
+                // Nach dem ersten STOP kurz auf eine mögliche Lamellen-Gegenfahrt warten.
+                // Die vorherige feste 5-s-Wartezeit ist wieder entfernt. Entscheidend ist
+                // jetzt die korrekte Kanalsperre: während des gesamten Referenzvorgangs
+                // gelangt kein Notify in die normale Positionsberechnung.
+                $lamellaWait = max(1200, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 200);
                 if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false) && $now >= $firstStopAt + $lamellaWait) {
                     $this->ApplySceneReferenceEnd($ref);
                     $item['applied'] = true;
