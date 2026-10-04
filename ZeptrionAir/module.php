@@ -1235,7 +1235,7 @@ class ZeptrionAir extends IPSModuleStrict
 
         // Während eine gespeicherte S1-S4-Referenzfahrt läuft, darf chnotify
         // keine Zwischenposition in die Symcon-Variable schreiben. Die endgültige
-        // Position/Lamelle wird erst nach Ablauf der berechneten Fahrzeit gesetzt.
+        // Position/Lamelle wird erst nach dem vollständig erkannten Referenzvorgang gesetzt.
         if ($this->IsSceneReferencePendingForChannel($channel)) {
             // Die Ereignisse nicht zur normalen Positionsberechnung durchlassen,
             // aber für das Ende der Referenzfahrt auswerten. Beim Rollo folgt
@@ -2823,14 +2823,18 @@ class ZeptrionAir extends IPSModuleStrict
 
             if (!$applied) {
                 $firstStopAt = (int)($item['firstStopAt'] ?? 0);
-                // Wenn beim Rollo nach dem ersten STOP innerhalb 1,2 s keine
-                // Lamellen-Gegenfahrt startet, war der erste STOP bereits final.
-                if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false) && $now >= $firstStopAt + 1200) {
+                // WICHTIG: Nach dem ersten STOP bleibt chnotify weiterhin vollständig für
+                // die normale Positionsberechnung gesperrt. zeptrionAIR kann die
+                // Lamellen-Gegenfahrt erst mit Verzögerung beginnen. Deshalb nicht
+                // schon nach 1,2 s freigeben. Erst nach einem großzügigen Wartefenster
+                // ohne erneuten START gilt der erste STOP als endgültig.
+                $lamellaWait = max(3000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 1500);
+                if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false) && $now >= $firstStopAt + $lamellaWait) {
                     $this->ApplySceneReferenceEnd($ref);
                     $item['applied'] = true;
                     $item['settleUntil'] = $now + 1500;
                     $applied = true;
-                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' keine Lamellenfahrt erkannt; erster STOP ist final', 0);
+                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' keine Lamellenfahrt im Wartefenster erkannt; erster STOP ist final', 0);
                 } elseif ($now >= (int)($item['fallbackDue'] ?? 0)) {
                     $this->ApplySceneReferenceEnd($ref);
                     $item['applied'] = true;
