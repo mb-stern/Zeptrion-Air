@@ -154,7 +154,7 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 - Umbau auf CHNOTIFY Kommunikation um das aggressive Polling zu verhindern.
 
 ### Version 1.1
-- Der Modulcode wurde überarbeitet und auf Store-Kompatibilität geprüft.
+- Der Modulecode wurde überarbeitet und auf Store-Kompatibilität geprüft.
 
 ### Version 1.0
 - Initiale Version

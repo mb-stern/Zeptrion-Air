@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-class ZeptrionAir extends IPSModule
+class ZeptrionAir extends IPSModuleStrict
 {
     private const TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
     private const CS = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
@@ -9,7 +9,6 @@ class ZeptrionAir extends IPSModule
     public function Create(): void
     {
         parent::Create();
-        $this->RequireParent(self::TX);
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -43,7 +42,6 @@ class ZeptrionAir extends IPSModule
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
-        $this->RegisterHook($this->SmartButtonHookName());
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -58,60 +56,12 @@ class ZeptrionAir extends IPSModule
             }
         }
     }
-    private function RegisterHook(string $hook): void
-    {
-        $hook = trim($hook, '/');
-        if ($hook === '') {
-            return;
-        }
-
-        $webHookControls = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F05AE9B93}');
-        if ($webHookControls === []) {
-            $this->SendDebug('Smart-Taster', 'WebHook Control nicht gefunden', 0);
-            return;
-        }
-
-        $webHookID = (int)$webHookControls[0];
-        $hooks = json_decode(IPS_GetProperty($webHookID, 'Hooks'), true);
-        if (!is_array($hooks)) {
-            $hooks = [];
-        }
-
-        $changed = false;
-        $found = false;
-        foreach ($hooks as &$entry) {
-            if (!is_array($entry) || (string)($entry['Hook'] ?? '') !== '/' . $hook) {
-                continue;
-            }
-            $found = true;
-            if ((int)($entry['TargetID'] ?? 0) !== $this->InstanceID) {
-                $entry['TargetID'] = $this->InstanceID;
-                $changed = true;
-            }
-            break;
-        }
-        unset($entry);
-
-        if (!$found) {
-            $hooks[] = [
-                'Hook' => '/' . $hook,
-                'TargetID' => $this->InstanceID
-            ];
-            $changed = true;
-        }
-
-        if ($changed) {
-            IPS_SetProperty($webHookID, 'Hooks', json_encode($hooks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-            IPS_ApplyChanges($webHookID);
-        }
-    }
-
     public function GetCompatibleParents(): string
     {
         return json_encode(['type' => 'require', 'moduleIDs' => [self::CS]], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
-    public function GetConfigurationForParent()
+    public function GetConfigurationForParent(): string
     {
         $host = trim($this->ReadPropertyString('Host'));
         return json_encode([
@@ -324,7 +274,7 @@ class ZeptrionAir extends IPSModule
         if ($this->ReadAttributeString('SmartButtonToken') === '') {
             $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
         }
-        $this->RegisterHook($this->SmartButtonHookName());
+        $this->UpdateSmartButtonHook();
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
@@ -620,7 +570,7 @@ class ZeptrionAir extends IPSModule
             $this->SetValueIfChanged('Online', true);
         }
     }
-    public function RequestAction($Ident, $Value): void
+    public function RequestAction(string $Ident, mixed $Value): void
     {
         if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Lamella|Command|Scene)$/', (string)$Ident, $m)) {
             throw new Exception('Ungültiger Ident: ' . $Ident);
@@ -1971,9 +1921,115 @@ class ZeptrionAir extends IPSModule
         }
     }
 
+    private function HasPotentialSmartButtonChannel(): bool
+    {
+        $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        for ($channel = 1; $channel <= $maxChannels; $channel++) {
+            if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'unused') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function UpdateSmartButtonHook(): void
+    {
+        $hook = $this->SmartButtonHookName();
+        if ($this->HasPotentialSmartButtonChannel()) {
+            $this->RegisterHook($hook);
+            $this->SendDebug('Smart-Taster', 'System-Hook registriert: /hook/' . $hook, 0);
+            return;
+        }
+
+        $this->UnregisterHook($hook);
+        $this->SendDebug('Smart-Taster', 'Kein freier Kanal – System-Hook entfernt: /hook/' . $hook, 0);
+    }
+
     private function SmartButtonHookName(): string
     {
         return 'zeptrionair-' . $this->InstanceID;
+    }
+
+    public function GetSmartButtonCallbackData(string $sceneID): string
+    {
+        $sceneID = preg_replace('/[^a-zA-Z0-9_-]/', '', $sceneID) ?? '';
+        if ($sceneID === '' || !$this->HasPotentialSmartButtonChannel()) {
+            return json_encode(['success' => false, 'message' => 'Zielinstanz ist kein potenzieller Smart-Taster.'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        $token = $this->ReadAttributeString('SmartButtonToken');
+        if ($token === '') {
+            $token = bin2hex(random_bytes(16));
+            $this->WriteAttributeString('SmartButtonToken', $token);
+        }
+        return json_encode([
+            'success' => true,
+            'path' => '/hook/' . $this->SmartButtonHookName() . '?action=run&scene=' . rawurlencode($sceneID) . '&token=' . rawurlencode($token)
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    public function StoreSmartButtonSceneData(string $sceneJSON): string
+    {
+        try {
+            $entry = json_decode($sceneJSON, true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($entry) || (string)($entry['id'] ?? '') === '') {
+                throw new RuntimeException('Ungültige Smart-Taster-Szene.');
+            }
+            $scenes = $this->ReadScenes();
+            $found = false;
+            $entryTargets = json_encode($entry['targets'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            foreach ($scenes as &$scene) {
+                $sameID = (string)($scene['id'] ?? '') === (string)$entry['id'];
+                $sameSmartButton = (string)($scene['smartButtonHost'] ?? '') !== ''
+                    && (string)($scene['smartButtonHost'] ?? '') === (string)($entry['smartButtonHost'] ?? '');
+                $sameName = trim((string)($scene['name'] ?? '')) === trim((string)($entry['name'] ?? ''));
+                $sceneTargets = json_encode($scene['targets'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $sameTargets = is_string($entryTargets) && is_string($sceneTargets) && $sceneTargets === $entryTargets;
+
+                // Gleiche ID immer ersetzen. Zusätzlich eine bereits vorhandene, inhaltlich
+                // identische Szene desselben Smart-Tasters ersetzen statt erneut anzuhängen.
+                if ($sameID || ($sameSmartButton && $sameName && $sameTargets)) {
+                    $scene = $entry;
+                    $found = true;
+                    break;
+                }
+            }
+            unset($scene);
+            if (!$found) {
+                $scenes[] = $entry;
+            }
+            $this->WriteScenes($scenes);
+            return json_encode(['success' => true, 'scenes' => $scenes], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            return json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+    }
+
+    private function GetSmartButtonCallbackForInstance(int $instanceID, string $sceneID): array
+    {
+        if (!$this->IsDeviceInstance($instanceID)) {
+            return ['success' => false, 'message' => 'Erkannte Smart-Taster-Instanz ist ungültig.'];
+        }
+        $raw = $instanceID === $this->InstanceID
+            ? $this->GetSmartButtonCallbackData($sceneID)
+            : (string)call_user_func('ZEPA_GetSmartButtonCallbackData', $instanceID, $sceneID);
+        $result = json_decode($raw, true);
+        return is_array($result) ? $result : ['success' => false, 'message' => 'Callback der Zielinstanz konnte nicht ermittelt werden.'];
+    }
+
+    private function StoreSmartButtonSceneForInstance(int $instanceID, array $entry): array
+    {
+        if (!$this->IsDeviceInstance($instanceID)) {
+            return ['success' => false, 'message' => 'Erkannte Smart-Taster-Instanz ist ungültig.'];
+        }
+        $json = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($json)) {
+            return ['success' => false, 'message' => 'Szene konnte nicht serialisiert werden.'];
+        }
+        $raw = $instanceID === $this->InstanceID
+            ? $this->StoreSmartButtonSceneData($json)
+            : (string)call_user_func('ZEPA_StoreSmartButtonSceneData', $instanceID, $json);
+        $result = json_decode($raw, true);
+        return is_array($result) ? $result : ['success' => false, 'message' => 'Antwort der Zielinstanz ist ungültig.'];
     }
 
     public function StartNotifyListener(): bool
@@ -2007,11 +2063,16 @@ class ZeptrionAir extends IPSModule
         $this->SendNotifyRequest('/zrap/chscan', 'scan');
     }
 
-    public function ReceiveData($JSONString)
+    public function ReceiveData(string $JSONString): string
     {
         $d = json_decode($JSONString, true);
         if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer'] === '') return '';
-        $buffer = $this->GetBuffer('NotifyBuffer') . (string)$d['Buffer'];
+        $received = hex2bin((string)$d['Buffer']);
+        if ($received === false) {
+            $this->SendDebug('CHNOTIFY RX', 'Ungültiger HEX-Buffer vom Parent', 0);
+            return '';
+        }
+        $buffer = $this->GetBuffer('NotifyBuffer') . $received;
         while (true) {
             $r = $this->ExtractNotifyResponse($buffer);
             if ($r === null) break;
@@ -2063,7 +2124,7 @@ class ZeptrionAir extends IPSModule
              "Connection: keep-alive\r\n\r\n";
         $this->SetBuffer('NotifyPending', $kind);
         $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
-        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => $q], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         if ($ok === false) {
             $this->SetBuffer('NotifyPending', '');
             $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen');
@@ -2267,13 +2328,16 @@ class ZeptrionAir extends IPSModule
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
             }
             $p = explode(':', $hh, 2);
-            $token = $this->ReadAttributeString('SmartButtonToken');
+            $callback = $this->GetSmartButtonCallbackForInstance((int)$sel['instance'], $id);
+            if (!$callback['success']) {
+                return ['ok' => false, 'message' => $callback['message']];
+            }
             $services[] = [
                 'req' => 'GET',
                 'typ' => 'application/x-www-form-urlencoded',
                 'loc' => $p[0],
                 'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
-                'pth' => '/hook/' . $this->SmartButtonHookName() . '?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
+                'pth' => (string)$callback['path'],
                 'bdy' => ''
             ];
         }
@@ -2293,7 +2357,6 @@ class ZeptrionAir extends IPSModule
         if (!$r['success']) {
             return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
         }
-        $scenes = $this->ReadScenes();
         $entry = [
             'id' => $id,
             'name' => $name,
@@ -2302,20 +2365,15 @@ class ZeptrionAir extends IPSModule
             'smartButtonName' => $sel['name'],
             'smartButtonInstance' => $sel['instance']
         ];
-        $found = false;
-        foreach ($scenes as &$scene) {
-            if ((string)($scene['id'] ?? '') === $id) {
-                $scene = $entry;
-                $found = true;
-                break;
-            }
+        $stored = $this->StoreSmartButtonSceneForInstance((int)$sel['instance'], $entry);
+        if (!$stored['success']) {
+            return ['ok' => false, 'message' => 'Smart-Taste wurde programmiert, aber die Szene konnte nicht in der erkannten Zielinstanz gespeichert werden: ' . $stored['message']];
         }
-        unset($scene);
-        if (!$found) {
-            $scenes[] = $entry;
-        }
-        $this->WriteScenes($scenes);
-        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
+        return [
+            'ok' => true,
+            'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und in der zugehörigen Instanz #' . (int)$sel['instance'] . ' mit „' . $name . '“ programmiert.',
+            'scenes' => $stored['scenes']
+        ];
     }
     private function SelectDelete(): array
     {
