@@ -182,10 +182,12 @@ class ZeptrionAir extends IPSModuleStrict
                     'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
                 ];
                 $referenceText = $this->FormatSceneReference($channel, $scene);
-                if ($referenceText !== '') {
+                $sceneType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+                if (in_array($sceneType, ['dimmer', 'shutter', 'awning'], true)) {
                     $sceneItems[] = [
                         'type' => 'Label',
-                        'caption' => 'Referenz: ' . $referenceText
+                        'name' => 'Channel' . $channel . 'Scene' . $scene . 'Reference',
+                        'caption' => $referenceText !== '' ? 'Gespeichert: ' . $referenceText : 'Gespeichert: –'
                     ];
                 }
                 $sceneItems[] = [
@@ -907,6 +909,14 @@ class ZeptrionAir extends IPSModuleStrict
         $ok = $this->SceneCommand($Channel, 'store', $Scene);
         if ($ok) {
             $this->CaptureSceneReference($Channel, $Scene);
+            $referenceText = $this->FormatSceneReference($Channel, $Scene);
+            if ($referenceText !== '') {
+                $this->UpdateFormField(
+                    'Channel' . $Channel . 'Scene' . $Scene . 'Reference',
+                    'caption',
+                    'Gespeichert: ' . $referenceText
+                );
+            }
         }
         return $ok;
     }
@@ -918,6 +928,14 @@ class ZeptrionAir extends IPSModuleStrict
             if (!is_array($references)) $references = [];
             unset($references[$Channel . ':' . $Scene]);
             $this->WriteAttributeString('SceneReferences', json_encode($references, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $type = strtolower($this->ReadPropertyString('Channel' . $Channel . 'Type'));
+            if (in_array($type, ['dimmer', 'shutter', 'awning'], true)) {
+                $this->UpdateFormField(
+                    'Channel' . $Channel . 'Scene' . $Scene . 'Reference',
+                    'caption',
+                    'Gespeichert: –'
+                );
+            }
         }
         return $ok;
     }
