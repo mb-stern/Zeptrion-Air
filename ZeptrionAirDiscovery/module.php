@@ -189,44 +189,6 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
             $requests[$host . '|rssi'] = ['host' => $host, 'path' => '/zrap/rssi'];
         }
         $responses = $this->HttpXmlGetMulti($requests);
-        $retry = [];
-        foreach ($requests as $key => $request) if (($responses[$key] ?? null) === null) $retry[$key] = $request;
-        if ($retry !== []) {
-            foreach ($this->HttpXmlGetMulti($retry, 2500, 5000) as $key => $response) {
-                if ($response !== null) $responses[$key] = $response;
-            }
-        }
-        // Wenn nur /zrap/chdes fehlt, obwohl /zrap/id erfolgreich war,
-        // die Kanaldaten dieses zApps gezielt noch zweimal einzeln nachladen.
-        foreach ($devices as $host => $device) {
-            $idKey = $host . '|id';
-            $chdesKey = $host . '|chdes';
-            $id = $responses[$idKey] ?? null;
-            if ($id === null || strtoupper((string)($id['sys'] ?? '')) !== 'ZEPTRION') {
-                continue;
-            }
-            if (($responses[$chdesKey] ?? null) !== null) {
-                continue;
-            }
-            // zApps beantworten /zrap/chdes teilweise deutlich später als /zrap/id.
-            // Moderat nachladen, damit die Kanaldaten möglichst vorhanden sind,
-            // ohne den Configurator durch lange Einzel-Retries zu blockieren.
-            for ($attempt = 2; $attempt <= 4; $attempt++) {
-                $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - Versuch ' . $attempt . '/4', 0);
-                usleep(250000);
-                $single = $this->HttpXmlGetMulti([
-                    $chdesKey => ['host' => $host, 'path' => '/zrap/chdes']
-                ], 2000, 4000);
-                if (($single[$chdesKey] ?? null) !== null) {
-                    $responses[$chdesKey] = $single[$chdesKey];
-                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - erfolgreich bei Versuch ' . $attempt . '/4', 0);
-                    break;
-                }
-                if ($attempt === 4) {
-                    $this->SendDebug('Discovery Retry', $host . ' /zrap/chdes - nach 4 Versuchen keine Antwort', 0);
-                }
-            }
-        }
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
             $device['ip'] = $this->ResolveIPv4($host);
