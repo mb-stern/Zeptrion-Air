@@ -150,6 +150,9 @@ Die zeptrionAIR Anlage sollte vor der Einbindung in IP-Symcon vollständig mit d
 
 ## Versionen
 
+### Version 1.2
+- Umbau auf CHNOTIFY Kommunikation um das aggressive Polling zu verhindern.
+
 ### Version 1.1
 - Der Modulcode wurde überarbeitet und auf Store-Kompatibilität geprüft.
 
