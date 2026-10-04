@@ -104,7 +104,7 @@ class ZeptrionAir extends IPSModuleStrict
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         $smartButtonAssignments = json_decode($this->GetSmartButtonAssignments($this->InstanceID), true);
         if (!is_array($smartButtonAssignments)) { $smartButtonAssignments = []; }
-        $smartButtonAssignments = array_slice($smartButtonAssignments, 0, 2);
+        $smartButtonAssignments = array_slice($smartButtonAssignments, 0, 4);
         $smartButtonIndex = 0;
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
             $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
@@ -2053,18 +2053,16 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $scenes = $this->ReadScenes();
             $found = false;
-            $entryTargets = json_encode($entry['targets'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             foreach ($scenes as &$scene) {
                 $sameID = (string)($scene['id'] ?? '') === (string)$entry['id'];
-                $sameSmartButton = (string)($scene['smartButtonHost'] ?? '') !== ''
-                    && (string)($scene['smartButtonHost'] ?? '') === (string)($entry['smartButtonHost'] ?? '');
-                $sameName = trim((string)($scene['name'] ?? '')) === trim((string)($entry['name'] ?? ''));
-                $sceneTargets = json_encode($scene['targets'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                $sameTargets = is_string($entryTargets) && is_string($sceneTargets) && $sceneTargets === $entryTargets;
 
-                // Gleiche ID immer ersetzen. Zusätzlich eine bereits vorhandene, inhaltlich
-                // identische Szene desselben Smart-Tasters ersetzen statt erneut anzuhängen.
-                if ($sameID || ($sameSmartButton && $sameName && $sameTargets)) {
+                // Nur dieselbe UI-Szene (gleiche ID) ersetzen.
+                // Verschiedene physische Smart-Taster dürfen bewusst dieselbe Bezeichnung
+                // und dieselben Ziele besitzen. Eine inhaltliche Duplikaterkennung würde
+                // sonst beim Programmieren des zweiten Tasters die Callback-Szene des
+                // ersten Tasters entfernen; dessen gespeicherter Callback zeigt dann auf
+                // eine nicht mehr vorhandene Szenen-ID.
+                if ($sameID) {
                     $scene = $entry;
                     $found = true;
                     break;
@@ -2290,7 +2288,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
                 'targets' => $targets
             ];
-            if (count($result) >= 2) {
+            if (count($result) >= 4) {
                 break;
             }
         }
