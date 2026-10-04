@@ -2456,13 +2456,25 @@ class ZeptrionAir extends IPSModuleStrict
             if ($host === '') {
                 return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
             }
+            // Der gespeicherte Smart-Taster-Service wird später vom zApp selbst ausgeführt.
+            // Deshalb den in Symcon konfigurierten DNS-Namen bereits beim Programmieren
+            // in eine IPv4-Adresse auflösen, damit der Smartfront keine lokale DNS-Auflösung
+            // für Namen wie "zapp-19370098" benötigt.
+            $targetIP = gethostbyname($host);
+            if ($targetIP === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
+                return ['ok' => false, 'message' => 'Die Host-Adresse des zeptrionAIR-Ziels „' . $host . '“ konnte nicht in eine IPv4-Adresse aufgelöst werden.'];
+            }
+            if (filter_var($targetIP, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+                return ['ok' => false, 'message' => 'Für das zeptrionAIR-Ziel „' . $host . '“ wurde keine gültige IPv4-Adresse ermittelt.'];
+            }
+            $this->SendDebug('SMARTBT ZIEL-IP', $host . ' -> ' . $targetIP, 0);
 
             // Vollständiger logischer Service. "typ" wird bei zeptrion /chctrl bewusst
             // nicht mitgesendet – genauso wie im zeptrionAIR-Beispiel auf API-Seite 5-38.
             $fullService = [
                 'req' => 'POST',
-                'loc' => (string)$host,
-                'pth' => '/zrap/chctrl/ch',
+                'loc' => (string)$targetIP,
+                'pth' => '/zrap/chctrl',
                 'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
             ];
 
