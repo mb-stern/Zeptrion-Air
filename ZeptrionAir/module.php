@@ -790,6 +790,14 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->RecallScene($channel, $scene)) {
                     $this->SetValueIfChanged((string)$Ident, $scene);
+
+                    // Auch beim direkten Aufruf über die IP-Symcon-Szenenvariable
+                    // die zu S1-S4 gespeicherte Referenz synchronisieren.
+                    $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                    $reference = json_decode($referenceJSON, true);
+                    if (is_array($reference) && $reference !== []) {
+                        $this->ScheduleSceneReference($referenceJSON);
+                    }
                 }
                 return;
         }
