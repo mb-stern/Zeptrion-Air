@@ -2024,14 +2024,23 @@ class ZeptrionAir extends IPSModuleStrict
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
+                $commandPresentation = [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
                     'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 2);
+                ];
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
                 $this->EnableAction($commandIdent);
+                // RegisterVariableInteger() aktualisiert bei einer bereits vorhandenen
+                // Modulvariable die CustomPresentation nicht in jedem Fall. Die
+                // Enumeration deshalb nach ApplyChanges explizit neu setzen, damit
+                // neu aktivierte/umbenannte S1-S4 sofort in "Bedienung" erscheinen.
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             } elseif ($active && $type === 'shutter') {
                 $dummyID = $this->EnsureShutterDummy($channel, $name);
                 $positionIdent = 'Ch' . $channel . 'Position';
@@ -2070,14 +2079,23 @@ class ZeptrionAir extends IPSModuleStrict
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
+                $commandPresentation = [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
                     'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 2);
+                ];
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
                 $this->EnableAction($commandIdent);
+                // RegisterVariableInteger() aktualisiert bei einer bereits vorhandenen
+                // Modulvariable die CustomPresentation nicht in jedem Fall. Die
+                // Enumeration deshalb nach ApplyChanges explizit neu setzen, damit
+                // neu aktivierte/umbenannte S1-S4 sofort in "Bedienung" erscheinen.
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             }
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
             foreach ([
