@@ -121,7 +121,7 @@ Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **Zeptrion
 - Umbau auf CHNOTIFY Kommunikation um das aggressive Polling zu verhindern.
 
 ### Version 1.1
-- Der Modulecode wurde überarbeitet und auf Store-Kompatibilität geprüft.
+- Der Modulcode wurde überarbeitet und auf Store-Kompatibilität geprüft.
 
 ### Version 1.0
 - Initiale Version
