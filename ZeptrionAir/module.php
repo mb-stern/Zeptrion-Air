@@ -706,6 +706,9 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->SendCommand($channel,$command)) {
                     $this->SetMotorPosition($channel,$target);
+                    // Die Bedienungsvariable zeigt auch bei Bedienung über die
+                    // native Positionsvariable die zuletzt ausgeführte Aktion.
+                    $this->SyncMotorCommandStatus($channel, $target === 0 ? 0 : ($target === 100 ? 4 : 2));
                     if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                         $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='down'?0:100);
                     }
@@ -774,13 +777,16 @@ class ZeptrionAir extends IPSModuleStrict
                     if (!isset($commands[$value])) {
                         throw new InvalidArgumentException('Unbekannter Markisen-Befehl');
                     }
-                    if ($this->SendCommand($channel, $commands[$value])) {
-                        $this->SetValue($Ident, $value);
-                        if ($value === 0) {
-                            $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
-                        } elseif ($value === 4) {
-                            $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
-                        }
+                    if ($value === 0 || $value === 4) {
+                        // Hoch/Tief aus der Bedienungsvariable muss exakt dieselbe
+                        // interne Fahrverfolgung wie die Positionsvariable nutzen.
+                        $this->StartCommandEndPositionMove($channel, $value === 0 ? 0 : 100);
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                    } elseif ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        // Ein explizites Stopp beendet eine ggf. noch laufende
+                        // eigene Fahrverfolgung.
+                        $this->ClearOwnMotorState($channel);
                     }
                     return;
                 }
@@ -797,13 +803,16 @@ class ZeptrionAir extends IPSModuleStrict
                 if (!isset($commands[$value])) {
                     throw new InvalidArgumentException('Unbekannter Store-Befehl');
                 }
+                if ($value === 0 || $value === 4) {
+                    // Hoch/Tief über Bedienung: Startposition, Richtung, Ziel und
+                    // erwartete Fahrzeit wie bei Position 0/100 verfolgen.
+                    $this->StartCommandEndPositionMove($channel, $value === 0 ? 0 : 100);
+                    $this->SetValueIfChanged((string)$Ident, $value);
+                    return;
+                }
                 if ($this->SendCommand($channel, $commands[$value])) {
-                    $this->SetValue($Ident, $value);
-                    // Nur die Endlagen sind ohne Positionsrückmeldung sicher bekannt.
-                    if ($value === 0) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 100);
-                    } elseif ($value === 1) {
+                    $this->SetValueIfChanged((string)$Ident, $value);
+                    if ($value === 1) {
                         $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
@@ -811,9 +820,8 @@ class ZeptrionAir extends IPSModuleStrict
                         $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
-                    } elseif ($value === 4) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 0);
+                    } elseif ($value === 2) {
+                        $this->ClearOwnMotorState($channel);
                     }
                 }
                 return;
@@ -828,6 +836,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->RecallScene($channel, $scene)) {
                     $this->SetValueIfChanged((string)$Ident, $scene);
+                    $this->SyncMotorSceneCommandStatus($channel, $scene);
 
                     // Auch beim direkten Aufruf über die IP-Symcon-Szenenvariable
                     // die zu S1-S4 gespeicherte Referenz synchronisieren.
@@ -1497,6 +1506,47 @@ class ZeptrionAir extends IPSModuleStrict
         $all=$this->ReadOwnMotorStates(); unset($all[(string)$channel]); $this->WriteOwnMotorStates($all);
     }
 
+    private function StartCommandEndPositionMove(int $channel, int $target): void
+    {
+        $target = $target <= 0 ? 0 : 100;
+        $nowMs = (int)round(microtime(true) * 1000);
+        $own = $this->GetOwnMotorState($channel);
+        if (($own['type'] ?? '') === 'position' && $nowMs <= (int)($own['until'] ?? 0)) {
+            $current = $this->EstimateOwnPhysicalPosition($channel, $own, $nowMs);
+        } else {
+            $current = $this->GetMotorPosition($channel);
+        }
+        $current = max(0, min(100, $current));
+
+        // Ein expliziter Hoch-/Tief-Befehl aus der Bedienungsvariable muss
+        // IMMER an den Aktor gesendet werden. Die intern bekannte Position darf
+        // den Befehl nicht unterdrücken, da sie von der realen Position abweichen kann.
+        $direction = $target === 100 ? 'down' : 'up';
+        $command = $target === 0 ? 'open' : 'close';
+        $duration = $direction === 'down'
+            ? (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
+            : (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100);
+        // Endlagenbefehle laufen bis zum Anschlag; derselbe Sicherheitsaufschlag
+        // wie bei einer 0/100-%-Fahrt über die Positionsvariable.
+        $duration = max(500, $duration) + 1500;
+
+        if (!$this->SendCommand($channel, $command)) return;
+
+        $this->SetMotorPosition($channel, $target);
+        if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'shutter') {
+            $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $direction === 'down' ? 0 : 100);
+        }
+        $this->SetOwnMotorState($channel, [
+            'type' => 'position',
+            'startMs' => $nowMs,
+            'until' => $nowMs + $duration,
+            'startPosition' => $current,
+            'target' => $target,
+            'direction' => $direction
+        ]);
+        $this->SendDebug('ROLLO BEDIENUNG', 'ch' . $channel . ' physisch~' . $current . '% -> Soll ' . $target . '% | ' . $direction . ' | ' . $duration . 'ms', 0);
+    }
+
     private function StartOwnLamellaMove(int $channel,int $target,int $current): void
     {
         $target=max(0,min(100,$target));
@@ -1799,8 +1849,14 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
+            if (!IPS_VariableExists($childID)) {
+                continue;
+            }
+            $object = IPS_GetObject($childID);
+            $ident = (string)($object['ObjectIdent'] ?? '');
+            if ($ident !== '') {
+                // Modulvariablen ausschließlich über die Modul-API entfernen.
+                $this->UnregisterVariable($ident);
             }
         }
         IPS_DeleteInstance($id);
@@ -1853,8 +1909,14 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
+            if (!IPS_VariableExists($childID)) {
+                continue;
+            }
+            $object = IPS_GetObject($childID);
+            $ident = (string)($object['ObjectIdent'] ?? '');
+            if ($ident !== '') {
+                // Modulvariablen ausschließlich über die Modul-API entfernen.
+                $this->UnregisterVariable($ident);
             }
         }
         IPS_DeleteInstance($id);
@@ -1974,14 +2036,23 @@ class ZeptrionAir extends IPSModuleStrict
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
+                $commandPresentation = [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
                     'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 2);
+                ];
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
                 $this->EnableAction($commandIdent);
+                // RegisterVariableInteger() aktualisiert bei einer bereits vorhandenen
+                // Modulvariable die CustomPresentation nicht in jedem Fall. Die
+                // Enumeration deshalb nach ApplyChanges explizit neu setzen, damit
+                // neu aktivierte/umbenannte S1-S4 sofort in "Bedienung" erscheinen.
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             } elseif ($active && $type === 'shutter') {
                 $dummyID = $this->EnsureShutterDummy($channel, $name);
                 $positionIdent = 'Ch' . $channel . 'Position';
@@ -2020,14 +2091,23 @@ class ZeptrionAir extends IPSModuleStrict
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
+                $commandPresentation = [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
                     'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 2);
+                ];
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
                 $this->EnableAction($commandIdent);
+                // RegisterVariableInteger() aktualisiert bei einer bereits vorhandenen
+                // Modulvariable die CustomPresentation nicht in jedem Fall. Die
+                // Enumeration deshalb nach ApplyChanges explizit neu setzen, damit
+                // neu aktivierte/umbenannte S1-S4 sofort in "Bedienung" erscheinen.
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             }
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
             foreach ([
@@ -2042,12 +2122,9 @@ class ZeptrionAir extends IPSModuleStrict
                     continue;
                 }
                 $oldIdent = 'Ch' . $channel . $suffix;
-                if (in_array($suffix, ['DimmerSwitch', 'Level', 'Position', 'Lamella'], true)) {
-                    $oldID = $this->FindManagedVariableID($oldIdent);
-                    if ($oldID > 0 && IPS_VariableExists($oldID)) {
-                        IPS_DeleteVariable($oldID);
-                    }
-                } elseif (@$this->GetIDForIdent($oldIdent) > 0) {
+                $oldID = $this->FindManagedVariableID($oldIdent);
+                if ($oldID > 0 && IPS_VariableExists($oldID)) {
+                    // Modulvariablen ausschließlich über UnregisterVariable() entfernen.
                     $this->UnregisterVariable($oldIdent);
                 }
             }
@@ -2936,6 +3013,25 @@ class ZeptrionAir extends IPSModuleStrict
         }
     }
 
+    private function SyncMotorCommandStatus(int $channel, int $value): void
+    {
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['shutter', 'awning'], true)) return;
+        if ($type === 'awning' && !in_array($value, [0, 2, 4], true)) return;
+        if ($type === 'shutter' && ($value < 0 || $value > 4)) return;
+        $this->SetValueIfChanged('Ch' . $channel . 'Command', $value);
+    }
+
+    private function SyncMotorSceneCommandStatus(int $channel, int $scene): void
+    {
+        if ($scene < 1 || $scene > 4) return;
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['shutter', 'awning'], true)) return;
+        // Nur sichtbare Szenen sind Bestandteil der Enumeration.
+        if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) return;
+        $this->SetValueIfChanged('Ch' . $channel . 'Command', 10 + $scene);
+    }
+
     public function ScheduleSceneReference(string $ReferenceJSON): bool
     {
         $ref = json_decode($ReferenceJSON, true);
@@ -2943,6 +3039,13 @@ class ZeptrionAir extends IPSModuleStrict
         $channel = (int)($ref['channel'] ?? 0);
         $type = (string)($ref['type'] ?? '');
         if ($channel < 1 || $channel > 4 || !in_array($type, ['dimmer', 'shutter', 'awning'], true)) return false;
+        // Referenzen enthalten die gespeicherte S1-S4-Nummer. Dadurch wird
+        // auch bei Smart-Taster-/Callback-Aufrufen die Bedienungsvariable
+        // auf die tatsächlich ausgelöste Speicherposition synchronisiert.
+        $scene = (int)($ref['scene'] ?? 0);
+        if ($scene >= 1 && $scene <= 4) {
+            $this->SyncMotorSceneCommandStatus($channel, $scene);
+        }
         $delay = 300;
         if ($type === 'dimmer') {
             $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Level');
