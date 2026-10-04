@@ -241,9 +241,14 @@ class ZeptrionAir extends IPSModuleStrict
                     ]
                 ];
             }
+            $channelName = trim($this->ReadPropertyString('Channel' . $channel . 'Name'));
+            $channelCaption = 'Kanal ' . $channel;
+            if ($channelName !== '' && strcasecmp($channelName, 'Kanal ' . $channel) !== 0) {
+                $channelCaption .= ' - ' . $channelName;
+            }
             $elements[] = [
                 'type' => 'ExpansionPanel',
-                'caption' => 'Kanal ' . $channel,
+                'caption' => $channelCaption,
                 'items' => $items
             ];
         }
