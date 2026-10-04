@@ -343,8 +343,9 @@ class ZeptrionAir extends IPSModule
             $this->SetStatus(201);
             return;
         }
-        // Polling wird vollständig automatisch geregelt:
-        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
+        // Kanalstatus wird für alle Kanaltypen einheitlich über chnotify geführt.
+        // chscan erfolgt beim Start des Notify-Listeners sowie bei Recovery;
+        // ein zyklisches 5-s-chscan-Polling ist nicht mehr erforderlich.
         $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetTimerInterval('InfoTimer', 60000);
         $state=$this->ReadMotorState();
@@ -352,18 +353,10 @@ class ZeptrionAir extends IPSModule
         $this->WriteMotorState($state);
         $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
         $this->SetTimerInterval('NotifyTimer', 0);
+        $this->SetTimerInterval('PollTimer', 0);
         $this->SetStatus(102);
-        if ($this->IsMotorOnlyDevice()) {
-            $this->SetTimerInterval('PollTimer', 0);
-            $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
-            $this->RefreshDeviceInfo();
-        } else {
-            $this->SetTimerInterval('PollTimer', 5000);
-            $this->Poll();
-            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
-                $this->RefreshDeviceInfo();
-            }
-        }
+        $this->SendDebug('Polling', 'chscan-Dauerpolling deaktiviert – Kanalstatus über chnotify', 0);
+        $this->RefreshDeviceInfo();
         // Eigener Client Socket: initial chscan, danach dauerhaft chnotify.
         if ($this->HasActiveParent()) {
             $this->StartNotifyListener();
