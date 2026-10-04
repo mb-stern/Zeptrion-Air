@@ -31,7 +31,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterTimer('LearnKickTimer', 0, 'ZEPA_LearnKickTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('OwnMotorTimer', 0, 'ZEPA_OwnMotorTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
-        $this->RegisterTimer('SmartReferenceTimer', 0, 'ZEPA_SmartReferenceTick($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('SceneReferenceTimer', 0, 'ZEPA_SceneReferenceTick($_IPS[\'TARGET\']);');
         $this->RegisterAttributeInteger('CommunicationFailures', 0);
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
         $this->RegisterAttributeString('MotorRuntimeState', '{}');
@@ -39,7 +39,8 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
-        $this->RegisterAttributeString('PendingSmartReferences', '[]');
+        $this->RegisterAttributeString('SceneReferences', '{}');
+        $this->RegisterAttributeString('PendingSceneReferences', '[]');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
@@ -174,9 +175,16 @@ class ZeptrionAir extends IPSModuleStrict
                 ];
                 $sceneItems[] = [
                     'type' => 'Button',
-                    'caption' => 'Neu speichern',
+                    'caption' => 'Speichern',
                     'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
                 ];
+                $referenceText = $this->FormatSceneReference($channel, $scene);
+                if ($referenceText !== '') {
+                    $sceneItems[] = [
+                        'type' => 'Label',
+                        'caption' => 'Referenz: ' . $referenceText
+                    ];
+                }
                 $sceneItems[] = [
                     'type' => 'Button',
                     'caption' => 'Löschen',
@@ -888,11 +896,62 @@ class ZeptrionAir extends IPSModuleStrict
     }
     public function StoreScene(int $Channel, int $Scene): bool
     {
-        return $this->SceneCommand($Channel, 'store', $Scene);
+        $ok = $this->SceneCommand($Channel, 'store', $Scene);
+        if ($ok) {
+            $this->CaptureSceneReference($Channel, $Scene);
+        }
+        return $ok;
     }
     public function DeleteScene(int $Channel, int $Scene): bool
     {
-        return $this->SceneCommand($Channel, 'delete', $Scene);
+        $ok = $this->SceneCommand($Channel, 'delete', $Scene);
+        if ($ok) {
+            $references = json_decode($this->ReadAttributeString('SceneReferences'), true);
+            if (!is_array($references)) $references = [];
+            unset($references[$Channel . ':' . $Scene]);
+            $this->WriteAttributeString('SceneReferences', json_encode($references, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
+        return $ok;
+    }
+    private function CaptureSceneReference(int $channel, int $scene): void
+    {
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['dimmer', 'shutter', 'awning'], true)) return;
+        $ref = ['type' => $type, 'channel' => $channel, 'scene' => $scene];
+        if ($type === 'dimmer') {
+            $id = $this->FindManagedVariableID('Ch' . $channel . 'Level');
+            if ($id <= 0) return;
+            $ref['level'] = max(0, min(100, (int)GetValue($id)));
+        } else {
+            $id = $this->FindManagedVariableID('Ch' . $channel . 'Position');
+            if ($id <= 0) return;
+            $ref['position'] = max(0, min(100, (int)GetValue($id)));
+            if ($type === 'shutter') {
+                $lid = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
+                if ($lid > 0) $ref['lamella'] = max(0, min(100, (int)GetValue($lid)));
+            }
+        }
+        $references = json_decode($this->ReadAttributeString('SceneReferences'), true);
+        if (!is_array($references)) $references = [];
+        $references[$channel . ':' . $scene] = $ref;
+        $this->WriteAttributeString('SceneReferences', json_encode($references, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+    private function FormatSceneReference(int $channel, int $scene): string
+    {
+        $ref = json_decode($this->GetSceneReferenceData($channel, $scene), true);
+        if (!is_array($ref) || $ref === []) return '';
+        $type = (string)($ref['type'] ?? '');
+        if ($type === 'dimmer') return (int)($ref['level'] ?? 0) . ' %';
+        if ($type === 'shutter') return (int)($ref['position'] ?? 0) . ' % / Lamelle ' . (int)($ref['lamella'] ?? 0) . ' %';
+        if ($type === 'awning') return (int)($ref['position'] ?? 0) . ' %';
+        return '';
+    }
+    public function GetSceneReferenceData(int $Channel, int $Scene): string
+    {
+        $references = json_decode($this->ReadAttributeString('SceneReferences'), true);
+        if (!is_array($references)) return '{}';
+        $ref = $references[$Channel . ':' . $Scene] ?? null;
+        return is_array($ref) ? json_encode($ref, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : '{}';
     }
     private function SceneCommand(int $channel, string $action, int $scene): bool
     {
@@ -2304,8 +2363,24 @@ class ZeptrionAir extends IPSModuleStrict
         if (!$sel['success']) {
             return ['ok' => false, 'message' => $sel['message']];
         }
+        // Referenzwerte stammen ausschließlich aus dem normalen S1-S4-"Speichern" der Zielinstanz.
+        // Der Smart-Taster-Dialog selbst enthält keine manuelle Referenzeingabe.
+        foreach ($targets as &$target) {
+            if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
+            $instance = (int)($target['instance'] ?? 0);
+            $channel = (int)($target['channel'] ?? 0);
+            $memory = (int)($target['memory'] ?? 0);
+            if (!$this->IsDeviceInstance($instance)) continue;
+            $json = $instance === $this->InstanceID
+                ? $this->GetSceneReferenceData($channel, $memory)
+                : (string)call_user_func('ZEPA_GetSceneReferenceData', $instance, $channel, $memory);
+            $ref = json_decode($json, true);
+            if (is_array($ref) && $ref !== []) $target['reference'] = $ref;
+        }
+        unset($target);
         $services = [];
         $hasSymconTargets = false;
+        $hasReferenceTargets = false;
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') === 'zeptrion') {
                 $instance = (int)($target['instance'] ?? 0);
@@ -2320,11 +2395,12 @@ class ZeptrionAir extends IPSModuleStrict
                     'pth' => '/zrap/chctrl',
                     'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
                 ];
+                if (is_array($target['reference'] ?? null)) $hasReferenceTargets = true;
             } elseif ((string)($target['type'] ?? '') === 'symcon') {
                 $hasSymconTargets = true;
             }
         }
-        if ($hasSymconTargets || array_filter($targets, static fn(array $t): bool => (string)($t['type'] ?? '') === 'zeptrion' && !empty($t['reference']))) {
+        if ($hasSymconTargets || $hasReferenceTargets) {
             $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
             if ($hh === '') {
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
@@ -2523,17 +2599,12 @@ class ZeptrionAir extends IPSModuleStrict
             foreach (($scene['targets'] ?? []) as $target) {
                 try {
                     $type = (string)($target['type'] ?? 'zeptrion');
-                    if ($type === 'zeptrion' && !empty($target['reference'])) {
+                    if ($type === 'zeptrion' && is_array($target['reference'] ?? null)) {
                         $instanceID = (int)($target['instance'] ?? 0);
-                        if ($this->IsDeviceInstance($instanceID)) {
-                            $referenceJSON = json_encode($target, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                            if (is_string($referenceJSON)) {
-                                if ($instanceID === $this->InstanceID) {
-                                    $this->ScheduleSmartReferenceData($referenceJSON);
-                                } else {
-                                    call_user_func('ZEPA_ScheduleSmartReferenceData', $instanceID, $referenceJSON);
-                                }
-                            }
+                        $referenceJSON = json_encode($target['reference'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                        if ($instanceID > 0 && is_string($referenceJSON)) {
+                            if ($instanceID === $this->InstanceID) $this->ScheduleSceneReference($referenceJSON);
+                            else call_user_func('ZEPA_ScheduleSceneReference', $instanceID, $referenceJSON);
                         }
                     } elseif ($type === 'symcon') {
                         $objectID = (int)($target['object'] ?? 0);
@@ -2563,85 +2634,54 @@ class ZeptrionAir extends IPSModuleStrict
         http_response_code(404);
         echo 'Scene not found';
     }
-    public function ScheduleSmartReferenceData(string $referenceJSON): bool
+    public function ScheduleSceneReference(string $ReferenceJSON): bool
     {
-        $target = json_decode($referenceJSON, true);
-        if (!is_array($target) || empty($target['reference'])) {
-            return false;
-        }
-        $channel = (int)($target['channel'] ?? 0);
-        if ($channel < 1 || $channel > 4) {
-            return false;
-        }
-        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-        if (!in_array($type, ['shutter', 'awning', 'dimmer'], true)) {
-            return false;
-        }
-        $delay = 100;
+        $ref = json_decode($ReferenceJSON, true);
+        if (!is_array($ref)) return false;
+        $channel = (int)($ref['channel'] ?? 0);
+        $type = (string)($ref['type'] ?? '');
+        if ($channel < 1 || $channel > 4 || !in_array($type, ['dimmer', 'shutter', 'awning'], true)) return false;
+        $delay = 300;
         if ($type === 'dimmer') {
-            $levelID = $this->FindManagedVariableID('Ch' . $channel . 'Level');
-            $current = $levelID > 0 ? max(0, min(100, (int)GetValue($levelID))) : 0;
-            $goal = max(0, min(100, (int)($target['referenceLevel'] ?? 0)));
-            $property = $goal >= $current ? 'UpTimeMs' : 'DownTimeMs';
-            $delay = max(100, (int)round(abs($goal - $current) * $this->ReadPropertyInteger('Channel' . $channel . $property) / 100));
+            $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Level');
+            $current = $currentID > 0 ? (int)GetValue($currentID) : 0;
+            $goal = max(0, min(100, (int)($ref['level'] ?? 0)));
+            $delay = max(300, abs($goal - $current) * 320 + 500);
         } else {
-            $current = $this->GetMotorPosition($channel);
-            $goal = max(0, min(100, (int)($target['referencePosition'] ?? 0)));
-            $direction = $goal >= $current ? 'down' : 'up';
-            $delay = max(100, (int)round(abs($goal - $current) * $this->EffectiveMotorTime($channel, $direction) / 100));
-            if ($type === 'shutter') {
-                $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
-                $currentLamella = $lamellaID > 0 ? max(0, min(100, (int)GetValue($lamellaID))) : 0;
-                $goalLamella = max(0, min(100, (int)($target['referenceLamella'] ?? 0)));
-                $delay += max(0, (int)round(abs($goalLamella - $currentLamella) * $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') / 100));
-            }
+            $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Position');
+            $current = $currentID > 0 ? (int)GetValue($currentID) : 0;
+            $goal = max(0, min(100, (int)($ref['position'] ?? 0)));
+            $full = $goal >= $current ? $this->EffectiveMotorTime($channel, 'down') : $this->EffectiveMotorTime($channel, 'up');
+            $delay = max(300, (int)round(abs($goal - $current) / 100 * $full) + 500);
+            if ($type === 'shutter') $delay += max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'));
         }
-        $pending = json_decode($this->ReadAttributeString('PendingSmartReferences'), true);
+        $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
         if (!is_array($pending)) $pending = [];
-        $pending[(string)$channel] = ['due' => (int)round(microtime(true) * 1000) + $delay + 150, 'target' => $target];
-        $this->WriteAttributeString('PendingSmartReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        $this->SetTimerInterval('SmartReferenceTimer', 100);
-        $this->SendDebug('Smart-Referenz', 'ch' . $channel . ' ' . $type . ' in ' . $delay . ' ms synchronisieren', 0);
+        $pending[] = ['due' => (int)round(microtime(true) * 1000) + $delay, 'reference' => $ref];
+        $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->SetTimerInterval('SceneReferenceTimer', 100);
         return true;
     }
-
-    public function SmartReferenceTick(): void
+    public function SceneReferenceTick(): void
     {
-        $pending = json_decode($this->ReadAttributeString('PendingSmartReferences'), true);
-        if (!is_array($pending) || $pending === []) {
-            $this->SetTimerInterval('SmartReferenceTimer', 0);
-            return;
-        }
+        $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
+        if (!is_array($pending) || $pending === []) { $this->SetTimerInterval('SceneReferenceTimer', 0); return; }
         $now = (int)round(microtime(true) * 1000);
-        foreach ($pending as $key => $item) {
-            if ($now < (int)($item['due'] ?? 0)) continue;
-            $target = is_array($item['target'] ?? null) ? $item['target'] : [];
-            $channel = (int)($target['channel'] ?? 0);
-            $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        $left = [];
+        foreach ($pending as $item) {
+            if (!is_array($item) || (int)($item['due'] ?? 0) > $now) { if (is_array($item)) $left[] = $item; continue; }
+            $ref = is_array($item['reference'] ?? null) ? $item['reference'] : [];
+            $channel = (int)($ref['channel'] ?? 0); $type = (string)($ref['type'] ?? '');
             if ($type === 'dimmer') {
-                $level = max(0, min(100, (int)($target['referenceLevel'] ?? 0)));
-                $this->SetValueIfChanged('Ch' . $channel . 'Level', $level);
-                $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $level > 0);
-                $this->SendDebug('Smart-Referenz', 'ch' . $channel . ' Dimmer = ' . $level . '%', 0);
-            } elseif (in_array($type, ['shutter', 'awning'], true)) {
-                $position = max(0, min(100, (int)($target['referencePosition'] ?? 0)));
-                $this->SetMotorPosition($channel, $position);
-                if ($type === 'shutter') {
-                    $lamella = max(0, min(100, (int)($target['referenceLamella'] ?? 0)));
-                    $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $lamella);
-                    $this->SendDebug('Smart-Referenz', 'ch' . $channel . ' Position=' . $position . '% / Lamelle=' . $lamella . '%', 0);
-                } else {
-                    $this->SendDebug('Smart-Referenz', 'ch' . $channel . ' Position=' . $position . '%', 0);
-                }
-                $state = $this->ReadMotorState();
-                unset($state[(string)$channel]);
-                $this->WriteMotorState($state);
-                $this->SetOwnMotorState($channel, []);
+                $this->SetValueIfChanged('Ch' . $channel . 'Level', max(0, min(100, (int)($ref['level'] ?? 0))));
+                $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', (int)($ref['level'] ?? 0) > 0);
+            } elseif ($type === 'shutter' || $type === 'awning') {
+                $this->SetValueIfChanged('Ch' . $channel . 'Position', max(0, min(100, (int)($ref['position'] ?? 0))));
+                if ($type === 'shutter') $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, min(100, (int)($ref['lamella'] ?? 0))));
             }
-            unset($pending[$key]);
         }
-        $this->WriteAttributeString('PendingSmartReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        if ($pending === []) $this->SetTimerInterval('SmartReferenceTimer', 0);
+        $this->WriteAttributeString('PendingSceneReferences', json_encode($left, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if ($left === []) $this->SetTimerInterval('SceneReferenceTimer', 0);
     }
 
     private function BuildInterface(): string
@@ -2691,7 +2731,7 @@ async function choose(item){if(!item.selectable)return;const full=await api({op:
 async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
 async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct);const meta=Z.find(z=>String(z.value)===String(t.instance||0)+':'+String(t.channel||0));const ct=meta?meta.channelType:'';if(['shutter','awning','dimmer'].includes(ct)){const ref=mk('label');const cb=mk('input');cb.type='checkbox';cb.checked=!!t.reference;cb.onchange=()=>{t.reference=cb.checked;render()};ref.append(cb,document.createTextNode(' Als Referenzpunkt verwenden'));r.append(ref);if(t.reference){if(ct==='dimmer'){const lv=mk('input');lv.type='number';lv.min='0';lv.max='100';lv.value=t.referenceLevel??0;lv.title='Helligkeit %';lv.onchange=()=>t.referenceLevel=Math.max(0,Math.min(100,+lv.value));r.append(mk('span','Helligkeit %'),lv)}else{const ps=mk('input');ps.type='number';ps.min='0';ps.max='100';ps.value=t.referencePosition??0;ps.title='Position %';ps.onchange=()=>t.referencePosition=Math.max(0,Math.min(100,+ps.value));r.append(mk('span','Position %'),ps);if(ct==='shutter'){const la=mk('input');la.type='number';la.min='0';la.max='100';la.value=t.referenceLamella??0;la.title='Lamelle %';la.onchange=()=>t.referenceLamella=Math.max(0,Math.min(100,+la.value));r.append(mk('span','Lamelle %'),la)}}}}}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
+async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
 function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
 async function program(s){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die gewünschte blinkende Smart-Taste am Schalter drücken.'))return;msg('Smart-Tasten werden aktiviert. Bitte gewünschte blinkende Smart-Taste drücken …');busy(true);const clean=(s.targets||[]).map(t=>{const x={...t};delete x.objectInfo;return x});const r=await api({op:'program',scene:s.id,name:s.name,targets:clean});busy(false);if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
 async function forget(id){const r=await api({op:'forget',scene:id});if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
@@ -2728,7 +2768,7 @@ HTML;
                 if ($name === '') {
                     $name = IPS_GetName($id) . ' / Kanal ' . $channel;
                 }
-                $result[] = ['value' => $id . ':' . $channel, 'caption' => $name, 'instance' => $id, 'channel' => $channel, 'channelType' => strtolower((string)IPS_GetProperty($id, 'Channel' . $channel . 'Type'))];
+                $result[] = ['value' => $id . ':' . $channel, 'caption' => $name, 'instance' => $id, 'channel' => $channel];
             }
         }
         usort($result, static fn($a, $b) => strnatcasecmp($a['caption'], $b['caption']));
@@ -2878,20 +2918,7 @@ HTML;
                 $channel = (int)($target['channel'] ?? 0);
                 $memory = (int)($target['memory'] ?? 0);
                 if ($this->IsDeviceInstance($instance) && $channel >= 1 && $channel <= 4 && $memory >= 1 && $memory <= 4) {
-                    $normalized = ['type' => 'zeptrion', 'instance' => $instance, 'channel' => $channel, 'memory' => $memory];
-                    $channelType = strtolower((string)IPS_GetProperty($instance, 'Channel' . $channel . 'Type'));
-                    if (!empty($target['reference']) && in_array($channelType, ['shutter', 'awning', 'dimmer'], true)) {
-                        $normalized['reference'] = true;
-                        if ($channelType === 'dimmer') {
-                            $normalized['referenceLevel'] = max(0, min(100, (int)($target['referenceLevel'] ?? 0)));
-                        } else {
-                            $normalized['referencePosition'] = max(0, min(100, (int)($target['referencePosition'] ?? 0)));
-                            if ($channelType === 'shutter') {
-                                $normalized['referenceLamella'] = max(0, min(100, (int)($target['referenceLamella'] ?? 0)));
-                            }
-                        }
-                    }
-                    $out[] = $normalized;
+                    $out[] = ['type' => 'zeptrion', 'instance' => $instance, 'channel' => $channel, 'memory' => $memory];
                 }
             } elseif ($type === 'symcon') {
                 $id = (int)($target['object'] ?? 0);
