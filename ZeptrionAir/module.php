@@ -1313,10 +1313,9 @@ class ZeptrionAir extends IPSModuleStrict
         // keine Zwischenposition in die Symcon-Variable schreiben. Die endgültige
         // Position/Lamelle wird erst nach dem vollständig erkannten Referenzvorgang gesetzt.
         if ($this->IsSceneReferencePendingForChannel($channel)) {
-            // Die Ereignisse nicht zur normalen Positionsberechnung durchlassen,
-            // aber für das Ende der Referenzfahrt auswerten. Beim Rollo folgt
-            // auf den ersten STOP der Positionsfahrt ggf. noch die Lamellenfahrt.
-            $this->ObserveSceneReferenceNotify($channel, $value);
+            // Während des Abrufs einer gespeicherten S1-S4-Position sind die
+            // chnotify-Meldungen nur Zwischenmeldungen. Die bekannte Referenz
+            // wird nach Ablauf der berechneten Fahrzeit als Endwert gesetzt.
             return;
         }
 
@@ -3039,13 +3038,15 @@ class ZeptrionAir extends IPSModuleStrict
         $channel = (int)($ref['channel'] ?? 0);
         $type = (string)($ref['type'] ?? '');
         if ($channel < 1 || $channel > 4 || !in_array($type, ['dimmer', 'shutter', 'awning'], true)) return false;
-        // Referenzen enthalten die gespeicherte S1-S4-Nummer. Dadurch wird
-        // auch bei Smart-Taster-/Callback-Aufrufen die Bedienungsvariable
-        // auf die tatsächlich ausgelöste Speicherposition synchronisiert.
+
+        // Beim Abruf einer gespeicherten S1-S4-Position ist die Referenz bereits
+        // bekannt. chnotify liefert während der Fahrt nur Start/Stop-Signale und
+        // darf daraus keine neue Position/Lamellenstellung ableiten.
         $scene = (int)($ref['scene'] ?? 0);
         if ($scene >= 1 && $scene <= 4) {
             $this->SyncMotorSceneCommandStatus($channel, $scene);
         }
+
         $delay = 300;
         if ($type === 'dimmer') {
             $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Level');
@@ -3058,8 +3059,11 @@ class ZeptrionAir extends IPSModuleStrict
             $goal = max(0, min(100, (int)($ref['position'] ?? 0)));
             $full = $goal >= $current ? $this->EffectiveMotorTime($channel, 'down') : $this->EffectiveMotorTime($channel, 'up');
             $delay = max(300, (int)round(abs($goal - $current) / 100 * $full) + 500);
-            if ($type === 'shutter') $delay += max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'));
+            if ($type === 'shutter') {
+                $delay += max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'));
+            }
         }
+
         $now = (int)round(microtime(true) * 1000);
         $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
         if (!is_array($pending)) $pending = [];
@@ -3069,9 +3073,10 @@ class ZeptrionAir extends IPSModuleStrict
             return (int)($r['channel'] ?? 0) !== $channel;
         }));
         $pending[] = [
-            // Die Zeit ist nur noch Sicherheits-Timeout. Normalerweise entscheidet
-            // die chnotify-Folge über das tatsächliche Ende der Bewegung.
-            'fallbackDue' => $now + $delay + 7000,
+            // Während dieser Zeit werden chnotify-Zwischenmeldungen für den Kanal
+            // gesperrt. Danach wird ausschließlich der bereits gespeicherte
+            // Referenz-Endwert übernommen.
+            'fallbackDue' => $now + $delay,
             'settleUntil' => 0,
             'applied' => false,
             'movementStarted' => false,
@@ -3082,63 +3087,41 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         $this->SetTimerInterval('SceneReferenceTimer', 100);
-        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Referenzfahrt gestartet; Abschluss per chnotify, Timeout in '.($delay + 7000).'ms', 0);
+        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' gespeicherte Referenz vorgemerkt; Endwert in '.$delay.'ms', 0);
         return true;
     }
 
     public function SceneReferenceTick(): void
     {
         $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
-        if (!is_array($pending) || $pending === []) { $this->SetTimerInterval('SceneReferenceTimer', 0); return; }
+        if (!is_array($pending) || $pending === []) {
+            $this->SetTimerInterval('SceneReferenceTimer', 0);
+            return;
+        }
+
         $now = (int)round(microtime(true) * 1000);
         $left = [];
         foreach ($pending as $item) {
             if (!is_array($item)) continue;
             $ref = is_array($item['reference'] ?? null) ? $item['reference'] : [];
             $channel = (int)($ref['channel'] ?? 0);
-            $type = (string)($ref['type'] ?? '');
-            $applied = (bool)($item['applied'] ?? false);
 
-            if (!$applied) {
-                $firstStopAt = (int)($item['firstStopAt'] ?? 0);
-                // Nach dem ersten STOP kurz auf eine mögliche Lamellen-Gegenfahrt warten.
-                // Die vorherige feste 5-s-Wartezeit ist wieder entfernt. Entscheidend ist
-                // jetzt die korrekte Kanalsperre: während des gesamten Referenzvorgangs
-                // gelangt kein Notify in die normale Positionsberechnung.
-                $lamellaWait = max(1200, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 200);
-                if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false) && $now >= $firstStopAt + $lamellaWait) {
-                    $this->ApplySceneReferenceEnd($ref);
-                    $item['applied'] = true;
-                    $item['settleUntil'] = $now + 1500;
-                    $applied = true;
-                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' keine Lamellenfahrt im Wartefenster erkannt; erster STOP ist final', 0);
-                } elseif ($now >= (int)($item['fallbackDue'] ?? 0)) {
-                    $this->ApplySceneReferenceEnd($ref);
-                    $item['applied'] = true;
-                    $item['settleUntil'] = $now + 1500;
-                    $applied = true;
-                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Sicherheits-Timeout verwendet', 0);
-                } elseif ($type === 'dimmer') {
-                    // Beim Dimmer gibt es laut Gerät keine verwertbare Zwischenstufe
-                    // über chnotify; hier bleibt die Zeitberechnung der Abschlussgeber.
-                    $fallback = (int)($item['fallbackDue'] ?? 0) - 7000;
-                    if ($now >= $fallback) {
-                        $this->ApplySceneReferenceEnd($ref);
-                        $item['applied'] = true;
-                        $item['settleUntil'] = $now + 1500;
-                        $applied = true;
-                    }
-                }
+            if (!(bool)($item['applied'] ?? false) && $now >= (int)($item['fallbackDue'] ?? 0)) {
+                $this->ApplySceneReferenceEnd($ref);
+                $item['applied'] = true;
+                $item['settleUntil'] = $now + 1500;
+                $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' gespeicherten Referenz-Endwert gesetzt', 0);
             }
 
-            if ($applied) {
-                if ($now < (int)($item['settleUntil'] ?? 0)) $left[] = $item;
-            } else {
+            if ((bool)($item['applied'] ?? false) && $now < (int)($item['settleUntil'] ?? 0)) {
+                $left[] = $item;
+            } elseif (!(bool)($item['applied'] ?? false)) {
                 $left[] = $item;
             }
         }
+
         $this->WriteAttributeString('PendingSceneReferences', json_encode($left, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        if ($left === []) $this->SetTimerInterval('SceneReferenceTimer', 0);
+        $this->SetTimerInterval('SceneReferenceTimer', $left === [] ? 0 : 100);
     }
 
     private function BuildInterface(): string
