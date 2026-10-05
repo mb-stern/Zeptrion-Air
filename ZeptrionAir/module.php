@@ -3054,11 +3054,15 @@ class ZeptrionAir extends IPSModuleStrict
             $goal = max(0, min(100, (int)($ref['level'] ?? 0)));
             $delay = max(300, abs($goal - $current) * 320 + 500);
         } else {
-            $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Position');
-            $current = $currentID > 0 ? (int)GetValue($currentID) : 0;
-            $goal = max(0, min(100, (int)($ref['position'] ?? 0)));
-            $full = $goal >= $current ? $this->EffectiveMotorTime($channel, 'down') : $this->EffectiveMotorTime($channel, 'up');
-            $delay = max(300, (int)round(abs($goal - $current) / 100 * $full) + 500);
+            // Bei recall_s1..s4 steuert zeptrion die komplette gespeicherte
+            // Bewegung selbst. Aus der in Symcon bekannten Startposition lässt
+            // sich die reale Dauer deshalb nicht zuverlässig ableiten. Die
+            // Sperre muss mindestens eine vollständige Motorfahrt plus eine
+            // mögliche Lamellenfahrt abdecken, damit deren spätere chnotify-
+            // Meldungen nicht als neue externe Fahrt fehlinterpretiert werden.
+            $fullUp = $this->EffectiveMotorTime($channel, 'up');
+            $fullDown = $this->EffectiveMotorTime($channel, 'down');
+            $delay = max(300, $fullUp, $fullDown) + 2000;
             if ($type === 'shutter') {
                 $delay += max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'));
             }
@@ -3087,7 +3091,7 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         $this->SetTimerInterval('SceneReferenceTimer', 100);
-        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' gespeicherte Referenz vorgemerkt; Endwert in '.$delay.'ms', 0);
+        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Szenenstatus gesperrt; gespeicherter Endwert in '.$delay.'ms', 0);
         return true;
     }
 
