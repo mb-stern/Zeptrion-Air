@@ -692,7 +692,7 @@ class ZeptrionAir extends IPSModuleStrict
                 if ($target===$current) { $this->SetMotorPosition($channel,$target); return; }
                 $direction=$target>$current?'down':'up';
                 if ($target===0 || $target===100) {
-                    $command=$target===0?'open':'close';
+                    $command=$target===0?'on':'off';
                     $duration=$direction==='down'
                         ? (int)round((100-$current)*$this->EffectiveMotorTime($channel,'down')/100)
                         : (int)round($current*$this->EffectiveMotorTime($channel,'up')/100);
@@ -820,9 +820,9 @@ class ZeptrionAir extends IPSModuleStrict
 
                 if ($type === 'awning') {
                     $commands = [
-                        0 => 'open',
+                        0 => 'on',
                         2 => 'stop',
-                        4 => 'close'
+                        4 => 'off'
                     ];
                     if (!isset($commands[$value])) {
                         throw new InvalidArgumentException('Unbekannter Markisen-Befehl');
@@ -844,11 +844,11 @@ class ZeptrionAir extends IPSModuleStrict
                 $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
                 $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
                 $commands = [
-                    0 => 'open',
-                    1 => 'move_open_' . $lamellaStepTime,
+                    0 => 'on',
+                    1 => 'on',
                     2 => 'stop',
-                    3 => 'move_close_' . $lamellaStepTime,
-                    4 => 'close'
+                    3 => 'off',
+                    4 => 'off'
                 ];
                 if (!isset($commands[$value])) {
                     throw new InvalidArgumentException('Unbekannter Store-Befehl');
