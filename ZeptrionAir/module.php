@@ -1439,6 +1439,13 @@ class ZeptrionAir extends IPSModuleStrict
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
 
+        // An einer Endlage ist die physische Fahrtrichtung eindeutig.
+        // Diese Information wird nach der Kurzimpulsbehandlung fuer normale
+        // Fahrten weiterhin benoetigt.
+        $endPositionForcesTravel =
+            ($position===0 && $direction==='down') ||
+            ($position===100 && $direction==='up');
+
         // Sehr kurzer EXTERNER Tastendruck (< Lamellenzeit):
         // Fuer die Variablenabbildung behandeln wir ihn als Lamellenimpuls.
         // Da chnotify die physische Richtung nicht liefert, wird die Richtung
