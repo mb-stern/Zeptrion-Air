@@ -769,6 +769,21 @@ class ZeptrionAir extends IPSModuleStrict
                 }
 
                 if ($type === 'dimmer') {
+                    // Wie bei Rollo/Markise werden sichtbare S1-S4 direkt an die
+                    // bestehende Bedienungsvariable angehängt. Die Variable selbst
+                    // bleibt erhalten, damit bestehende Verknüpfungen stabil bleiben.
+                    if ($value >= 11 && $value <= 14) {
+                        $scene = $value - 10;
+                        if ($this->RecallScene($channel, $scene)) {
+                            $this->SetValueIfChanged((string)$Ident, $value);
+                            $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                            $reference = json_decode($referenceJSON, true);
+                            if (is_array($reference) && $reference !== []) {
+                                $this->ScheduleSceneReference($referenceJSON);
+                            }
+                        }
+                        return;
+                    }
                     $commands = [
                         0 => 'dim_up',
                         2 => 'stop',
@@ -2032,15 +2047,27 @@ class ZeptrionAir extends IPSModuleStrict
                 // Separate Bedienungsvariable für externe Taster/Ablaufpläne:
                 // Heller startet dim_up, Stopp beendet die Fahrt, Dunkler startet dim_down.
                 $commandIdent = 'Ch' . $channel . 'Command';
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                        continue;
+                    }
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
                 $commandPresentation = [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
-                    'OPTIONS' => json_encode([
-                        ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                        ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                        ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
-                    ], JSON_UNESCAPED_UNICODE)
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
                 ];
                 $this->EnsureDimmerVariable($dummyID, $commandIdent, $name . ' Bedienung', VARIABLETYPE_INTEGER, $commandPresentation, 30);
             } elseif ($active && $type === 'awning') {
