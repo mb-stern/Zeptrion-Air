@@ -1576,6 +1576,20 @@ class ZeptrionAir extends IPSModuleStrict
                 );
                 $this->SendCommand($channel,$stopCommand);
             }
+            if (($v['type']??'')==='position'
+                && !array_key_exists('pendingLamella',$v)
+                && !isset($v['stopCommand'])
+                && in_array((int)($v['target']??-1), [0,100], true)
+                && strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
+                $finalLamella=(int)$v['target']===100?0:100;
+                $this->SetValueIfChanged('Ch'.$channel.'Lamella',$finalLamella);
+                $this->SendDebug(
+                    'LAMELLE ENDE',
+                    'ch'.$channel.' Endlagenfahrt abgeschlossen | Lamelle='.$finalLamella.'%',
+                    0
+                );
+            }
+
             if (($v['type']??'')==='position' && array_key_exists('pendingLamella',$v)) {
                 // Positionsfahrt ist beendet. Gepufferte Blende NICHT sofort
                 // senden, sondern dem Aktor 500 ms zum Stillstand geben.
@@ -1657,9 +1671,8 @@ class ZeptrionAir extends IPSModuleStrict
         if (!$this->SendCommand($channel, $command)) return;
 
         $this->SetMotorPosition($channel, $target);
-        if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'shutter') {
-            $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $direction === 'down' ? 0 : 100);
-        }
+        // Die Lamellenanzeige nicht schon beim Fahrstart auf 0/100 springen lassen.
+        // Der Endwert wird erst nach Ablauf der eigenen Endlagenfahrt gesetzt.
         $this->SetOwnMotorState($channel, [
             'type' => 'position',
             'startMs' => $nowMs,
