@@ -1467,7 +1467,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($type==='shutter' && (bool)($m['forceCloseAtBottom']??false)) {
             // Kurze Bewegung: Lamellen/Endschliessen. Laengere Bewegung:
             // bei Position 100% kann sie positionsmaessig nur nach oben gehen.
-            $closeLimit=max(750,$lamellaTime+500);
+            $closeLimit=max(1000,$lamellaTime+1000);
             unset($m['forceCloseAtBottom'],$m['forceCloseStartLamella']);
 
             if ($elapsed <= $closeLimit) {
@@ -1563,7 +1563,37 @@ class ZeptrionAir extends IPSModuleStrict
                 else $direction=$errUp<=$errDown?'up':'down';
                 $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
             }
-            if ($type==='shutter' && $endPositionForcesTravel && $elapsed<$lamellaTime) {
+
+            // Hat eine externe Fahrt von der bekannten Startposition lange genug
+            // gedauert, um den Anschlag in der erkannten Richtung zu erreichen,
+            // ist der Motor dort physisch stehen geblieben. Dann exakt 0/100
+            // setzen und nicht rechnerisch in die Gegenrichtung "weiterfahren".
+            $endStopReached=false;
+            if (!array_key_exists('commandDirection',$m)) {
+                $endTolUp=max(1000,(int)round($expectUp*0.10));
+                $endTolDown=max(1000,(int)round($expectDown*0.10));
+                if ($direction==='up' && $expectUp>0 && $elapsed >= max(0,$expectUp-$endTolUp)) {
+                    $newPosition=0;
+                    $endStopReached=true;
+                } elseif ($direction==='down' && $expectDown>0 && $elapsed >= max(0,$expectDown-$endTolDown)) {
+                    $newPosition=100;
+                    $endStopReached=true;
+                }
+                if ($endStopReached) {
+                    $this->SetMotorPosition($channel,$newPosition);
+                    if ($type==='shutter') {
+                        $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
+                    }
+                    $this->SendDebug(
+                        'ROLLO ANSCHLAG',
+                        'ch'.$channel.' '.$elapsed.'ms | '.$direction.' | rechnerischer Anschlag erreicht -> Position='.$newPosition.'%',
+                        0
+                    );
+                }
+            }
+            if ($endStopReached ?? false) {
+                // Position wurde oben bereits exakt auf den erreichten Anschlag gesetzt.
+            } elseif ($type==='shutter' && $endPositionForcesTravel && $elapsed<$lamellaTime) {
                 $newPosition=$position;
                 $fraction=max(0.0,min(1.0,$elapsed/max(1,$lamellaTime)));
                 $newLamella=$direction==='up'
