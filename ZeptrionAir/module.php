@@ -1467,7 +1467,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($type==='shutter' && (bool)($m['forceCloseAtBottom']??false)) {
             // Kurze Bewegung: Lamellen/Endschliessen. Laengere Bewegung:
             // bei Position 100% kann sie positionsmaessig nur nach oben gehen.
-            $closeLimit=max(1000,$lamellaTime+1000);
+            $closeLimit=max(2000,$lamellaTime+2000);
             unset($m['forceCloseAtBottom'],$m['forceCloseStartLamella']);
 
             if ($elapsed <= $closeLimit) {
@@ -1553,15 +1553,45 @@ class ZeptrionAir extends IPSModuleStrict
                     0
                 );
             }
+            $forcedEndStop=null;
             if ($direction==='unknown') {
-                $tolUp=max(750,(int)round($expectUp*0.10));
-                $tolDown=max(750,(int)round($expectDown*0.10));
-                $upPossible=$elapsed<=($expectUp+$tolUp);
-                $downPossible=$elapsed<=($expectDown+$tolDown);
-                if (!$upPossible && $downPossible) $direction='down';
-                elseif (!$downPossible && $upPossible) $direction='up';
-                else $direction=$errUp<=$errDown?'up':'down';
-                $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
+                $reachTolUp=max(1000,(int)round($expectUp*0.10));
+                $reachTolDown=max(1000,(int)round($expectDown*0.10));
+                $canReachUp=$expectUp>0 && $elapsed >= max(0,$expectUp-$reachTolUp);
+                $canReachDown=$expectDown>0 && $elapsed >= max(0,$expectDown-$reachTolDown);
+
+                // Ein in dieser Fahrzeit erreichbarer Endanschlag hat Vorrang.
+                // Sind theoretisch beide erreichbar, gewinnt der zeitlich
+                // besser passende Anschlag.
+                if ($canReachUp || $canReachDown) {
+                    if ($canReachUp && !$canReachDown) {
+                        $direction='up';
+                        $forcedEndStop=0;
+                    } elseif ($canReachDown && !$canReachUp) {
+                        $direction='down';
+                        $forcedEndStop=100;
+                    } elseif ($errUp <= $errDown) {
+                        $direction='up';
+                        $forcedEndStop=0;
+                    } else {
+                        $direction='down';
+                        $forcedEndStop=100;
+                    }
+                    $this->SendDebug(
+                        'ROLLO ANSCHLAG MATCH',
+                        'ch'.$channel.' extern | '.$elapsed.'ms | von '.$position.'% erreichbarer Anschlag -> '.$forcedEndStop.'%',
+                        0
+                    );
+                } else {
+                    $tolUp=max(750,(int)round($expectUp*0.10));
+                    $tolDown=max(750,(int)round($expectDown*0.10));
+                    $upPossible=$elapsed<=($expectUp+$tolUp);
+                    $downPossible=$elapsed<=($expectDown+$tolDown);
+                    if (!$upPossible && $downPossible) $direction='down';
+                    elseif (!$downPossible && $upPossible) $direction='up';
+                    else $direction=$errUp<=$errDown?'up':'down';
+                    $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
+                }
             }
 
             // Hat eine externe Fahrt von der bekannten Startposition lange genug
@@ -1569,7 +1599,10 @@ class ZeptrionAir extends IPSModuleStrict
             // ist der Motor dort physisch stehen geblieben. Dann exakt 0/100
             // setzen und nicht rechnerisch in die Gegenrichtung "weiterfahren".
             $endStopReached=false;
-            if (!array_key_exists('commandDirection',$m)) {
+            if (($forcedEndStop??null)!==null) {
+                $newPosition=(int)$forcedEndStop;
+                $endStopReached=true;
+            } elseif (!array_key_exists('commandDirection',$m)) {
                 $endTolUp=max(1000,(int)round($expectUp*0.10));
                 $endTolDown=max(1000,(int)round($expectDown*0.10));
                 if ($direction==='up' && $expectUp>0 && $elapsed >= max(0,$expectUp-$endTolUp)) {
