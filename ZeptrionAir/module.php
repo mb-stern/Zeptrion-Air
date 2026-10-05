@@ -1481,6 +1481,40 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
 
+        // Externe Fahrt auf Plausibilitaet pruefen:
+        // Wenn die beobachtete Laufzeit in der angenommenen Richtung bis zur
+        // Endlage gar nicht moeglich ist, die Gegenrichtung verwenden.
+        // Eigene Modulfahrten werden hier nicht korrigiert, da deren Richtung
+        // durch den gesendeten Befehl bekannt ist.
+        if (!array_key_exists('commandDirection',$m)
+            && !((bool)($m['forceCloseAtBottom']??false))
+            && ($direction==='up'||$direction==='down')) {
+            $tolUp=max(750,(int)round($expectUp*0.10));
+            $tolDown=max(750,(int)round($expectDown*0.10));
+            $upPossible=$elapsed<=($expectUp+$tolUp);
+            $downPossible=$elapsed<=($expectDown+$tolDown);
+            $originalDirection=$direction;
+
+            if ($direction==='down' && !$downPossible && $upPossible) {
+                $direction='up';
+            } elseif ($direction==='up' && !$upPossible && $downPossible) {
+                $direction='down';
+            } elseif (!$upPossible && !$downPossible) {
+                // Beide Endlagenzeiten wurden ueberschritten: die zeitlich
+                // passendere Richtung ist die bessere Naeherung.
+                $direction=$errUp<=$errDown?'up':'down';
+            }
+
+            if ($direction!==$originalDirection) {
+                $this->SendDebug(
+                    'ROLLO PLAUSI',
+                    'ch'.$channel.' '.$elapsed.'ms | '.$originalDirection.' zeitlich unmoeglich -> '.$direction.
+                    ' | maxUp~'.($expectUp+$tolUp).'ms | maxDown~'.($expectDown+$tolDown).'ms',
+                    0
+                );
+            }
+        }
+
         // Kurze EXTERNE Gegenfahrt: nur Blende, keine Positionsaenderung.
         $endPositionForcesTravel =
             ($position===0 && $direction==='down') ||
