@@ -1439,20 +1439,27 @@ class ZeptrionAir extends IPSModuleStrict
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
 
-        // Kurze EXTERNE Gegenfahrt: nur Blende, keine Positionsaenderung.
-        $endPositionForcesTravel =
-            ($position===0 && $direction==='down') ||
-            ($position===100 && $direction==='up');
-
-        if ($type==='shutter' && !$endPositionForcesTravel && $elapsed>0 && $elapsed<$lamellaTime && ($lastDirection==='down'||$lastDirection==='up')) {
-            $direction=$lastDirection==='down'?'up':'down';
+        // Sehr kurzer EXTERNER Tastendruck (< Lamellenzeit):
+        // Fuer die Variablenabbildung behandeln wir ihn als Lamellenimpuls.
+        // Da chnotify die physische Richtung nicht liefert, wird die Richtung
+        // ausschliesslich aus dem vorherigen Lamellenwert abgeleitet:
+        //   Lamelle != 0 -> Richtung 0
+        //   Lamelle == 0 -> Richtung 100
+        // Die Behangposition bleibt dabei unveraendert.
+        if ($type==='shutter' && $elapsed>0 && $elapsed<$lamellaTime) {
             $lid=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
-            $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):($lastDirection==='down'?0:100);
-            $delta=(int)round($elapsed*100/max(1,$lamellaTime));
-            $newLamella=$direction==='up'?min(100,$cur+$delta):max(0,$cur-$delta);
+            $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):0;
+            $delta=max(1,(int)round($elapsed*100/max(1,$lamellaTime)));
+            if ($cur===0) {
+                $newLamella=min(100,$cur+$delta);
+                $lamellaDirection='towards100';
+            } else {
+                $newLamella=max(0,$cur-$delta);
+                $lamellaDirection='towards0';
+            }
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
             $newPosition=$position;
-            $this->SendDebug('LAMELLE','ch'.$channel.' externe Gegenfahrt '.$elapsed.'ms | '.$newLamella.'% | Position bleibt '.$position.'%',0);
+            $this->SendDebug('LAMELLE KURZ','ch'.$channel.' '.$elapsed.'ms | vorher='.$cur.'% | '.$lamellaDirection.' -> '.$newLamella.'% | Position bleibt '.$position.'%',0);
         } else {
             if ($endPositionForcesTravel) {
                 $this->SendDebug(
