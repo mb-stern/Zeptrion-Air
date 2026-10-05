@@ -768,6 +768,27 @@ class ZeptrionAir extends IPSModuleStrict
                     return;
                 }
 
+                if ($type === 'dimmer') {
+                    $commands = [
+                        0 => 'dim_up',
+                        2 => 'stop',
+                        4 => 'dim_down'
+                    ];
+                    if (!isset($commands[$value])) {
+                        throw new InvalidArgumentException('Unbekannter Dimmer-Befehl');
+                    }
+                    if ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        // chnotify liefert beim Dimmer nur EIN/AUS, keinen verlässlichen
+                        // Prozentwert. Deshalb den Level beim manuellen Hoch-/Runterdimmen
+                        // bewusst nicht schätzen oder verändern.
+                        if ($value === 0) {
+                            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', true);
+                        }
+                    }
+                    return;
+                }
+
                 if ($type === 'awning') {
                     $commands = [
                         0 => 'open',
@@ -2008,6 +2029,20 @@ class ZeptrionAir extends IPSModuleStrict
                     'PERCENTAGE' => false,
                     'SUFFIX' => ' %'
                 ], 20);
+                // Separate Bedienungsvariable für externe Taster/Ablaufpläne:
+                // Heller startet dim_up, Stopp beendet die Fahrt, Dunkler startet dim_down.
+                $commandIdent = 'Ch' . $channel . 'Command';
+                $commandPresentation = [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode([
+                        ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                        ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                        ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ], JSON_UNESCAPED_UNICODE)
+                ];
+                $this->EnsureDimmerVariable($dummyID, $commandIdent, $name . ' Bedienung', VARIABLETYPE_INTEGER, $commandPresentation, 30);
             } elseif ($active && $type === 'awning') {
                 // Markise: Position plus Bedienung wie beim Rollo, jedoch ohne Lamellen.
                 $this->RemoveShutterDummy($channel);
@@ -2117,7 +2152,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && in_array($type, ['shutter', 'awning'], true),
                 'Lamella' => $active && $type === 'shutter',
-                'Command' => $active && in_array($type, ['shutter', 'awning'], true)
+                'Command' => $active && in_array($type, ['dimmer', 'shutter', 'awning'], true)
             ] as $suffix => $needed) {
                 if ($needed) {
                     continue;
