@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-class ZeptrionAir extends IPSModule
+class ZeptrionAir extends IPSModuleStrict
 {
     private const TX = '{79827379-F36E-4ADA-8A95-5F8D1DC92FA9}';
     private const CS = '{3CFF0FD9-E306-41DB-9B5A-9D06D38576C3}';
@@ -9,7 +9,6 @@ class ZeptrionAir extends IPSModule
     public function Create(): void
     {
         parent::Create();
-        $this->RequireParent(self::TX);
         $this->RegisterPropertyString('Host', '');
         $this->RegisterPropertyString('DeviceName', '');
         $this->RegisterPropertyString('DeviceType', '');
@@ -32,6 +31,7 @@ class ZeptrionAir extends IPSModule
         $this->RegisterTimer('LearnKickTimer', 0, 'ZEPA_LearnKickTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('OwnMotorTimer', 0, 'ZEPA_OwnMotorTick($_IPS[\'TARGET\']);');
         $this->RegisterTimer('SceneResetTimer', 0, ''); // Migration: Szenenwert bleibt nun stehen.
+        $this->RegisterTimer('SceneReferenceTimer', 0, 'ZEPA_SceneReferenceTick($_IPS[\'TARGET\']);');
         $this->RegisterAttributeInteger('CommunicationFailures', 0);
         $this->RegisterAttributeBoolean('LastRequestSkipped', false);
         $this->RegisterAttributeString('MotorRuntimeState', '{}');
@@ -39,11 +39,12 @@ class ZeptrionAir extends IPSModule
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
+        $this->RegisterAttributeString('SceneReferences', '{}');
+        $this->RegisterAttributeString('PendingSceneReferences', '[]');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
-        $this->RegisterHook($this->SmartButtonHookName());
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -58,60 +59,12 @@ class ZeptrionAir extends IPSModule
             }
         }
     }
-    private function RegisterHook(string $hook): void
-    {
-        $hook = trim($hook, '/');
-        if ($hook === '') {
-            return;
-        }
-
-        $webHookControls = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F05AE9B93}');
-        if ($webHookControls === []) {
-            $this->SendDebug('Smart-Taster', 'WebHook Control nicht gefunden', 0);
-            return;
-        }
-
-        $webHookID = (int)$webHookControls[0];
-        $hooks = json_decode(IPS_GetProperty($webHookID, 'Hooks'), true);
-        if (!is_array($hooks)) {
-            $hooks = [];
-        }
-
-        $changed = false;
-        $found = false;
-        foreach ($hooks as &$entry) {
-            if (!is_array($entry) || (string)($entry['Hook'] ?? '') !== '/' . $hook) {
-                continue;
-            }
-            $found = true;
-            if ((int)($entry['TargetID'] ?? 0) !== $this->InstanceID) {
-                $entry['TargetID'] = $this->InstanceID;
-                $changed = true;
-            }
-            break;
-        }
-        unset($entry);
-
-        if (!$found) {
-            $hooks[] = [
-                'Hook' => '/' . $hook,
-                'TargetID' => $this->InstanceID
-            ];
-            $changed = true;
-        }
-
-        if ($changed) {
-            IPS_SetProperty($webHookID, 'Hooks', json_encode($hooks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-            IPS_ApplyChanges($webHookID);
-        }
-    }
-
     public function GetCompatibleParents(): string
     {
         return json_encode(['type' => 'require', 'moduleIDs' => [self::CS]], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
-    public function GetConfigurationForParent()
+    public function GetConfigurationForParent(): string
     {
         $host = trim($this->ReadPropertyString('Host'));
         return json_encode([
@@ -151,8 +104,10 @@ class ZeptrionAir extends IPSModule
         $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
         $smartButtonAssignments = json_decode($this->GetSmartButtonAssignments($this->InstanceID), true);
         if (!is_array($smartButtonAssignments)) { $smartButtonAssignments = []; }
-        $smartButtonAssignments = array_slice($smartButtonAssignments, 0, 2);
-        $smartButtonIndex = 0;
+        // Ein Smartfront kann bis zu vier Smart-Taster/Belegungen besitzen.
+        // Alle gespeicherten Belegungen der Instanz am Smart-Taster-Kanal anzeigen;
+        // nicht eine Belegung pro unbenutztem Kanal verteilen.
+        $smartButtonAssignments = array_slice($smartButtonAssignments, 0, 4);
         for ($channel = 1; $channel <= $maxChannels; $channel++) {
             $typeLabel = match (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'))) {
                 'light' => 'Licht',
@@ -161,24 +116,25 @@ class ZeptrionAir extends IPSModule
                 'awning' => 'Markise',
                 default => 'Nicht verwendet'
             };
-            if ($typeLabel === 'Nicht verwendet' && isset($smartButtonAssignments[$smartButtonIndex])) {
-                $assignment = $smartButtonAssignments[$smartButtonIndex++];
+            if ($typeLabel === 'Nicht verwendet' && $smartButtonAssignments !== []) {
                 $items = [
                     [
                         'type' => 'Label',
                         'caption' => 'Art: Smart-Taster'
-                    ],
-                    [
-                        'type' => 'Label',
-                        'caption' => 'Szene: ' . (string)($assignment['name'] ?? 'Smart-Taster')
                     ]
                 ];
-                $targets = is_array($assignment['targets'] ?? null) ? $assignment['targets'] : [];
-                foreach ($targets as $target) {
+                foreach ($smartButtonAssignments as $assignment) {
                     $items[] = [
                         'type' => 'Label',
-                        'caption' => '→ ' . (string)$target
+                        'caption' => 'Szene: ' . (string)($assignment['name'] ?? 'Smart-Taster')
                     ];
+                    $targets = is_array($assignment['targets'] ?? null) ? $assignment['targets'] : [];
+                    foreach ($targets as $target) {
+                        $items[] = [
+                            'type' => 'Label',
+                            'caption' => '→ ' . (string)$target
+                        ];
+                    }
                 }
                 $items[] = [
                     'type' => 'Button',
@@ -209,34 +165,65 @@ class ZeptrionAir extends IPSModule
             }
             $sceneItems = [];
             if ($typeLabel !== 'Nicht verwendet') {
-            for ($scene = 1; $scene <= 4; $scene++) {
-                $sceneItems[] = [
-                    'type' => 'CheckBox',
-                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
-                    'caption' => 'Szene ' . $scene . ' als Variable anzeigen'
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    $sceneName = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $sceneCaption = 'S' . $scene;
+                    if ($sceneName !== '' && strcasecmp($sceneName, 'Szene ' . $scene) !== 0) {
+                        $sceneCaption .= ' - ' . $sceneName;
+                    }
+
+                    $sceneDetailItems = [
+                        [
+                            'type' => 'CheckBox',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
+                            'caption' => 'In Bedienung anzeigen'
+                        ],
+                        [
+                            'type' => 'ValidationTextBox',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
+                            'caption' => 'Name'
+                        ]
+                    ];
+
+                    $referenceText = $this->FormatSceneReference($channel, $scene);
+                    $sceneType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+                    if (in_array($sceneType, ['dimmer', 'shutter', 'awning'], true)) {
+                        $sceneDetailItems[] = [
+                            'type' => 'Label',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Reference',
+                            'caption' => $referenceText !== '' ? 'Gespeichert: ' . $referenceText : 'Gespeichert: –'
+                        ];
+                    }
+
+                    $sceneDetailItems[] = [
+                        'type' => 'RowLayout',
+                        'items' => [
+                            [
+                                'type' => 'Button',
+                                'caption' => 'Speichern',
+                                'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
+                            ],
+                            [
+                                'type' => 'Button',
+                                'caption' => 'Löschen',
+                                'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
+                            ]
+                        ]
+                    ];
+
+                    $sceneItems[] = [
+                        'type' => 'ExpansionPanel',
+                        'caption' => $sceneCaption,
+                        'expanded' => false,
+                        'items' => $sceneDetailItems
+                    ];
+                }
+                $items[] = [
+                    'type' => 'ExpansionPanel',
+                    'caption' => 'Szenen verwalten',
+                    'expanded' => false,
+                    'items' => $sceneItems
                 ];
-                $sceneItems[] = [
-                    'type' => 'ValidationTextBox',
-                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
-                    'caption' => 'Szene ' . $scene . ' – Name'
-                ];
-                $sceneItems[] = [
-                    'type' => 'Button',
-                    'caption' => 'Neu speichern',
-                    'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
-                ];
-                $sceneItems[] = [
-                    'type' => 'Button',
-                    'caption' => 'Löschen',
-                    'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
-                ];
-            }
-            $items[] = [
-                'type' => 'ExpansionPanel',
-                'caption' => 'Szenen verwalten',
-                'expanded' => false,
-                'items' => $sceneItems
-            ];
             }
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             if ($type === 'dimmer') {
@@ -281,9 +268,14 @@ class ZeptrionAir extends IPSModule
                     ]
                 ];
             }
+            $channelName = trim($this->ReadPropertyString('Channel' . $channel . 'Name'));
+            $channelCaption = 'Kanal ' . $channel;
+            if ($channelName !== '' && strcasecmp($channelName, 'Kanal ' . $channel) !== 0) {
+                $channelCaption .= ' - ' . $channelName;
+            }
             $elements[] = [
                 'type' => 'ExpansionPanel',
-                'caption' => 'Kanal ' . $channel,
+                'caption' => $channelCaption,
                 'items' => $items
             ];
         }
@@ -324,7 +316,7 @@ class ZeptrionAir extends IPSModule
         if ($this->ReadAttributeString('SmartButtonToken') === '') {
             $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
         }
-        $this->RegisterHook($this->SmartButtonHookName());
+        $this->UpdateSmartButtonHook();
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
@@ -343,8 +335,9 @@ class ZeptrionAir extends IPSModule
             $this->SetStatus(201);
             return;
         }
-        // Polling wird vollständig automatisch geregelt:
-        // normal 5 s, bei Fehlern 10 s -> 30 s -> 60 s.
+        // Kanalstatus wird für alle Kanaltypen einheitlich über chnotify geführt.
+        // chscan erfolgt beim Start des Notify-Listeners sowie bei Recovery;
+        // ein zyklisches 5-s-chscan-Polling ist nicht mehr erforderlich.
         $this->WriteAttributeInteger('CommunicationFailures', 0);
         $this->SetTimerInterval('InfoTimer', 60000);
         $state=$this->ReadMotorState();
@@ -352,18 +345,10 @@ class ZeptrionAir extends IPSModule
         $this->WriteMotorState($state);
         $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
         $this->SetTimerInterval('NotifyTimer', 0);
+        $this->SetTimerInterval('PollTimer', 0);
         $this->SetStatus(102);
-        if ($this->IsMotorOnlyDevice()) {
-            $this->SetTimerInterval('PollTimer', 0);
-            $this->SendDebug('Polling', 'Motoraktor erkannt – chscan-Dauerpolling deaktiviert; RSSI-Kommunikationstest alle 60 s', 0);
-            $this->RefreshDeviceInfo();
-        } else {
-            $this->SetTimerInterval('PollTimer', 5000);
-            $this->Poll();
-            if ($this->ReadAttributeInteger('CommunicationFailures') === 0) {
-                $this->RefreshDeviceInfo();
-            }
-        }
+        $this->SendDebug('Polling', 'chscan-Dauerpolling deaktiviert – Kanalstatus über chnotify', 0);
+        $this->RefreshDeviceInfo();
         // Eigener Client Socket: initial chscan, danach dauerhaft chnotify.
         if ($this->HasActiveParent()) {
             $this->StartNotifyListener();
@@ -627,7 +612,7 @@ class ZeptrionAir extends IPSModule
             $this->SetValueIfChanged('Online', true);
         }
     }
-    public function RequestAction($Ident, $Value): void
+    public function RequestAction(string $Ident, mixed $Value): void
     {
         if (!preg_match('/^Ch([1-4])(Switch|DimmerSwitch|Level|Position|Lamella|Command|Scene)$/', (string)$Ident, $m)) {
             throw new Exception('Ungültiger Ident: ' . $Ident);
@@ -729,7 +714,7 @@ class ZeptrionAir extends IPSModule
                 if ($target===$current) { $this->SetMotorPosition($channel,$target); return; }
                 $direction=$target>$current?'down':'up';
                 if ($target===0 || $target===100) {
-                    $command=$target===0?'open':'close';
+                    $command=$target===0?'on':'off';
                     $duration=$direction==='down'
                         ? (int)round((100-$current)*$this->EffectiveMotorTime($channel,'down')/100)
                         : (int)round($current*$this->EffectiveMotorTime($channel,'up')/100);
@@ -739,17 +724,34 @@ class ZeptrionAir extends IPSModule
                         ? (int)round(($target-$current)*$this->EffectiveMotorTime($channel,'down')/100)
                         : (int)round(($current-$target)*$this->EffectiveMotorTime($channel,'up')/100);
                     $duration=max(100,min(32000,$duration));
-                    $command=$direction==='down'?'move_close_'.$duration:'move_open_'.$duration;
+
+                    // Die originale zeptrionAIR-App faehrt Zwischenpositionen nicht
+                    // mit move_open_xxx/move_close_xxx an. Der Mitschnitt zeigt:
+                    //   runter: off -> Fahrzeit -> on
+                    //   rauf:   on  -> Fahrzeit -> off
+                    // Diese Bedienart ist wichtig, damit der Aktor seine interne
+                    // Position fuer ein anschliessendes store_sX korrekt fuehrt.
+                    $command=$direction==='down'?'off':'on';
                 }
                 if ($this->SendCommand($channel,$command)) {
                     $this->SetMotorPosition($channel,$target);
+                    // Die Bedienungsvariable zeigt auch bei Bedienung über die
+                    // native Positionsvariable die zuletzt ausgeführte Aktion.
+                    $this->SyncMotorCommandStatus($channel, $target === 0 ? 0 : ($target === 100 ? 4 : 2));
                     if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                         $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='down'?0:100);
                     }
-                    $this->SetOwnMotorState($channel,[
+                    $motorState=[
                         'type'=>'position','startMs'=>$nowMs,'until'=>$nowMs+$duration,
                         'startPosition'=>$current,'target'=>$target,'direction'=>$direction
-                    ]);
+                    ];
+                    // Nur Zwischenpositionen werden wie in der Original-App durch
+                    // den entgegengesetzten on/off-Befehl nach der berechneten
+                    // Fahrzeit gestoppt. Endlagen laufen weiterhin bis zum Anschlag.
+                    if ($target>0 && $target<100) {
+                        $motorState['stopCommand']=$direction==='down'?'on':'off';
+                    }
+                    $this->SetOwnMotorState($channel,$motorState);
                     $this->SendDebug('ROLLO SOLL','ch'.$channel.' physisch~'.$current.'% -> Soll '.$target.'% | '.$direction.' | '.$duration.'ms',0);
                 }
                 return;
@@ -783,26 +785,106 @@ class ZeptrionAir extends IPSModule
                 }
                 return;
             case 'Command':
+                $value = (int)$Value;
+                $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+
+                // Bei Rollo und Markise liegen S1-S4 direkt in der Bedienungsvariable.
+                // 11..14 sind interne Werte für S1..S4 und kollidieren nicht mit
+                // den bestehenden Fahr-/Lamellenbefehlen 0..4.
+                if (in_array($type, ['shutter', 'awning'], true) && $value >= 11 && $value <= 14) {
+                    $scene = $value - 10;
+                    if ($this->RecallScene($channel, $scene)) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                        $reference = json_decode($referenceJSON, true);
+                        if (is_array($reference) && $reference !== []) {
+                            $this->ScheduleSceneReference($referenceJSON);
+                        }
+                    }
+                    return;
+                }
+
+                if ($type === 'dimmer') {
+                    // Wie bei Rollo/Markise werden sichtbare S1-S4 direkt an die
+                    // bestehende Bedienungsvariable angehängt. Die Variable selbst
+                    // bleibt erhalten, damit bestehende Verknüpfungen stabil bleiben.
+                    if ($value >= 11 && $value <= 14) {
+                        $scene = $value - 10;
+                        if ($this->RecallScene($channel, $scene)) {
+                            $this->SetValueIfChanged((string)$Ident, $value);
+                            $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                            $reference = json_decode($referenceJSON, true);
+                            if (is_array($reference) && $reference !== []) {
+                                $this->ScheduleSceneReference($referenceJSON);
+                            }
+                        }
+                        return;
+                    }
+                    $commands = [
+                        0 => 'dim_up',
+                        2 => 'stop',
+                        4 => 'dim_down'
+                    ];
+                    if (!isset($commands[$value])) {
+                        throw new InvalidArgumentException('Unbekannter Dimmer-Befehl');
+                    }
+                    if ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        // chnotify liefert beim Dimmer nur EIN/AUS, keinen verlässlichen
+                        // Prozentwert. Deshalb den Level beim manuellen Hoch-/Runterdimmen
+                        // bewusst nicht schätzen oder verändern.
+                        if ($value === 0) {
+                            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', true);
+                        }
+                    }
+                    return;
+                }
+
+                if ($type === 'awning') {
+                    $commands = [
+                        0 => 'on',
+                        2 => 'stop',
+                        4 => 'off'
+                    ];
+                    if (!isset($commands[$value])) {
+                        throw new InvalidArgumentException('Unbekannter Markisen-Befehl');
+                    }
+                    if ($value === 0 || $value === 4) {
+                        // Hoch/Tief aus der Bedienungsvariable muss exakt dieselbe
+                        // interne Fahrverfolgung wie die Positionsvariable nutzen.
+                        $this->StartCommandEndPositionMove($channel, $value === 0 ? 0 : 100);
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                    } elseif ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        // Ein explizites Stopp beendet eine ggf. noch laufende
+                        // eigene Fahrverfolgung.
+                        $this->ClearOwnMotorState($channel);
+                    }
+                    return;
+                }
+
                 $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
                 $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
                 $commands = [
-                    0 => 'open',
-                    1 => 'move_open_' . $lamellaStepTime,
+                    0 => 'on',
+                    1 => 'on',
                     2 => 'stop',
-                    3 => 'move_close_' . $lamellaStepTime,
-                    4 => 'close'
+                    3 => 'off',
+                    4 => 'off'
                 ];
-                $value = (int)$Value;
                 if (!isset($commands[$value])) {
                     throw new InvalidArgumentException('Unbekannter Store-Befehl');
                 }
+                if ($value === 0 || $value === 4) {
+                    // Hoch/Tief über Bedienung: Startposition, Richtung, Ziel und
+                    // erwartete Fahrzeit wie bei Position 0/100 verfolgen.
+                    $this->StartCommandEndPositionMove($channel, $value === 0 ? 0 : 100);
+                    $this->SetValueIfChanged((string)$Ident, $value);
+                    return;
+                }
                 if ($this->SendCommand($channel, $commands[$value])) {
-                    $this->SetValue($Ident, $value);
-                    // Nur die Endlagen sind ohne Positionsrückmeldung sicher bekannt.
-                    if ($value === 0) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 0);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 100);
-                    } elseif ($value === 1) {
+                    $this->SetValueIfChanged((string)$Ident, $value);
+                    if ($value === 1) {
                         $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
@@ -810,9 +892,8 @@ class ZeptrionAir extends IPSModule
                         $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
                         $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
                         $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
-                    } elseif ($value === 4) {
-                        $this->SetValueIfChanged('Ch' . $channel . 'Position', 100);
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', 0);
+                    } elseif ($value === 2) {
+                        $this->ClearOwnMotorState($channel);
                     }
                 }
                 return;
@@ -827,6 +908,15 @@ class ZeptrionAir extends IPSModule
                 }
                 if ($this->RecallScene($channel, $scene)) {
                     $this->SetValueIfChanged((string)$Ident, $scene);
+                    $this->SyncMotorSceneCommandStatus($channel, $scene);
+
+                    // Auch beim direkten Aufruf über die IP-Symcon-Szenenvariable
+                    // die zu S1-S4 gespeicherte Referenz synchronisieren.
+                    $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                    $reference = json_decode($referenceJSON, true);
+                    if (is_array($reference) && $reference !== []) {
+                        $this->ScheduleSceneReference($referenceJSON);
+                    }
                 }
                 return;
         }
@@ -943,11 +1033,78 @@ class ZeptrionAir extends IPSModule
     }
     public function StoreScene(int $Channel, int $Scene): bool
     {
-        return $this->SceneCommand($Channel, 'store', $Scene);
+        $ok = $this->SceneCommand($Channel, 'store', $Scene);
+        if ($ok) {
+            $this->CaptureSceneReference($Channel, $Scene);
+            $referenceText = $this->FormatSceneReference($Channel, $Scene);
+            if ($referenceText !== '') {
+                $this->UpdateFormField(
+                    'Channel' . $Channel . 'Scene' . $Scene . 'Reference',
+                    'caption',
+                    'Gespeichert: ' . $referenceText
+                );
+            }
+        }
+        return $ok;
     }
     public function DeleteScene(int $Channel, int $Scene): bool
     {
-        return $this->SceneCommand($Channel, 'delete', $Scene);
+        $ok = $this->SceneCommand($Channel, 'delete', $Scene);
+        if ($ok) {
+            $references = json_decode($this->ReadAttributeString('SceneReferences'), true);
+            if (!is_array($references)) $references = [];
+            unset($references[$Channel . ':' . $Scene]);
+            $this->WriteAttributeString('SceneReferences', json_encode($references, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $type = strtolower($this->ReadPropertyString('Channel' . $Channel . 'Type'));
+            if (in_array($type, ['dimmer', 'shutter', 'awning'], true)) {
+                $this->UpdateFormField(
+                    'Channel' . $Channel . 'Scene' . $Scene . 'Reference',
+                    'caption',
+                    'Gespeichert: –'
+                );
+            }
+        }
+        return $ok;
+    }
+    private function CaptureSceneReference(int $channel, int $scene): void
+    {
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['dimmer', 'shutter', 'awning'], true)) return;
+        $ref = ['type' => $type, 'channel' => $channel, 'scene' => $scene];
+        if ($type === 'dimmer') {
+            $id = $this->FindManagedVariableID('Ch' . $channel . 'Level');
+            if ($id <= 0) return;
+            $ref['level'] = max(0, min(100, (int)GetValue($id)));
+        } else {
+            $id = $this->FindManagedVariableID('Ch' . $channel . 'Position');
+            if ($id <= 0) return;
+            $ref['position'] = max(0, min(100, (int)GetValue($id)));
+            if ($type === 'shutter') {
+                $lid = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
+                if ($lid > 0) $ref['lamella'] = max(0, min(100, (int)GetValue($lid)));
+            }
+        }
+        $references = json_decode($this->ReadAttributeString('SceneReferences'), true);
+        if (!is_array($references)) $references = [];
+        $references[$channel . ':' . $scene] = $ref;
+        $this->WriteAttributeString('SceneReferences', json_encode($references, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+    private function FormatSceneReference(int $channel, int $scene): string
+    {
+        $ref = json_decode($this->GetSceneReferenceData($channel, $scene), true);
+        if (!is_array($ref) || $ref === []) return '';
+        $type = (string)($ref['type'] ?? '');
+        if ($type === 'dimmer') return (int)($ref['level'] ?? 0) . ' %';
+        if ($type === 'shutter') return (int)($ref['position'] ?? 0) . ' % / Lamelle ' . (int)($ref['lamella'] ?? 0) . ' %';
+        if ($type === 'awning') return (int)($ref['position'] ?? 0) . ' %';
+        return '';
+    }
+    public function GetSceneReferenceData(int $Channel, int $Scene): string
+    {
+        $references = json_decode($this->ReadAttributeString('SceneReferences'), true);
+        if (!is_array($references)) return '{}';
+        $ref = $references[$Channel . ':' . $Scene] ?? null;
+        return is_array($ref) ? json_encode($ref, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : '{}';
     }
     private function SceneCommand(int $channel, string $action, int $scene): bool
     {
@@ -1224,6 +1381,18 @@ class ZeptrionAir extends IPSModule
             return;
         }
 
+        // Während eine gespeicherte S1-S4-Referenzfahrt läuft, darf chnotify
+        // keine Zwischenposition in die Symcon-Variable schreiben. Die endgültige
+        // Position/Lamelle wird erst nach dem vollständig erkannten Referenzvorgang gesetzt.
+        if ($this->IsSceneReferencePendingForChannel($channel)) {
+            // Während des Szenenabrufs darf chnotify keine Zwischenposition in
+            // die normalen Rollo-/Markisenvariablen schreiben. Die Ereignisse
+            // dienen hier ausschließlich dazu, das reale Ende der von zeptrion
+            // selbst ausgeführten Szene zu erkennen.
+            $this->ObserveSceneReferenceNotify($channel, $value);
+            return;
+        }
+
         // chnotify waehrend einer EIGENEN Variablenbedienung ist ausschliesslich
         // Rueckmeldung. Es darf weder Position noch Blende schreiben.
         $own=$this->GetOwnMotorState($channel);
@@ -1270,20 +1439,27 @@ class ZeptrionAir extends IPSModule
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
 
-        // Kurze EXTERNE Gegenfahrt: nur Blende, keine Positionsaenderung.
-        $endPositionForcesTravel =
-            ($position===0 && $direction==='down') ||
-            ($position===100 && $direction==='up');
-
-        if ($type==='shutter' && !$endPositionForcesTravel && $elapsed>0 && $elapsed<$lamellaTime && ($lastDirection==='down'||$lastDirection==='up')) {
-            $direction=$lastDirection==='down'?'up':'down';
+        // Sehr kurzer EXTERNER Tastendruck (< Lamellenzeit):
+        // Fuer die Variablenabbildung behandeln wir ihn als Lamellenimpuls.
+        // Da chnotify die physische Richtung nicht liefert, wird die Richtung
+        // ausschliesslich aus dem vorherigen Lamellenwert abgeleitet:
+        //   Lamelle != 0 -> Richtung 0
+        //   Lamelle == 0 -> Richtung 100
+        // Die Behangposition bleibt dabei unveraendert.
+        if ($type==='shutter' && $elapsed>0 && $elapsed<$lamellaTime) {
             $lid=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
-            $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):($lastDirection==='down'?0:100);
-            $delta=(int)round($elapsed*100/max(1,$lamellaTime));
-            $newLamella=$direction==='up'?min(100,$cur+$delta):max(0,$cur-$delta);
+            $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):0;
+            $delta=max(1,(int)round($elapsed*100/max(1,$lamellaTime)));
+            if ($cur===0) {
+                $newLamella=min(100,$cur+$delta);
+                $lamellaDirection='towards100';
+            } else {
+                $newLamella=max(0,$cur-$delta);
+                $lamellaDirection='towards0';
+            }
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
             $newPosition=$position;
-            $this->SendDebug('LAMELLE','ch'.$channel.' externe Gegenfahrt '.$elapsed.'ms | '.$newLamella.'% | Position bleibt '.$position.'%',0);
+            $this->SendDebug('LAMELLE KURZ','ch'.$channel.' '.$elapsed.'ms | vorher='.$cur.'% | '.$lamellaDirection.' -> '.$newLamella.'% | Position bleibt '.$position.'%',0);
         } else {
             if ($endPositionForcesTravel) {
                 $this->SendDebug(
@@ -1356,6 +1532,19 @@ class ZeptrionAir extends IPSModule
             if ($now<=(int)($v['until']??0)) continue;
 
             $channel=(int)$k;
+
+            // Zwischenposition wie die originale zeptrionAIR-App beenden:
+            // runter = off ... on, rauf = on ... off.
+            if (($v['type']??'')==='position' && isset($v['stopCommand'])) {
+                $stopCommand=(string)$v['stopCommand'];
+                unset($v['stopCommand']);
+                // Vor dem Senden Zustand aktualisieren, damit ein eingehendes
+                // chnotify des Stopp-Befehls nicht erneut denselben Befehl ausloest.
+                $all[$k]=$v;
+                $this->WriteOwnMotorStates($all);
+                $this->SendDebug('ROLLO STOP','ch'.$channel.' Zwischenposition erreicht | cmd='.$stopCommand,0);
+                $this->SendCommand($channel,$stopCommand);
+            }
             if (($v['type']??'')==='position' && array_key_exists('pendingLamella',$v)) {
                 // Positionsfahrt ist beendet. Gepufferte Blende NICHT sofort
                 // senden, sondern dem Aktor 500 ms zum Stillstand geben.
@@ -1408,6 +1597,47 @@ class ZeptrionAir extends IPSModule
     private function ClearOwnMotorState(int $channel): void
     {
         $all=$this->ReadOwnMotorStates(); unset($all[(string)$channel]); $this->WriteOwnMotorStates($all);
+    }
+
+    private function StartCommandEndPositionMove(int $channel, int $target): void
+    {
+        $target = $target <= 0 ? 0 : 100;
+        $nowMs = (int)round(microtime(true) * 1000);
+        $own = $this->GetOwnMotorState($channel);
+        if (($own['type'] ?? '') === 'position' && $nowMs <= (int)($own['until'] ?? 0)) {
+            $current = $this->EstimateOwnPhysicalPosition($channel, $own, $nowMs);
+        } else {
+            $current = $this->GetMotorPosition($channel);
+        }
+        $current = max(0, min(100, $current));
+
+        // Ein expliziter Hoch-/Tief-Befehl aus der Bedienungsvariable muss
+        // IMMER an den Aktor gesendet werden. Die intern bekannte Position darf
+        // den Befehl nicht unterdrücken, da sie von der realen Position abweichen kann.
+        $direction = $target === 100 ? 'down' : 'up';
+        $command = $target === 0 ? 'open' : 'close';
+        $duration = $direction === 'down'
+            ? (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
+            : (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100);
+        // Endlagenbefehle laufen bis zum Anschlag; derselbe Sicherheitsaufschlag
+        // wie bei einer 0/100-%-Fahrt über die Positionsvariable.
+        $duration = max(500, $duration) + 1500;
+
+        if (!$this->SendCommand($channel, $command)) return;
+
+        $this->SetMotorPosition($channel, $target);
+        if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'shutter') {
+            $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $direction === 'down' ? 0 : 100);
+        }
+        $this->SetOwnMotorState($channel, [
+            'type' => 'position',
+            'startMs' => $nowMs,
+            'until' => $nowMs + $duration,
+            'startPosition' => $current,
+            'target' => $target,
+            'direction' => $direction
+        ]);
+        $this->SendDebug('ROLLO BEDIENUNG', 'ch' . $channel . ' physisch~' . $current . '% -> Soll ' . $target . '% | ' . $direction . ' | ' . $duration . 'ms', 0);
     }
 
     private function StartOwnLamellaMove(int $channel,int $target,int $current): void
@@ -1712,8 +1942,14 @@ class ZeptrionAir extends IPSModule
             return;
         }
         foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
+            if (!IPS_VariableExists($childID)) {
+                continue;
+            }
+            $object = IPS_GetObject($childID);
+            $ident = (string)($object['ObjectIdent'] ?? '');
+            if ($ident !== '') {
+                // Modulvariablen ausschließlich über die Modul-API entfernen.
+                $this->UnregisterVariable($ident);
             }
         }
         IPS_DeleteInstance($id);
@@ -1766,8 +2002,14 @@ class ZeptrionAir extends IPSModule
             return;
         }
         foreach (IPS_GetChildrenIDs($id) as $childID) {
-            if (IPS_VariableExists($childID)) {
-                IPS_DeleteVariable($childID);
+            if (!IPS_VariableExists($childID)) {
+                continue;
+            }
+            $object = IPS_GetObject($childID);
+            $ident = (string)($object['ObjectIdent'] ?? '');
+            if ($ident !== '') {
+                // Modulvariablen ausschließlich über die Modul-API entfernen.
+                $this->UnregisterVariable($ident);
             }
         }
         IPS_DeleteInstance($id);
@@ -1858,9 +2100,48 @@ class ZeptrionAir extends IPSModule
                     'PERCENTAGE' => false,
                     'SUFFIX' => ' %'
                 ], 20);
+                // Separate Bedienungsvariable für externe Taster/Ablaufpläne:
+                // Heller startet dim_up, Stopp beendet die Fahrt, Dunkler startet dim_down.
+                $commandIdent = 'Ch' . $channel . 'Command';
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                        continue;
+                    }
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
+                $commandPresentation = [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
+                ];
+                // Bedienung wie bei Rollo/Markise direkt unter der Modulinstanz.
+                // Bestehende Variable nur verschieben, niemals löschen/neuanlegen.
+                $existingCommandID = $this->FindManagedVariableID($commandIdent);
+                if ($existingCommandID > 0 && IPS_VariableExists($existingCommandID)) {
+                    IPS_SetParent($existingCommandID, $this->InstanceID);
+                } else {
+                    $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
+                }
+                $this->SetVariableName($commandIdent, $name . ' Bedienung');
+                $this->EnableAction($commandIdent);
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetPosition($commandID, $channel * 10 + 2);
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             } elseif ($active && $type === 'awning') {
-                // Markise: nur eine Positionsvariable direkt unter der Geräteinstanz.
-                // Kein Dummy nötig, da es keinen Drehgrad / keine Lamellen gibt.
+                // Markise: Position plus Bedienung wie beim Rollo, jedoch ohne Lamellen.
                 $this->RemoveShutterDummy($channel);
                 $positionIdent = 'Ch' . $channel . 'Position';
                 $this->RegisterVariableInteger($positionIdent, $name, [
@@ -1872,6 +2153,39 @@ class ZeptrionAir extends IPSModule
                 ], $channel * 10);
                 $this->SetVariableName($positionIdent, $name);
                 $this->EnableAction($positionIdent);
+
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Hoch',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
+                $commandIdent = 'Ch' . $channel . 'Command';
+                $commandPresentation = [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
+                ];
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
+                $this->SetVariableName($commandIdent, $name . ' Bedienung');
+                $this->EnableAction($commandIdent);
+                // RegisterVariableInteger() aktualisiert bei einer bereits vorhandenen
+                // Modulvariable die CustomPresentation nicht in jedem Fall. Die
+                // Enumeration deshalb nach ApplyChanges explizit neu setzen, damit
+                // neu aktivierte/umbenannte S1-S4 sofort in "Bedienung" erscheinen.
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             } elseif ($active && $type === 'shutter') {
                 $dummyID = $this->EnsureShutterDummy($channel, $name);
                 $positionIdent = 'Ch' . $channel . 'Position';
@@ -1886,31 +2200,47 @@ class ZeptrionAir extends IPSModule
                 $this->EnsureShutterVariable($dummyID, $lamellaIdent, 'Drehgrad', [
                     'PRESENTATION' => VARIABLE_PRESENTATION_SHUTTER,
                     'USAGE_TYPE' => 1,
-                    // Lamellenlogik des Moduls:
-                    // 0 = geschlossen/innen, 100 = offen/außen.
-                    // Die Rotation muss daher gegenüber der Rollo-Position
-                    // umgekehrt zugeordnet werden.
                     'CLOSE_INSIDE_VALUE' => 0,
                     'OPEN_OUTSIDE_VALUE' => 100,
                     'MAX_ROTATION_INSIDE' => 0,
                     'MAX_ROTATION_OUTSIDE' => 75,
                     'SUN_POSITION' => 1
                 ], 20);
+
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
                 $commandIdent = 'Ch' . $channel . 'Command';
-                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', [
+                $commandPresentation = [
                     'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
                     'LAYOUT' => 1,
                     'DISPLAY' => 0,
-                    'OPTIONS' => json_encode([
-                        ['Value' => 0, 'Caption' => 'Hoch'],
-                        ['Value' => 1, 'Caption' => 'Lamellen auf'],
-                        ['Value' => 2, 'Caption' => 'Stopp'],
-                        ['Value' => 3, 'Caption' => 'Lamellen zu'],
-                        ['Value' => 4, 'Caption' => 'Tief']
-                    ], JSON_UNESCAPED_UNICODE)
-                ], $channel * 10 + 2);
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
+                ];
+                $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
                 $this->SetVariableName($commandIdent, $name . ' Bedienung');
                 $this->EnableAction($commandIdent);
+                // RegisterVariableInteger() aktualisiert bei einer bereits vorhandenen
+                // Modulvariable die CustomPresentation nicht in jedem Fall. Die
+                // Enumeration deshalb nach ApplyChanges explizit neu setzen, damit
+                // neu aktivierte/umbenannte S1-S4 sofort in "Bedienung" erscheinen.
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             }
             // Nicht mehr zum Kanaltyp passende alte Steuervariablen entfernen.
             foreach ([
@@ -1919,18 +2249,15 @@ class ZeptrionAir extends IPSModule
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && in_array($type, ['shutter', 'awning'], true),
                 'Lamella' => $active && $type === 'shutter',
-                'Command' => $active && $type === 'shutter'
+                'Command' => $active && in_array($type, ['dimmer', 'shutter', 'awning'], true)
             ] as $suffix => $needed) {
                 if ($needed) {
                     continue;
                 }
                 $oldIdent = 'Ch' . $channel . $suffix;
-                if (in_array($suffix, ['DimmerSwitch', 'Level', 'Position', 'Lamella'], true)) {
-                    $oldID = $this->FindManagedVariableID($oldIdent);
-                    if ($oldID > 0 && IPS_VariableExists($oldID)) {
-                        IPS_DeleteVariable($oldID);
-                    }
-                } elseif (@$this->GetIDForIdent($oldIdent) > 0) {
+                $oldID = $this->FindManagedVariableID($oldIdent);
+                if ($oldID > 0 && IPS_VariableExists($oldID)) {
+                    // Modulvariablen ausschließlich über UnregisterVariable() entfernen.
                     $this->UnregisterVariable($oldIdent);
                 }
             }
@@ -1948,7 +2275,7 @@ class ZeptrionAir extends IPSModule
                 }
             }
             $sceneIdent = 'Ch' . $channel . 'Scene';
-            if ($active && $showSceneVariable) {
+            if ($active && $showSceneVariable && !in_array($type, ['dimmer', 'shutter', 'awning'], true)) {
                 $sceneName = $name . ' Szenen';
                 $sceneOptions = [];
                 for ($scene = 1; $scene <= 4; $scene++) {
@@ -1958,7 +2285,13 @@ class ZeptrionAir extends IPSModule
                     $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
                     $sceneOptions[] = [
                         'Value' => $scene,
-                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        // IP-Symcon 8.2 Enumeration erwartet diese Felder in jedem OPTIONS-Eintrag.
+                        // Fehlen sie, wirft enumerationForm.php u.a. "Undefined array key IconActive".
+                        'IconActive' => false,
+                        'IconValue' => '',
+                        'IconDisplay' => 'Default',
+                        'Color' => -1
                     ];
                 }
                 $this->RegisterVariableInteger($sceneIdent, $sceneName, [
@@ -1978,9 +2311,113 @@ class ZeptrionAir extends IPSModule
         }
     }
 
+    private function HasPotentialSmartButtonChannel(): bool
+    {
+        $maxChannels = max(1, min(4, $this->ReadPropertyInteger('Channels')));
+        for ($channel = 1; $channel <= $maxChannels; $channel++) {
+            if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'unused') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function UpdateSmartButtonHook(): void
+    {
+        $hook = $this->SmartButtonHookName();
+        if ($this->HasPotentialSmartButtonChannel()) {
+            $this->RegisterHook($hook);
+            $this->SendDebug('Smart-Taster', 'System-Hook registriert: /hook/' . $hook, 0);
+            return;
+        }
+
+        $this->UnregisterHook($hook);
+        $this->SendDebug('Smart-Taster', 'Kein freier Kanal – System-Hook entfernt: /hook/' . $hook, 0);
+    }
+
     private function SmartButtonHookName(): string
     {
         return 'zeptrionair-' . $this->InstanceID;
+    }
+
+    public function GetSmartButtonCallbackData(string $sceneID): string
+    {
+        $sceneID = preg_replace('/[^a-zA-Z0-9_-]/', '', $sceneID) ?? '';
+        if ($sceneID === '' || !$this->HasPotentialSmartButtonChannel()) {
+            return json_encode(['success' => false, 'message' => 'Zielinstanz ist kein potenzieller Smart-Taster.'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        $token = $this->ReadAttributeString('SmartButtonToken');
+        if ($token === '') {
+            $token = bin2hex(random_bytes(16));
+            $this->WriteAttributeString('SmartButtonToken', $token);
+        }
+        return json_encode([
+            'success' => true,
+            'path' => '/hook/' . $this->SmartButtonHookName() . '?action=run&scene=' . rawurlencode($sceneID) . '&token=' . rawurlencode($token)
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    public function StoreSmartButtonSceneData(string $sceneJSON): string
+    {
+        try {
+            $entry = json_decode($sceneJSON, true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($entry) || (string)($entry['id'] ?? '') === '') {
+                throw new RuntimeException('Ungültige Smart-Taster-Szene.');
+            }
+            $scenes = $this->ReadScenes();
+            $found = false;
+            foreach ($scenes as &$scene) {
+                $sameID = (string)($scene['id'] ?? '') === (string)$entry['id'];
+
+                // Nur dieselbe UI-Szene (gleiche ID) ersetzen.
+                // Verschiedene physische Smart-Taster dürfen bewusst dieselbe Bezeichnung
+                // und dieselben Ziele besitzen. Eine inhaltliche Duplikaterkennung würde
+                // sonst beim Programmieren des zweiten Tasters die Callback-Szene des
+                // ersten Tasters entfernen; dessen gespeicherter Callback zeigt dann auf
+                // eine nicht mehr vorhandene Szenen-ID.
+                if ($sameID) {
+                    $scene = $entry;
+                    $found = true;
+                    break;
+                }
+            }
+            unset($scene);
+            if (!$found) {
+                $scenes[] = $entry;
+            }
+            $this->WriteScenes($scenes);
+            return json_encode(['success' => true, 'scenes' => $scenes], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            return json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+    }
+
+    private function GetSmartButtonCallbackForInstance(int $instanceID, string $sceneID): array
+    {
+        if (!$this->IsDeviceInstance($instanceID)) {
+            return ['success' => false, 'message' => 'Erkannte Smart-Taster-Instanz ist ungültig.'];
+        }
+        $raw = $instanceID === $this->InstanceID
+            ? $this->GetSmartButtonCallbackData($sceneID)
+            : (string)call_user_func('ZEPA_GetSmartButtonCallbackData', $instanceID, $sceneID);
+        $result = json_decode($raw, true);
+        return is_array($result) ? $result : ['success' => false, 'message' => 'Callback der Zielinstanz konnte nicht ermittelt werden.'];
+    }
+
+    private function StoreSmartButtonSceneForInstance(int $instanceID, array $entry): array
+    {
+        if (!$this->IsDeviceInstance($instanceID)) {
+            return ['success' => false, 'message' => 'Erkannte Smart-Taster-Instanz ist ungültig.'];
+        }
+        $json = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($json)) {
+            return ['success' => false, 'message' => 'Szene konnte nicht serialisiert werden.'];
+        }
+        $raw = $instanceID === $this->InstanceID
+            ? $this->StoreSmartButtonSceneData($json)
+            : (string)call_user_func('ZEPA_StoreSmartButtonSceneData', $instanceID, $json);
+        $result = json_decode($raw, true);
+        return is_array($result) ? $result : ['success' => false, 'message' => 'Antwort der Zielinstanz ist ungültig.'];
     }
 
     public function StartNotifyListener(): bool
@@ -2014,11 +2451,16 @@ class ZeptrionAir extends IPSModule
         $this->SendNotifyRequest('/zrap/chscan', 'scan');
     }
 
-    public function ReceiveData($JSONString)
+    public function ReceiveData(string $JSONString): string
     {
         $d = json_decode($JSONString, true);
         if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer'] === '') return '';
-        $buffer = $this->GetBuffer('NotifyBuffer') . (string)$d['Buffer'];
+        $received = hex2bin((string)$d['Buffer']);
+        if ($received === false) {
+            $this->SendDebug('CHNOTIFY RX', 'Ungültiger HEX-Buffer vom Parent', 0);
+            return '';
+        }
+        $buffer = $this->GetBuffer('NotifyBuffer') . $received;
         while (true) {
             $r = $this->ExtractNotifyResponse($buffer);
             if ($r === null) break;
@@ -2070,7 +2512,7 @@ class ZeptrionAir extends IPSModule
              "Connection: keep-alive\r\n\r\n";
         $this->SetBuffer('NotifyPending', $kind);
         $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
-        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => $q], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         if ($ok === false) {
             $this->SetBuffer('NotifyPending', '');
             $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen');
@@ -2159,7 +2601,7 @@ class ZeptrionAir extends IPSModule
                 'name' => trim((string)($scene['name'] ?? '')) ?: 'Smart-Taster',
                 'targets' => $targets
             ];
-            if (count($result) >= 2) {
+            if (count($result) >= 4) {
                 break;
             }
         }
@@ -2225,6 +2667,20 @@ class ZeptrionAir extends IPSModule
                     case 'object-info':
                         echo json_encode(['ok' => true, 'object' => $this->GetSelectableObjectInfo((int)($in['id'] ?? 0))], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                         return;
+                    case 'scene-reference':
+                        $instanceID = (int)($in['instance'] ?? 0);
+                        $channel = (int)($in['channel'] ?? 0);
+                        $memory = (int)($in['memory'] ?? 0);
+                        if (!$this->IsDeviceInstance($instanceID) || $channel < 1 || $channel > 4 || $memory < 1 || $memory > 4) {
+                            echo json_encode(['ok' => false, 'message' => 'Ungültiges zeptrionAIR-Ziel.'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                            return;
+                        }
+                        $referenceJSON = $instanceID === $this->InstanceID
+                            ? $this->GetSceneReferenceData($channel, $memory)
+                            : (string)call_user_func('ZEPA_GetSceneReferenceData', $instanceID, $channel, $memory);
+                        $reference = json_decode($referenceJSON, true);
+                        echo json_encode(['ok' => true, 'reference' => is_array($reference) ? $reference : []], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                        return;
                 }
                 echo json_encode(['ok' => false, 'message' => 'Unbekannte Aktion'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             } catch (Throwable $e) {
@@ -2239,7 +2695,12 @@ class ZeptrionAir extends IPSModule
     private function ProgramScene(array $in): array
     {
         $name = trim((string)($in['name'] ?? '')) ?: 'Szene';
-        $targets = $this->NormalizeTargets(is_array($in['targets'] ?? null) ? $in['targets'] : []);
+        $rawTargets = is_array($in['targets'] ?? null) ? $in['targets'] : [];
+        $rawTargetsJSON = json_encode($rawTargets, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->SendDebug('SMARTBT TARGETS RAW', 'Anzahl=' . count($rawTargets) . ' | ' . (is_string($rawTargetsJSON) ? $rawTargetsJSON : 'JSON-Fehler'), 0);
+        $targets = $this->NormalizeTargets($rawTargets);
+        $normalizedTargetsJSON = json_encode($targets, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->SendDebug('SMARTBT TARGETS NORM', 'Anzahl=' . count($targets) . ' | ' . (is_string($normalizedTargetsJSON) ? $normalizedTargetsJSON : 'JSON-Fehler'), 0);
         if ($targets === []) {
             return ['ok' => false, 'message' => 'Bitte mindestens ein Ziel auswählen.'];
         }
@@ -2248,51 +2709,133 @@ class ZeptrionAir extends IPSModule
         if (!$sel['success']) {
             return ['ok' => false, 'message' => $sel['message']];
         }
+        // Referenzwerte stammen ausschließlich aus dem normalen S1-S4-"Speichern" der Zielinstanz.
+        // Der Smart-Taster-Dialog selbst enthält keine manuelle Referenzeingabe.
+        foreach ($targets as &$target) {
+            if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
+            $instance = (int)($target['instance'] ?? 0);
+            $channel = (int)($target['channel'] ?? 0);
+            $memory = (int)($target['memory'] ?? 0);
+            if (!$this->IsDeviceInstance($instance)) continue;
+            $json = $instance === $this->InstanceID
+                ? $this->GetSceneReferenceData($channel, $memory)
+                : (string)call_user_func('ZEPA_GetSceneReferenceData', $instance, $channel, $memory);
+            $ref = json_decode($json, true);
+            if (is_array($ref) && $ref !== []) $target['reference'] = $ref;
+        }
+        unset($target);
         $services = [];
         $hasSymconTargets = false;
+        $hasReferenceTargets = false;
+        $hasZeptrionTargets = false;
+        $zeptrionTargetCount = 0;
         foreach ($targets as $target) {
             if ((string)($target['type'] ?? '') === 'zeptrion') {
-                $instance = (int)($target['instance'] ?? 0);
-                $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
-                if ($host === '') {
-                    return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
+                $zeptrionTargetCount++;
+                $hasZeptrionTargets = true;
+                $reference = is_array($target['reference'] ?? null) ? $target['reference'] : null;
+                if ($reference !== null) {
+                    $hasReferenceTargets = true;
                 }
-                $services[] = [
-                    'typ' => 'application/x-www-form-urlencoded',
-                    'req' => 'POST',
-                    'loc' => $host,
-                    'pth' => '/zrap/chctrl',
-                    'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
-                ];
             } elseif ((string)($target['type'] ?? '') === 'symcon') {
                 $hasSymconTargets = true;
             }
         }
-        if ($hasSymconTargets) {
+        // Die zeptrionAIR-API unterstützt mehrere HTTP-Requests auf EINEM Smart-Taster
+        // ausdrücklich als JSON-Array. Alle zeptrionAIR-Ziele werden deshalb DIREKT
+        // auf den Smart-Taster programmiert. Diese Befehle müssen auch ohne Symcon
+        // funktionieren. Der Symcon-Callback ist nur eine zusätzliche Meldung/Aktion
+        // und wird immer NACH den direkten zeptrionAIR-Diensten eingetragen.
+        $callbackExecutesZeptrion = false;
+        // API 5.2.4.3: Jedes zeptrionAIR-Ziel wird als eigener HTTP-Service gespeichert.
+        // Ab dem zweiten Array-Element dürfen Attribute weggelassen werden, wenn sie
+        // gegenüber dem vorherigen Service unverändert sind. Genau dieses Kurzformat
+        // verwenden wir hier. Wichtig: cmdX bleibt der Kanal des ZIELGERÄTS und wird
+        // nicht aus der Reihenfolge der Smart-Taster-Ziele erzeugt.
+        $previousZeptrionService = null;
+        foreach ($targets as $target) {
+            if ((string)($target['type'] ?? '') !== 'zeptrion') continue;
+            $instance = (int)($target['instance'] ?? 0);
+            $host = $this->IsDeviceInstance($instance) ? trim((string)IPS_GetProperty($instance, 'Host')) : '';
+            if ($host === '') {
+                return ['ok' => false, 'message' => 'Für ein zeptrionAIR-Ziel ist keine Host-Adresse hinterlegt.'];
+            }
+            // Der gespeicherte Smart-Taster-Service wird später vom zApp selbst ausgeführt.
+            // Deshalb den in Symcon konfigurierten DNS-Namen bereits beim Programmieren
+            // in eine IPv4-Adresse auflösen, damit der Smartfront keine lokale DNS-Auflösung
+            // für Namen wie "zapp-19370098" benötigt.
+            $targetIP = gethostbyname($host);
+            if ($targetIP === $host && filter_var($host, FILTER_VALIDATE_IP) === false) {
+                return ['ok' => false, 'message' => 'Die Host-Adresse des zeptrionAIR-Ziels „' . $host . '“ konnte nicht in eine IPv4-Adresse aufgelöst werden.'];
+            }
+            if (filter_var($targetIP, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+                return ['ok' => false, 'message' => 'Für das zeptrionAIR-Ziel „' . $host . '“ wurde keine gültige IPv4-Adresse ermittelt.'];
+            }
+            $this->SendDebug('SMARTBT ZIEL-IP', $host . ' -> ' . $targetIP, 0);
+
+            // Vollständiger logischer Service. "typ" wird bei zeptrion /chctrl bewusst
+            // nicht mitgesendet – genauso wie im zeptrionAIR-Beispiel auf API-Seite 5-38.
+            $fullService = [
+                'req' => 'POST',
+                'loc' => (string)$targetIP,
+                'pth' => '/zrap/chctrl',
+                'bdy' => 'cmd' . (int)$target['channel'] . '=recall_s' . (int)$target['memory']
+            ];
+
+            if ($previousZeptrionService === null) {
+                $services[] = $fullService;
+            } else {
+                // Nur Werte übertragen, die sich gegenüber dem vorherigen Service ändern.
+                // bdy ändert sich für ein anderes Ziel praktisch immer und bleibt erhalten.
+                $shortService = [];
+                foreach ($fullService as $key => $value) {
+                    if (!array_key_exists($key, $previousZeptrionService) || $previousZeptrionService[$key] !== $value) {
+                        $shortService[$key] = $value;
+                    }
+                }
+                $services[] = $shortService;
+            }
+            $previousZeptrionService = $fullService;
+        }
+        // Symcon soll jeden Druck einer von uns programmierten Smart-Taste mitbekommen,
+        // auch wenn die Taste ausschließlich direkte zeptrionAIR-Ziele enthält.
+        if ($hasZeptrionTargets || $hasSymconTargets || $hasReferenceTargets) {
             $hh = (string)($_SERVER['HTTP_HOST'] ?? '');
             if ($hh === '') {
                 return ['ok' => false, 'message' => 'Symcon-Adresse konnte nicht ermittelt werden.'];
             }
             $p = explode(':', $hh, 2);
-            $token = $this->ReadAttributeString('SmartButtonToken');
-            $services[] = [
+            $callback = $this->GetSmartButtonCallbackForInstance((int)$sel['instance'], $id);
+            if (!$callback['success']) {
+                return ['ok' => false, 'message' => $callback['message']];
+            }
+            $callbackService = [
                 'req' => 'GET',
                 'typ' => 'application/x-www-form-urlencoded',
                 'loc' => $p[0],
                 'prt' => (string)(isset($p[1]) ? (int)$p[1] : 3777),
-                'pth' => '/hook/' . $this->SmartButtonHookName() . '?action=run&scene=' . rawurlencode($id) . '&token=' . rawurlencode($token),
+                'pth' => (string)$callback['path'],
                 'bdy' => ''
             ];
+            // WICHTIG: Der Callback steht bewusst immer HINTER den direkten zeptrionAIR-
+            // Diensten. Damit funktionieren die internen zeptrion-Ziele auch dann,
+            // wenn Symcon nicht erreichbar ist. RunScene() führt diese direkten Ziele
+            // nicht erneut aus; es verarbeitet nur Referenzen und echte Symcon-Ziele.
+            $services[] = $callbackService;
         }
         if ($services === []) {
             return ['ok' => false, 'message' => 'Es konnten keine Smart-Taster-Dienste erzeugt werden.'];
         }
+        $servicesJSON = json_encode($services, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $this->SendDebug('SMARTBT SERVICES', 'Anzahl=' . count($services) . ' | ' . (is_string($servicesJSON) ? $servicesJSON : 'JSON-Fehler'), 0);
         $payload = count($services) === 1 ? $services[0] : $services;
         $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if (!is_string($encoded)) {
             return ['ok' => false, 'message' => 'Smart-Taster-Programm konnte nicht erzeugt werden.'];
         }
         $estimatedBytes = strlen($encoded) + strlen('Content-Type: application/json\r\nContent-Length: ' . strlen($encoded) . '\r\nConnection: close\r\n');
+        // Diagnose: exakt anzeigen, was tatsächlich auf die zuvor gedrückte Smart-Taste geschrieben wird.
+        $this->SendDebug('SMARTBT PRGS PAYLOAD', 'Bytes=' . $estimatedBytes . ' | ' . $encoded, 0);
         if ($estimatedBytes > 730) {
             return ['ok' => false, 'message' => 'Die Smart-Taster-Szene ist zu gross. zeptrionAIR erlaubt für /zapi/smartbt/prgs maximal 730 Byte inklusive HTTP-Header.'];
         }
@@ -2300,29 +2843,24 @@ class ZeptrionAir extends IPSModule
         if (!$r['success']) {
             return ['ok' => false, 'message' => 'Programmierung fehlgeschlagen: ' . $r['message']];
         }
-        $scenes = $this->ReadScenes();
         $entry = [
             'id' => $id,
             'name' => $name,
             'targets' => $targets,
+            'callbackExecutesZeptrion' => $callbackExecutesZeptrion,
             'smartButtonHost' => $sel['host'],
             'smartButtonName' => $sel['name'],
             'smartButtonInstance' => $sel['instance']
         ];
-        $found = false;
-        foreach ($scenes as &$scene) {
-            if ((string)($scene['id'] ?? '') === $id) {
-                $scene = $entry;
-                $found = true;
-                break;
-            }
+        $stored = $this->StoreSmartButtonSceneForInstance((int)$sel['instance'], $entry);
+        if (!$stored['success']) {
+            return ['ok' => false, 'message' => 'Smart-Taste wurde programmiert, aber die Szene konnte nicht in der erkannten Zielinstanz gespeichert werden: ' . $stored['message']];
         }
-        unset($scene);
-        if (!$found) {
-            $scenes[] = $entry;
-        }
-        $this->WriteScenes($scenes);
-        return ['ok' => true, 'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und mit „' . $name . '“ programmiert.', 'scenes' => $scenes];
+        return [
+            'ok' => true,
+            'message' => 'Smart-Taste wurde an „' . $sel['name'] . '“ erkannt und in der zugehörigen Instanz #' . (int)$sel['instance'] . ' mit „' . $name . '“ programmiert.',
+            'scenes' => $stored['scenes']
+        ];
     }
     private function SelectDelete(): array
     {
@@ -2470,7 +3008,14 @@ class ZeptrionAir extends IPSModule
             foreach (($scene['targets'] ?? []) as $target) {
                 try {
                     $type = (string)($target['type'] ?? 'zeptrion');
-                    if ($type === 'symcon') {
+                    if ($type === 'zeptrion' && is_array($target['reference'] ?? null)) {
+                        $instanceID = (int)($target['instance'] ?? 0);
+                        $referenceJSON = json_encode($target['reference'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                        if ($instanceID > 0 && is_string($referenceJSON)) {
+                            if ($instanceID === $this->InstanceID) $this->ScheduleSceneReference($referenceJSON);
+                            else call_user_func('ZEPA_ScheduleSceneReference', $instanceID, $referenceJSON);
+                        }
+                    } elseif ($type === 'symcon') {
                         $objectID = (int)($target['object'] ?? 0);
                         if (IPS_VariableExists($objectID)) {
                             RequestAction($objectID, $target['value'] ?? null);
@@ -2492,12 +3037,231 @@ class ZeptrionAir extends IPSModule
                     $this->SendDebug('Smart-Taster Aktion', $e->getMessage(), 0);
                 }
             }
+            // Direkte zeptrion-Ziele sind bereits im Smart-Taster selbst gespeichert
+            // und werden von diesem unabhängig von IP-Symcon ausgeführt.
+            // Der Callback synchronisiert nur Referenzen und führt echte Symcon-Ziele aus.
+
             echo 'OK';
             return;
         }
         http_response_code(404);
         echo 'Scene not found';
     }
+    private function IsSceneReferencePendingForChannel(int $channel): bool
+    {
+        $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
+        if (!is_array($pending)) return false;
+        $now = (int)round(microtime(true) * 1000);
+        foreach ($pending as $item) {
+            if (!is_array($item)) continue;
+            $ref = is_array($item['reference'] ?? null) ? $item['reference'] : [];
+            if ((int)($ref['channel'] ?? 0) !== $channel) continue;
+            // Solange die Referenz noch nicht angewendet wurde, muss der Kanal
+            // vollständig aus der normalen Motor-/Positionsauswertung herausgehalten werden.
+            // settleUntil ist nur die kurze Nachlaufsperre NACH dem finalen Referenzwert.
+            if (!(bool)($item['applied'] ?? false)) return true;
+            if ((int)($item['settleUntil'] ?? 0) >= $now) return true;
+        }
+        return false;
+    }
+
+    private function ApplySceneReferenceEnd(array $ref): void
+    {
+        $channel = (int)($ref['channel'] ?? 0);
+        $type = (string)($ref['type'] ?? '');
+        if ($channel < 1 || $channel > 4) return;
+
+        $this->ClearOwnMotorState($channel);
+        $state = $this->ReadMotorState();
+        $key = (string)$channel;
+        if (is_array($state[$key] ?? null)) {
+            unset($state[$key]['commandDirection'], $state[$key]['commandTarget'], $state[$key]['commandStartPosition'], $state[$key]['startMs']);
+            $state[$key]['lastDirection'] = '';
+            $state[$key]['lastEvent'] = 0;
+            $this->WriteMotorState($state);
+        }
+
+        if ($type === 'dimmer') {
+            $level = max(0, min(100, (int)($ref['level'] ?? 0)));
+            $this->SetValueIfChanged('Ch' . $channel . 'Level', $level);
+            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $level > 0);
+        } elseif ($type === 'shutter' || $type === 'awning') {
+            $position = max(0, min(100, (int)($ref['position'] ?? 0)));
+            $this->SetMotorPosition($channel, $position);
+            if ($type === 'shutter') {
+                $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, min(100, (int)($ref['lamella'] ?? 0))));
+            }
+        }
+        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Referenz-Endwert nach vollständigem Vorgang gesetzt', 0);
+    }
+
+    private function ObserveSceneReferenceNotify(int $channel, int $value): void
+    {
+        $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
+        if (!is_array($pending)) return;
+        $now = (int)round(microtime(true) * 1000);
+        $changed = false;
+
+        foreach ($pending as &$item) {
+            if (!is_array($item)) continue;
+            $ref = is_array($item['reference'] ?? null) ? $item['reference'] : [];
+            if ((int)($ref['channel'] ?? 0) !== $channel || (bool)($item['applied'] ?? false)) continue;
+            $type = (string)($ref['type'] ?? '');
+
+            if ($value === 100) {
+                if ((int)($item['stopCount'] ?? 0) >= 1 && $type === 'shutter') {
+                    $item['lamellaStarted'] = true;
+                    $item['firstStopAt'] = 0;
+                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Lamellenfahrt erkannt', 0);
+                } else {
+                    $item['movementStarted'] = true;
+                }
+                $changed = true;
+            } elseif ($value === 0 && (bool)($item['movementStarted'] ?? false)) {
+                $item['stopCount'] = (int)($item['stopCount'] ?? 0) + 1;
+                if ($type === 'shutter' && (bool)($item['lamellaStarted'] ?? false)) {
+                    // Zweiter STOP nach erkannter Gegenfahrt = kompletter Vorgang fertig.
+                    $this->ApplySceneReferenceEnd($ref);
+                    $item['applied'] = true;
+                    $item['settleUntil'] = $now + 1500;
+                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' finaler STOP nach Lamellenfahrt erkannt', 0);
+                } elseif ($type === 'shutter') {
+                    // Erster STOP: kurz warten, ob direkt die Lamellen-Gegenfahrt startet.
+                    $item['firstStopAt'] = $now;
+                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' erster STOP erkannt, warte auf mögliche Lamellenfahrt', 0);
+                } else {
+                    // Markise hat keine Lamellen-Gegenfahrt.
+                    $this->ApplySceneReferenceEnd($ref);
+                    $item['applied'] = true;
+                    $item['settleUntil'] = $now + 1500;
+                }
+                $changed = true;
+            }
+
+            $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' chnotify Event='.$value.' für Referenzabschluss ausgewertet', 0);
+        }
+        unset($item);
+        if ($changed) {
+            $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
+    }
+
+    private function SyncMotorCommandStatus(int $channel, int $value): void
+    {
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['shutter', 'awning'], true)) return;
+        if ($type === 'awning' && !in_array($value, [0, 2, 4], true)) return;
+        if ($type === 'shutter' && ($value < 0 || $value > 4)) return;
+        $this->SetValueIfChanged('Ch' . $channel . 'Command', $value);
+    }
+
+    private function SyncMotorSceneCommandStatus(int $channel, int $scene): void
+    {
+        if ($scene < 1 || $scene > 4) return;
+        $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+        if (!in_array($type, ['shutter', 'awning'], true)) return;
+        // Nur sichtbare Szenen sind Bestandteil der Enumeration.
+        if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) return;
+        $this->SetValueIfChanged('Ch' . $channel . 'Command', 10 + $scene);
+    }
+
+    public function ScheduleSceneReference(string $ReferenceJSON): bool
+    {
+        $ref = json_decode($ReferenceJSON, true);
+        if (!is_array($ref)) return false;
+        $channel = (int)($ref['channel'] ?? 0);
+        $type = (string)($ref['type'] ?? '');
+        if ($channel < 1 || $channel > 4 || !in_array($type, ['dimmer', 'shutter', 'awning'], true)) return false;
+
+        // Die gespeicherte Referenz ist der autoritative Endwert. chnotify wird
+        // nur zur Erkennung des tatsächlichen Bewegungsendes verwendet.
+        $scene = (int)($ref['scene'] ?? 0);
+        if ($scene >= 1 && $scene <= 4) {
+            $this->SyncMotorSceneCommandStatus($channel, $scene);
+        }
+
+        $now = (int)round(microtime(true) * 1000);
+        $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
+        if (!is_array($pending)) $pending = [];
+        $pending = array_values(array_filter($pending, static function ($item) use ($channel): bool {
+            if (!is_array($item)) return false;
+            $r = is_array($item['reference'] ?? null) ? $item['reference'] : [];
+            return (int)($r['channel'] ?? 0) !== $channel;
+        }));
+
+        // Nur Sicherheitsnetz: normal beendet chnotify den Vorgang ereignisbasiert.
+        $full = max(300, $this->EffectiveMotorTime($channel, 'up'), $this->EffectiveMotorTime($channel, 'down'));
+        $lamella = $type === 'shutter' ? max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')) : 0;
+        $fallback = $type === 'dimmer' ? 35000 : $full + $lamella + 10000;
+
+        $pending[] = [
+            'fallbackDue' => $now + $fallback,
+            'settleUntil' => 0,
+            'applied' => false,
+            'movementStarted' => false,
+            'lamellaStarted' => false,
+            'stopCount' => 0,
+            'firstStopAt' => 0,
+            'reference' => $ref
+        ];
+        $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->SetTimerInterval('SceneReferenceTimer', 100);
+        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Szenenabruf überwacht; Abschluss über chnotify', 0);
+        return true;
+    }
+
+    public function SceneReferenceTick(): void
+    {
+        $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
+        if (!is_array($pending) || $pending === []) {
+            $this->SetTimerInterval('SceneReferenceTimer', 0);
+            return;
+        }
+
+        $now = (int)round(microtime(true) * 1000);
+        $left = [];
+        foreach ($pending as $item) {
+            if (!is_array($item)) continue;
+            $ref = is_array($item['reference'] ?? null) ? $item['reference'] : [];
+            $channel = (int)($ref['channel'] ?? 0);
+            $type = (string)($ref['type'] ?? '');
+            $applied = (bool)($item['applied'] ?? false);
+
+            if (!$applied) {
+                $firstStopAt = (int)($item['firstStopAt'] ?? 0);
+                if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false)) {
+                    // Nach dem ersten STOP nur kurz auf eine eventuelle
+                    // Lamellen-Gegenfahrt warten. Kommt keine, war der STOP final.
+                    $lamellaWait = max(1200, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 300);
+                    if ($now >= $firstStopAt + $lamellaWait) {
+                        $this->ApplySceneReferenceEnd($ref);
+                        $item['applied'] = true;
+                        $item['settleUntil'] = $now + 1500;
+                        $applied = true;
+                        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Szene beendet; gespeicherten Endwert gesetzt', 0);
+                    }
+                }
+
+                if (!$applied && $now >= (int)($item['fallbackDue'] ?? 0)) {
+                    $this->ApplySceneReferenceEnd($ref);
+                    $item['applied'] = true;
+                    $item['settleUntil'] = $now + 1500;
+                    $applied = true;
+                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Sicherheits-Timeout; gespeicherten Endwert gesetzt', 0);
+                }
+            }
+
+            if ($applied) {
+                if ($now < (int)($item['settleUntil'] ?? 0)) $left[] = $item;
+            } else {
+                $left[] = $item;
+            }
+        }
+
+        $this->WriteAttributeString('PendingSceneReferences', json_encode($left, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->SetTimerInterval('SceneReferenceTimer', $left === [] ? 0 : 100);
+    }
+
     private function BuildInterface(): string
     {
         $scenes = $this->ReadScenes();
@@ -2539,13 +3303,15 @@ function msg(x){el('status').textContent=x||''}function busy(v){document.body.cl
 function opts(s,l,v){s.replaceChildren();l.forEach(x=>{const o=mk('option',x.caption);o.value=x.value;if(String(x.value)===String(v))o.selected=true;s.append(o)})}
 async function api(x){try{const r=await fetch('__HOOK__',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
 async function objectInfo(id){if(!id)return null;if(cache.has(+id))return cache.get(+id);const r=await api({op:'object-info',id:+id});if(r.ok&&r.object){cache.set(+id,r.object);return r.object}return null}
+function referenceText(ref){if(!ref||typeof ref!=='object'||!Object.keys(ref).length)return 'Szenen-Referenz: nicht gespeichert';if(ref.type==='dimmer')return 'Szenen-Referenz: '+Number(ref.level||0)+' %';if(ref.type==='shutter')return 'Szenen-Referenz: Position '+Number(ref.position||0)+' % · Lamelle '+Number(ref.lamella||0)+' %';if(ref.type==='awning')return 'Szenen-Referenz: Position '+Number(ref.position||0)+' %';return 'Szenen-Referenz: nicht erforderlich'}
+async function updateReference(t,label){label.textContent='Szenen-Referenz: wird geladen …';const r=await api({op:'scene-reference',instance:+t.instance,channel:+t.channel,memory:+t.memory});label.textContent=r.ok?referenceText(r.reference):'Szenen-Referenz: nicht verfügbar'}
 function migrate(t){if(t.type==='variable')return{type:'symcon',object:+t.variable,value:t.value};if(t.type==='script')return{type:'symcon',object:+t.script};return t}
 async function pick(t,done){const m=mk('div');m.className='modal';const b=mk('div');b.className='modalbox';const head=mk('div');head.className='modalHead';head.append(mk('h3','Symcon-Objekt auswählen'));const x=mk('button','Schliessen');x.className='close';x.onclick=()=>m.remove();head.append(x);const q=mk('input');q.className='search';q.placeholder='Objekt suchen …';const tree=mk('div');tree.className='tree';b.append(head,q,tree);m.append(b);document.body.append(m);
 async function choose(item){if(!item.selectable)return;const full=await api({op:'object-info',id:+item.id});if(!full.ok||!full.object){msg('Objektinformationen konnten nicht geladen werden.');return}t.object=+item.id;t.objectInfo=full.object;t.value=full.object.defaultValue??'';cache.set(+item.id,full.object);m.remove();done()}
 async function load(parent,container){container.textContent='Lade …';const r=await api({op:'tree-children',parent});container.replaceChildren();if(!r.ok)return;(r.items||[]).forEach(item=>{const wrap=mk('div');wrap.className='node';const row=mk('div');row.className='nodeRow';const twist=mk('button',item.hasChildren?'▶':'');twist.className='twisty';const label=mk('button',(item.icon||'')+' '+item.name);label.className='nodeLabel'+(item.selectable?' selectable':'');const tag=mk('span',item.type==='variable'?'Variable':item.type==='script'?'Script':'');tag.className='typeTag';row.append(twist,label,tag);wrap.append(row);const children=mk('div');children.className='children';wrap.append(children);let open=false;twist.onclick=async()=>{if(!item.hasChildren)return;open=!open;twist.textContent=open?'▼':'▶';if(open&&children.childNodes.length===0)await load(item.id,children);children.style.display=open?'block':'none'};label.onclick=()=>item.selectable?choose(item):twist.click();container.append(wrap)})}
 let timer=0;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const text=q.value.trim();if(text===''){await load(0,tree);return}tree.textContent='Suche …';const r=await api({op:'tree-search',query:text});tree.replaceChildren();(r.items||[]).forEach(item=>{const e=mk('button',(item.type==='variable'?'● ':'▶ ')+item.path);e.className='searchResult';e.onclick=()=>choose(item);tree.append(e)})},180)};await load(0,tree)}
 async function valueEditor(t,r){const o=t.objectInfo||await objectInfo(t.object);if(!o||o.type!=='variable')return;if(Array.isArray(o.associations)&&o.associations.length){const s=mk('select');opts(s,o.associations.map(a=>({value:a.value,caption:a.name})),t.value);s.onchange=()=>t.value=o.varType===1?+s.value:o.varType===2?+s.value:s.value;r.append(s);return}if(o.varType===0){const s=mk('select');opts(s,[{value:'false',caption:'Aus / False'},{value:'true',caption:'Ein / True'}],String(t.value));s.onchange=()=>t.value=s.value;r.append(s);return}if((o.varType===1||o.varType===2)&&o.profileMin!==null&&o.profileMax!==null){const min=Number(o.profileMin),max=Number(o.profileMax),rawStep=Number(o.profileStep),step=rawStep>0?rawStep:(o.varType===1?1:0.1),suffix=o.profileSuffix||'';const count=Math.floor((max-min)/step+0.0000001)+1;if(count>0&&count<=500){const s=mk('select');const values=[];for(let i=0;i<count;i++){let v=min+i*step;if(o.varType===1)v=Math.round(v);else v=Math.round(v*1000000)/1000000;values.push({value:v,caption:String(v)+(suffix?' '+suffix.trim():'')})}if(!values.some(x=>Number(x.value)===Number(t.value))&&t.value!==''&&t.value!==undefined)values.push({value:Number(t.value),caption:String(t.value)+(suffix?' '+suffix.trim():'')});values.sort((a,b)=>Number(a.value)-Number(b.value));opts(s,values,t.value===''||t.value===undefined?min:t.value);s.onchange=()=>t.value=o.varType===1?parseInt(s.value,10):parseFloat(s.value);r.append(s);return}const n=mk('input');n.type='number';n.min=String(min);n.max=String(max);n.step=String(step);n.value=t.value===''||t.value===undefined?String(min):String(t.value);n.onchange=()=>t.value=o.varType===1?parseInt(n.value,10):parseFloat(n.value);r.append(n);if(suffix){const u=mk('span',suffix);u.className='source';r.append(u)}return}const v=mk('input');v.placeholder='Wert';v.value=t.value??'';v.oninput=()=>t.value=v.value;r.append(v)}
-async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));q.onchange=()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1]};const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);mem.onchange=()=>t.memory=+mem.value;r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
+async function render(){const root=el('scenes');root.replaceChildren();for(const s of scenes){s.targets=(s.targets||[]).map(migrate);const c=mk('div');c.className='card';const top=mk('div');top.className='row';const n=mk('input');n.className='name';n.value=s.name||'';n.oninput=()=>s.name=n.value;const f=mk('button','Löschen');f.className='danger';f.onclick=()=>forget(s.id);top.append(n,f);c.append(top);if(s.smartButtonName){const src=mk('div','Smart-Taster: '+s.smartButtonName+(s.smartButtonHost?' ('+s.smartButtonHost+')':''));src.className='source';c.append(src)}for(let j=0;j<s.targets.length;j++){const t=s.targets[j];const r=mk('div');r.className='row target';if(t.type==='symcon'){const o=t.objectInfo||await objectInfo(t.object);if(o)t.objectInfo=o;const missing=!!t.object&&t.objectMissing&&!o;const p=mk('button',o?o.path:(missing?'Objekt #'+t.object+' nicht mehr vorhanden':'Objekt auswählen …'));p.className='objfield';p.onclick=()=>pick(t,render);r.append(p);if(o){const tag=mk('span',o.type==='script'?'Script':'Variable');tag.className='source';r.append(tag);await valueEditor(t,r)}}else{const q=mk('select');opts(q,Z,String(t.instance||0)+':'+String(t.channel||0));const mem=mk('select');opts(mem,[1,2,3,4].map(x=>({value:x,caption:'S'+x})),t.memory||1);const ref=mk('span');ref.className='source';q.onchange=async()=>{const a=q.value.split(':');t.instance=+a[0];t.channel=+a[1];await updateReference(t,ref)};mem.onchange=async()=>{t.memory=+mem.value;await updateReference(t,ref)};r.append(q,mem);const direct=mk('span','direkt zeptrionAIR → zeptrionAIR');direct.className='source';r.append(direct,ref);await updateReference(t,ref)}const d=mk('button','Entfernen');d.onclick=()=>{s.targets.splice(j,1);render()};r.append(d);c.append(r)}const a=mk('div');a.className='row';const addZ=mk('button','+ zeptrionAIR-Ziel');addZ.onclick=()=>{if(!Z.length){msg('Keine zeptrionAIR-Ziele vorhanden.');return}const v=String(Z[0].value).split(':');s.targets.push({type:'zeptrion',instance:+v[0],channel:+v[1],memory:1});render()};const add=mk('button','+ Symcon-Objekt');add.onclick=()=>{s.targets.push({type:'symcon',object:0});render()};const p=mk('button','Smart-Taste programmieren');p.onclick=()=>program(s);a.append(addZ,add,p);c.append(a);root.append(c)}}
 function addScene(){scenes.push({id:Math.random().toString(36).slice(2),name:'Neue Szene',targets:[]});render()}
 async function program(s){if(!confirm('Die Smart-Tasten beginnen jetzt zu blinken. Bitte danach die gewünschte blinkende Smart-Taste am Schalter drücken.'))return;msg('Smart-Tasten werden aktiviert. Bitte gewünschte blinkende Smart-Taste drücken …');busy(true);const clean=(s.targets||[]).map(t=>{const x={...t};delete x.objectInfo;return x});const r=await api({op:'program',scene:s.id,name:s.name,targets:clean});busy(false);if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
 async function forget(id){const r=await api({op:'forget',scene:id});if(r.ok&&r.scenes)scenes=r.scenes;await render();msg(r.message)}
