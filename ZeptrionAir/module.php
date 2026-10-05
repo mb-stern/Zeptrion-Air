@@ -1414,9 +1414,28 @@ class ZeptrionAir extends IPSModuleStrict
                 // RUNTER moeglich. (Positionsskala: 0 offen/oben, 100 unten.)
                 $direction=$position===100?'up':($position===0?'down':'unknown');
             }
-            if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
-                if ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-                elseif ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
+            $type=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
+            if ($type==='shutter') {
+                $lid=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
+                $lamella=$lid>0?max(0,min(100,(int)GetValue($lid))):0;
+
+                // Untere Endlage: Position ist bereits 100 %, Lamelle aber noch
+                // nicht vollstaendig geschlossen. Dann behandeln wir den externen
+                // Tastendruck als Wunsch "ganz schliessen". chnotify liefert keine
+                // Richtung, deshalb ist hier der gespeicherte Zustand entscheidend.
+                if (!array_key_exists('commandDirection',$m) && $position===100 && $lamella!==0) {
+                    $direction='down';
+                    $m['forceCloseAtBottom']=true;
+                    $this->SendDebug(
+                        'ROLLO ENDSCHLIESSEN',
+                        'ch'.$channel.' START | Position=100% | Lamelle='.$lamella.'% -> ganz schliessen',
+                        0
+                    );
+                } else {
+                    unset($m['forceCloseAtBottom']);
+                    if ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+                    elseif ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
+                }
             }
             $m['moving']=true; $m['moveStartMs']=$now; $m['direction']=$direction;
             $state[$key]=$m; $this->WriteMotorState($state);
@@ -1439,34 +1458,43 @@ class ZeptrionAir extends IPSModuleStrict
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
 
-        // An einer Endlage ist die physische Fahrtrichtung eindeutig.
-        // Diese Information wird nach der Kurzimpulsbehandlung fuer normale
-        // Fahrten weiterhin benoetigt.
+        // Untere Endlage + Lamelle war beim Start != 0:
+        // Nicht anhand der Laufzeit entscheiden. Bis der reale Endschalter
+        // reagiert, kann der Motor laenger als die konfigurierte Lamellenzeit
+        // laufen. Am Ende bleibt der Behang auf 100 % und die Lamelle ist 0 %.
+        if ($type==='shutter' && (bool)($m['forceCloseAtBottom']??false)) {
+            $newPosition=100;
+            $this->SetMotorPosition($channel,100);
+            $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+            $direction='down';
+            $m['moving']=false;
+            $m['direction']='';
+            $m['lastDirection']='down';
+            unset($m['forceCloseAtBottom'],$m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
+            $state[$key]=$m;
+            $this->WriteMotorState($state);
+            $this->SendDebug(
+                'ROLLO ENDSCHLIESSEN',
+                'ch'.$channel.' ENDE | '.$elapsed.'ms | Position=100% | Lamelle=0%',
+                0
+            );
+            return;
+        }
+
+        // Kurze EXTERNE Gegenfahrt: nur Blende, keine Positionsaenderung.
         $endPositionForcesTravel =
             ($position===0 && $direction==='down') ||
             ($position===100 && $direction==='up');
 
-        // Sehr kurzer EXTERNER Tastendruck (< Lamellenzeit):
-        // Fuer die Variablenabbildung behandeln wir ihn als Lamellenimpuls.
-        // Da chnotify die physische Richtung nicht liefert, wird die Richtung
-        // ausschliesslich aus dem vorherigen Lamellenwert abgeleitet:
-        //   Lamelle != 0 -> Richtung 0
-        //   Lamelle == 0 -> Richtung 100
-        // Die Behangposition bleibt dabei unveraendert.
-        if ($type==='shutter' && $elapsed>0 && $elapsed<$lamellaTime) {
+        if ($type==='shutter' && !$endPositionForcesTravel && $elapsed>0 && $elapsed<$lamellaTime && ($lastDirection==='down'||$lastDirection==='up')) {
+            $direction=$lastDirection==='down'?'up':'down';
             $lid=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
-            $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):0;
-            $delta=max(1,(int)round($elapsed*100/max(1,$lamellaTime)));
-            if ($cur===0) {
-                $newLamella=min(100,$cur+$delta);
-                $lamellaDirection='towards100';
-            } else {
-                $newLamella=max(0,$cur-$delta);
-                $lamellaDirection='towards0';
-            }
+            $cur=$lid>0?max(0,min(100,(int)GetValue($lid))):($lastDirection==='down'?0:100);
+            $delta=(int)round($elapsed*100/max(1,$lamellaTime));
+            $newLamella=$direction==='up'?min(100,$cur+$delta):max(0,$cur-$delta);
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$newLamella);
             $newPosition=$position;
-            $this->SendDebug('LAMELLE KURZ','ch'.$channel.' '.$elapsed.'ms | vorher='.$cur.'% | '.$lamellaDirection.' -> '.$newLamella.'% | Position bleibt '.$position.'%',0);
+            $this->SendDebug('LAMELLE','ch'.$channel.' externe Gegenfahrt '.$elapsed.'ms | '.$newLamella.'% | Position bleibt '.$position.'%',0);
         } else {
             if ($endPositionForcesTravel) {
                 $this->SendDebug(
@@ -1486,17 +1514,8 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
             }
             if ($type==='shutter' && $endPositionForcesTravel && $elapsed<$lamellaTime) {
-                // Direkt aus einer Endlage bewegt sich zuerst die Lamelle.
-                // Beispiel: Lamellenzeit 1000 ms, 300 ms HOCH aus 100 %
-                // => Position bleibt 100 %, Lamelle ca. 30 % geschlossen
-                // bzw. 70 % offen (Skala 0=geschlossen, 100=offen).
                 $newPosition=$position;
                 $fraction=max(0.0,min(1.0,$elapsed/max(1,$lamellaTime)));
-                // In den ersten Lamellenzeit-ms ab einer Endlage bewegt sich
-                // nur die Lamelle. Die Prozentzahl entspricht direkt dem bereits
-                // durchlaufenen Anteil dieser Lamellenzeit:
-                // unten -> HOCH: 0 % geschlossen -> Richtung 100 % offen
-                // oben  -> RUNTER: 100 % offen -> Richtung 0 % geschlossen.
                 $newLamella=$direction==='up'
                     ? max(0,min(100,(int)round(100*$fraction)))
                     : max(0,min(100,(int)round(100-(100*$fraction))));
