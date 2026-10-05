@@ -702,7 +702,14 @@ class ZeptrionAir extends IPSModuleStrict
                         ? (int)round(($target-$current)*$this->EffectiveMotorTime($channel,'down')/100)
                         : (int)round(($current-$target)*$this->EffectiveMotorTime($channel,'up')/100);
                     $duration=max(100,min(32000,$duration));
-                    $command=$direction==='down'?'move_close_'.$duration:'move_open_'.$duration;
+
+                    // Die originale zeptrionAIR-App faehrt Zwischenpositionen nicht
+                    // mit move_open_xxx/move_close_xxx an. Der Mitschnitt zeigt:
+                    //   runter: off -> Fahrzeit -> on
+                    //   rauf:   on  -> Fahrzeit -> off
+                    // Diese Bedienart ist wichtig, damit der Aktor seine interne
+                    // Position fuer ein anschliessendes store_sX korrekt fuehrt.
+                    $command=$direction==='down'?'off':'on';
                 }
                 if ($this->SendCommand($channel,$command)) {
                     $this->SetMotorPosition($channel,$target);
@@ -712,10 +719,17 @@ class ZeptrionAir extends IPSModuleStrict
                     if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                         $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='down'?0:100);
                     }
-                    $this->SetOwnMotorState($channel,[
+                    $motorState=[
                         'type'=>'position','startMs'=>$nowMs,'until'=>$nowMs+$duration,
                         'startPosition'=>$current,'target'=>$target,'direction'=>$direction
-                    ]);
+                    ];
+                    // Nur Zwischenpositionen werden wie in der Original-App durch
+                    // den entgegengesetzten on/off-Befehl nach der berechneten
+                    // Fahrzeit gestoppt. Endlagen laufen weiterhin bis zum Anschlag.
+                    if ($target>0 && $target<100) {
+                        $motorState['stopCommand']=$direction==='down'?'on':'off';
+                    }
+                    $this->SetOwnMotorState($channel,$motorState);
                     $this->SendDebug('ROLLO SOLL','ch'.$channel.' physisch~'.$current.'% -> Soll '.$target.'% | '.$direction.' | '.$duration.'ms',0);
                 }
                 return;
@@ -1489,6 +1503,19 @@ class ZeptrionAir extends IPSModuleStrict
             if ($now<=(int)($v['until']??0)) continue;
 
             $channel=(int)$k;
+
+            // Zwischenposition wie die originale zeptrionAIR-App beenden:
+            // runter = off ... on, rauf = on ... off.
+            if (($v['type']??'')==='position' && isset($v['stopCommand'])) {
+                $stopCommand=(string)$v['stopCommand'];
+                unset($v['stopCommand']);
+                // Vor dem Senden Zustand aktualisieren, damit ein eingehendes
+                // chnotify des Stopp-Befehls nicht erneut denselben Befehl ausloest.
+                $all[$k]=$v;
+                $this->WriteOwnMotorStates($all);
+                $this->SendDebug('ROLLO STOP','ch'.$channel.' Zwischenposition erreicht | cmd='.$stopCommand,0);
+                $this->SendCommand($channel,$stopCommand);
+            }
             if (($v['type']??'')==='position' && array_key_exists('pendingLamella',$v)) {
                 // Positionsfahrt ist beendet. Gepufferte Blende NICHT sofort
                 // senden, sondern dem Aktor 500 ms zum Stillstand geben.
