@@ -1602,6 +1602,17 @@ class ZeptrionAir extends IPSModuleStrict
             if (($forcedEndStop??null)!==null) {
                 $newPosition=(int)$forcedEndStop;
                 $endStopReached=true;
+                // Den anhand der Fahrzeit sicher erreichten Anschlag auch
+                // wirklich in die IP-Symcon-Positionsvariable schreiben.
+                $this->SetMotorPosition($channel,$newPosition);
+                if ($type==='shutter') {
+                    $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
+                }
+                $this->SendDebug(
+                    'ROLLO ANSCHLAG SET',
+                    'ch'.$channel.' Variable gesetzt -> Position='.$newPosition.'%',
+                    0
+                );
             } elseif (!array_key_exists('commandDirection',$m)) {
                 $endTolUp=max(1000,(int)round($expectUp*0.10));
                 $endTolDown=max(1000,(int)round($expectDown*0.10));
