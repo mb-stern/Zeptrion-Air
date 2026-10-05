@@ -2205,7 +2205,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             }
             $sceneIdent = 'Ch' . $channel . 'Scene';
-            if ($active && $showSceneVariable && !in_array($type, ['shutter', 'awning'], true)) {
+            if ($active && $showSceneVariable && !in_array($type, ['dimmer', 'shutter', 'awning'], true)) {
                 $sceneName = $name . ' Szenen';
                 $sceneOptions = [];
                 for ($scene = 1; $scene <= 4; $scene++) {
