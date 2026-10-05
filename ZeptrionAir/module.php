@@ -2069,7 +2069,21 @@ class ZeptrionAir extends IPSModuleStrict
                     'DISPLAY' => 0,
                     'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
                 ];
-                $this->EnsureDimmerVariable($dummyID, $commandIdent, $name . ' Bedienung', VARIABLETYPE_INTEGER, $commandPresentation, 30);
+                // Bedienung wie bei Rollo/Markise direkt unter der Modulinstanz.
+                // Bestehende Variable nur verschieben, niemals löschen/neuanlegen.
+                $existingCommandID = $this->FindManagedVariableID($commandIdent);
+                if ($existingCommandID > 0 && IPS_VariableExists($existingCommandID)) {
+                    IPS_SetParent($existingCommandID, $this->InstanceID);
+                } else {
+                    $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
+                }
+                $this->SetVariableName($commandIdent, $name . ' Bedienung');
+                $this->EnableAction($commandIdent);
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetPosition($commandID, $channel * 10 + 2);
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             } elseif ($active && $type === 'awning') {
                 // Markise: Position plus Bedienung wie beim Rollo, jedoch ohne Lamellen.
                 $this->RemoveShutterDummy($channel);
