@@ -1424,11 +1424,13 @@ class ZeptrionAir extends IPSModuleStrict
                 // Tastendruck als Wunsch "ganz schliessen". chnotify liefert keine
                 // Richtung, deshalb ist hier der gespeicherte Zustand entscheidend.
                 if (!array_key_exists('commandDirection',$m) && $position===100 && $lamella!==0) {
-                    $direction='down';
+                    // Noch nicht auf "down" festlegen. chnotify kennt die Richtung
+                    // nicht; erst die Laufzeit beim STOP entscheidet.
                     $m['forceCloseAtBottom']=true;
+                    $m['forceCloseStartLamella']=$lamella;
                     $this->SendDebug(
                         'ROLLO ENDSCHLIESSEN',
-                        'ch'.$channel.' START | Position=100% | Lamelle='.$lamella.'% -> ganz schliessen',
+                        'ch'.$channel.' START-KANDIDAT | Position=100% | Lamelle='.$lamella.'% | Richtung noch offen',
                         0
                     );
                 } else {
@@ -1463,22 +1465,36 @@ class ZeptrionAir extends IPSModuleStrict
         // reagiert, kann der Motor laenger als die konfigurierte Lamellenzeit
         // laufen. Am Ende bleibt der Behang auf 100 % und die Lamelle ist 0 %.
         if ($type==='shutter' && (bool)($m['forceCloseAtBottom']??false)) {
-            $newPosition=100;
-            $this->SetMotorPosition($channel,100);
-            $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-            $direction='down';
-            $m['moving']=false;
-            $m['direction']='';
-            $m['lastDirection']='down';
-            unset($m['forceCloseAtBottom'],$m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
-            $state[$key]=$m;
-            $this->WriteMotorState($state);
+            // Kurze Bewegung: Lamellen/Endschliessen. Laengere Bewegung:
+            // bei Position 100% kann sie positionsmaessig nur nach oben gehen.
+            $closeLimit=max(750,$lamellaTime+500);
+            unset($m['forceCloseAtBottom'],$m['forceCloseStartLamella']);
+
+            if ($elapsed <= $closeLimit) {
+                $newPosition=100;
+                $this->SetMotorPosition($channel,100);
+                $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+                $direction='down';
+                $m['moving']=false;
+                $m['direction']='';
+                $m['lastDirection']='down';
+                unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
+                $state[$key]=$m;
+                $this->WriteMotorState($state);
+                $this->SendDebug(
+                    'ROLLO ENDSCHLIESSEN',
+                    'ch'.$channel.' ENDE | '.$elapsed.'ms <= '.$closeLimit.'ms | Position=100% | Lamelle=0%',
+                    0
+                );
+                return;
+            }
+
+            $direction='up';
             $this->SendDebug(
-                'ROLLO ENDSCHLIESSEN',
-                'ch'.$channel.' ENDE | '.$elapsed.'ms | Position=100% | Lamelle=0%',
+                'ROLLO PLAUSI',
+                'ch'.$channel.' '.$elapsed.'ms > '.$closeLimit.'ms | Position=100%: down unmoeglich -> up',
                 0
             );
-            return;
         }
 
         // Externe Fahrt auf Plausibilitaet pruefen:
