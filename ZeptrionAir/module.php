@@ -165,43 +165,65 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $sceneItems = [];
             if ($typeLabel !== 'Nicht verwendet') {
-            for ($scene = 1; $scene <= 4; $scene++) {
-                $sceneItems[] = [
-                    'type' => 'CheckBox',
-                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
-                    'caption' => 'Szene ' . $scene . ' als Variable anzeigen'
-                ];
-                $sceneItems[] = [
-                    'type' => 'ValidationTextBox',
-                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
-                    'caption' => 'Szene ' . $scene . ' – Name'
-                ];
-                $sceneItems[] = [
-                    'type' => 'Button',
-                    'caption' => 'Speichern',
-                    'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
-                ];
-                $referenceText = $this->FormatSceneReference($channel, $scene);
-                $sceneType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-                if (in_array($sceneType, ['dimmer', 'shutter', 'awning'], true)) {
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    $sceneName = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $sceneCaption = 'S' . $scene;
+                    if ($sceneName !== '' && strcasecmp($sceneName, 'Szene ' . $scene) !== 0) {
+                        $sceneCaption .= ' - ' . $sceneName;
+                    }
+
+                    $sceneDetailItems = [
+                        [
+                            'type' => 'CheckBox',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
+                            'caption' => 'In Bedienung anzeigen'
+                        ],
+                        [
+                            'type' => 'ValidationTextBox',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
+                            'caption' => 'Name'
+                        ]
+                    ];
+
+                    $referenceText = $this->FormatSceneReference($channel, $scene);
+                    $sceneType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+                    if (in_array($sceneType, ['dimmer', 'shutter', 'awning'], true)) {
+                        $sceneDetailItems[] = [
+                            'type' => 'Label',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Reference',
+                            'caption' => $referenceText !== '' ? 'Gespeichert: ' . $referenceText : 'Gespeichert: –'
+                        ];
+                    }
+
+                    $sceneDetailItems[] = [
+                        'type' => 'RowLayout',
+                        'items' => [
+                            [
+                                'type' => 'Button',
+                                'caption' => 'Speichern',
+                                'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
+                            ],
+                            [
+                                'type' => 'Button',
+                                'caption' => 'Löschen',
+                                'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
+                            ]
+                        ]
+                    ];
+
                     $sceneItems[] = [
-                        'type' => 'Label',
-                        'name' => 'Channel' . $channel . 'Scene' . $scene . 'Reference',
-                        'caption' => $referenceText !== '' ? 'Gespeichert: ' . $referenceText : 'Gespeichert: –'
+                        'type' => 'ExpansionPanel',
+                        'caption' => $sceneCaption,
+                        'expanded' => false,
+                        'items' => $sceneDetailItems
                     ];
                 }
-                $sceneItems[] = [
-                    'type' => 'Button',
-                    'caption' => 'Löschen',
-                    'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
+                $items[] = [
+                    'type' => 'ExpansionPanel',
+                    'caption' => 'Szenen verwalten',
+                    'expanded' => false,
+                    'items' => $sceneItems
                 ];
-            }
-            $items[] = [
-                'type' => 'ExpansionPanel',
-                'caption' => 'Szenen verwalten',
-                'expanded' => false,
-                'items' => $sceneItems
-            ];
             }
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             if ($type === 'dimmer') {
