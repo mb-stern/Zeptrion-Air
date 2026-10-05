@@ -1561,14 +1561,19 @@ class ZeptrionAir extends IPSModuleStrict
 
             // Zwischenposition wie die originale zeptrionAIR-App beenden:
             // runter = off ... on, rauf = on ... off.
-            if (($v['type']??'')==='position' && isset($v['stopCommand'])) {
+            if (in_array(($v['type']??''), ['position', 'lamella'], true) && isset($v['stopCommand'])) {
                 $stopCommand=(string)$v['stopCommand'];
+                $stateType=(string)($v['type']??'');
                 unset($v['stopCommand']);
                 // Vor dem Senden Zustand aktualisieren, damit ein eingehendes
                 // chnotify des Stopp-Befehls nicht erneut denselben Befehl ausloest.
                 $all[$k]=$v;
                 $this->WriteOwnMotorStates($all);
-                $this->SendDebug('ROLLO STOP','ch'.$channel.' Zwischenposition erreicht | cmd='.$stopCommand,0);
+                $this->SendDebug(
+                    $stateType==='lamella' ? 'LAMELLE STOP' : 'ROLLO STOP',
+                    'ch'.$channel.' '.($stateType==='lamella'?'Lamellenziel':'Zwischenposition').' erreicht | cmd='.$stopCommand,
+                    0
+                );
                 $this->SendCommand($channel,$stopCommand);
             }
             if (($v['type']??'')==='position' && array_key_exists('pendingLamella',$v)) {
@@ -1641,7 +1646,7 @@ class ZeptrionAir extends IPSModuleStrict
         // IMMER an den Aktor gesendet werden. Die intern bekannte Position darf
         // den Befehl nicht unterdrücken, da sie von der realen Position abweichen kann.
         $direction = $target === 100 ? 'down' : 'up';
-        $command = $target === 0 ? 'open' : 'close';
+        $command = $target === 0 ? 'on' : 'off';
         $duration = $direction === 'down'
             ? (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
             : (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100);
@@ -1681,14 +1686,21 @@ class ZeptrionAir extends IPSModuleStrict
         // gilt nur nach einer gepufferten Positionsfahrt.
         $time=max(100,min(32000,$calculatedTime));
         $direction=$target>$current?'up':'down';
-        $command=$direction==='up'?'move_open_'.$time:'move_close_'.$time;
-        $this->SendDebug('LAMELLE EXEC','ch'.$channel.' Puffer/Variablenbefehl '.$current.'% -> '.$target.'% | berechnet='.$calculatedTime.'ms | gesendet='.$time.'ms',0);
+        // Wie bei der originalen zeptrionAIR-Bedienung:
+        // rauf = on ... off, runter = off ... on.
+        $command=$direction==='up'?'on':'off';
+        $stopCommand=$direction==='up'?'off':'on';
+        $this->SendDebug(
+            'LAMELLE EXEC',
+            'ch'.$channel.' Puffer/Variablenbefehl '.$current.'% -> '.$target.'% | berechnet='.$calculatedTime.'ms | Start='.$command.' | Stop='.$stopCommand.' nach '.$time.'ms',
+            0
+        );
         if ($this->SendCommand($channel,$command)) {
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$target);
             $now=(int)round(microtime(true)*1000);
             $this->SetOwnMotorState($channel,[
-                'type'=>'lamella','startMs'=>$now,'until'=>$now+$time+300,
-                'target'=>$target,'direction'=>$direction
+                'type'=>'lamella','startMs'=>$now,'until'=>$now+$time,
+                'target'=>$target,'direction'=>$direction,'stopCommand'=>$stopCommand
             ]);
             $this->SendDebug('LAMELLE SOLL','ch'.$channel.' '.$current.'% -> '.$target.'% | '.$direction.' | '.$time.'ms',0);
         }
