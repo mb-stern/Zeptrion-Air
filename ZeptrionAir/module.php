@@ -165,43 +165,65 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $sceneItems = [];
             if ($typeLabel !== 'Nicht verwendet') {
-            for ($scene = 1; $scene <= 4; $scene++) {
-                $sceneItems[] = [
-                    'type' => 'CheckBox',
-                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
-                    'caption' => 'Szene ' . $scene . ' als Variable anzeigen'
-                ];
-                $sceneItems[] = [
-                    'type' => 'ValidationTextBox',
-                    'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
-                    'caption' => 'Szene ' . $scene . ' – Name'
-                ];
-                $sceneItems[] = [
-                    'type' => 'Button',
-                    'caption' => 'Speichern',
-                    'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
-                ];
-                $referenceText = $this->FormatSceneReference($channel, $scene);
-                $sceneType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
-                if (in_array($sceneType, ['dimmer', 'shutter', 'awning'], true)) {
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    $sceneName = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $sceneCaption = 'S' . $scene;
+                    if ($sceneName !== '' && strcasecmp($sceneName, 'Szene ' . $scene) !== 0) {
+                        $sceneCaption .= ' - ' . $sceneName;
+                    }
+
+                    $sceneDetailItems = [
+                        [
+                            'type' => 'CheckBox',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Visible',
+                            'caption' => 'In Bedienung anzeigen'
+                        ],
+                        [
+                            'type' => 'ValidationTextBox',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Name',
+                            'caption' => 'Name'
+                        ]
+                    ];
+
+                    $referenceText = $this->FormatSceneReference($channel, $scene);
+                    $sceneType = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
+                    if (in_array($sceneType, ['dimmer', 'shutter', 'awning'], true)) {
+                        $sceneDetailItems[] = [
+                            'type' => 'Label',
+                            'name' => 'Channel' . $channel . 'Scene' . $scene . 'Reference',
+                            'caption' => $referenceText !== '' ? 'Gespeichert: ' . $referenceText : 'Gespeichert: –'
+                        ];
+                    }
+
+                    $sceneDetailItems[] = [
+                        'type' => 'RowLayout',
+                        'items' => [
+                            [
+                                'type' => 'Button',
+                                'caption' => 'Speichern',
+                                'onClick' => 'ZEPA_StoreScene($id, ' . $channel . ', ' . $scene . ');'
+                            ],
+                            [
+                                'type' => 'Button',
+                                'caption' => 'Löschen',
+                                'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
+                            ]
+                        ]
+                    ];
+
                     $sceneItems[] = [
-                        'type' => 'Label',
-                        'name' => 'Channel' . $channel . 'Scene' . $scene . 'Reference',
-                        'caption' => $referenceText !== '' ? 'Gespeichert: ' . $referenceText : 'Gespeichert: –'
+                        'type' => 'ExpansionPanel',
+                        'caption' => $sceneCaption,
+                        'expanded' => false,
+                        'items' => $sceneDetailItems
                     ];
                 }
-                $sceneItems[] = [
-                    'type' => 'Button',
-                    'caption' => 'Löschen',
-                    'onClick' => 'ZEPA_DeleteScene($id, ' . $channel . ', ' . $scene . ');'
+                $items[] = [
+                    'type' => 'ExpansionPanel',
+                    'caption' => 'Szenen verwalten',
+                    'expanded' => false,
+                    'items' => $sceneItems
                 ];
-            }
-            $items[] = [
-                'type' => 'ExpansionPanel',
-                'caption' => 'Szenen verwalten',
-                'expanded' => false,
-                'items' => $sceneItems
-            ];
             }
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             if ($type === 'dimmer') {
@@ -692,7 +714,7 @@ class ZeptrionAir extends IPSModuleStrict
                 if ($target===$current) { $this->SetMotorPosition($channel,$target); return; }
                 $direction=$target>$current?'down':'up';
                 if ($target===0 || $target===100) {
-                    $command=$target===0?'open':'close';
+                    $command=$target===0?'on':'off';
                     $duration=$direction==='down'
                         ? (int)round((100-$current)*$this->EffectiveMotorTime($channel,'down')/100)
                         : (int)round($current*$this->EffectiveMotorTime($channel,'up')/100);
@@ -702,7 +724,14 @@ class ZeptrionAir extends IPSModuleStrict
                         ? (int)round(($target-$current)*$this->EffectiveMotorTime($channel,'down')/100)
                         : (int)round(($current-$target)*$this->EffectiveMotorTime($channel,'up')/100);
                     $duration=max(100,min(32000,$duration));
-                    $command=$direction==='down'?'move_close_'.$duration:'move_open_'.$duration;
+
+                    // Die originale zeptrionAIR-App faehrt Zwischenpositionen nicht
+                    // mit move_open_xxx/move_close_xxx an. Der Mitschnitt zeigt:
+                    //   runter: off -> Fahrzeit -> on
+                    //   rauf:   on  -> Fahrzeit -> off
+                    // Diese Bedienart ist wichtig, damit der Aktor seine interne
+                    // Position fuer ein anschliessendes store_sX korrekt fuehrt.
+                    $command=$direction==='down'?'off':'on';
                 }
                 if ($this->SendCommand($channel,$command)) {
                     $this->SetMotorPosition($channel,$target);
@@ -712,10 +741,17 @@ class ZeptrionAir extends IPSModuleStrict
                     if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
                         $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='down'?0:100);
                     }
-                    $this->SetOwnMotorState($channel,[
+                    $motorState=[
                         'type'=>'position','startMs'=>$nowMs,'until'=>$nowMs+$duration,
                         'startPosition'=>$current,'target'=>$target,'direction'=>$direction
-                    ]);
+                    ];
+                    // Nur Zwischenpositionen werden wie in der Original-App durch
+                    // den entgegengesetzten on/off-Befehl nach der berechneten
+                    // Fahrzeit gestoppt. Endlagen laufen weiterhin bis zum Anschlag.
+                    if ($target>0 && $target<100) {
+                        $motorState['stopCommand']=$direction==='down'?'on':'off';
+                    }
+                    $this->SetOwnMotorState($channel,$motorState);
                     $this->SendDebug('ROLLO SOLL','ch'.$channel.' physisch~'.$current.'% -> Soll '.$target.'% | '.$direction.' | '.$duration.'ms',0);
                 }
                 return;
@@ -768,11 +804,47 @@ class ZeptrionAir extends IPSModuleStrict
                     return;
                 }
 
+                if ($type === 'dimmer') {
+                    // Wie bei Rollo/Markise werden sichtbare S1-S4 direkt an die
+                    // bestehende Bedienungsvariable angehängt. Die Variable selbst
+                    // bleibt erhalten, damit bestehende Verknüpfungen stabil bleiben.
+                    if ($value >= 11 && $value <= 14) {
+                        $scene = $value - 10;
+                        if ($this->RecallScene($channel, $scene)) {
+                            $this->SetValueIfChanged((string)$Ident, $value);
+                            $referenceJSON = $this->GetSceneReferenceData($channel, $scene);
+                            $reference = json_decode($referenceJSON, true);
+                            if (is_array($reference) && $reference !== []) {
+                                $this->ScheduleSceneReference($referenceJSON);
+                            }
+                        }
+                        return;
+                    }
+                    $commands = [
+                        0 => 'dim_up',
+                        2 => 'stop',
+                        4 => 'dim_down'
+                    ];
+                    if (!isset($commands[$value])) {
+                        throw new InvalidArgumentException('Unbekannter Dimmer-Befehl');
+                    }
+                    if ($this->SendCommand($channel, $commands[$value])) {
+                        $this->SetValueIfChanged((string)$Ident, $value);
+                        // chnotify liefert beim Dimmer nur EIN/AUS, keinen verlässlichen
+                        // Prozentwert. Deshalb den Level beim manuellen Hoch-/Runterdimmen
+                        // bewusst nicht schätzen oder verändern.
+                        if ($value === 0) {
+                            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', true);
+                        }
+                    }
+                    return;
+                }
+
                 if ($type === 'awning') {
                     $commands = [
-                        0 => 'open',
+                        0 => 'on',
                         2 => 'stop',
-                        4 => 'close'
+                        4 => 'off'
                     ];
                     if (!isset($commands[$value])) {
                         throw new InvalidArgumentException('Unbekannter Markisen-Befehl');
@@ -794,11 +866,11 @@ class ZeptrionAir extends IPSModuleStrict
                 $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
                 $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
                 $commands = [
-                    0 => 'open',
-                    1 => 'move_open_' . $lamellaStepTime,
+                    0 => 'on',
+                    1 => 'on',
                     2 => 'stop',
-                    3 => 'move_close_' . $lamellaStepTime,
-                    4 => 'close'
+                    3 => 'off',
+                    4 => 'off'
                 ];
                 if (!isset($commands[$value])) {
                     throw new InvalidArgumentException('Unbekannter Store-Befehl');
@@ -1313,9 +1385,10 @@ class ZeptrionAir extends IPSModuleStrict
         // keine Zwischenposition in die Symcon-Variable schreiben. Die endgültige
         // Position/Lamelle wird erst nach dem vollständig erkannten Referenzvorgang gesetzt.
         if ($this->IsSceneReferencePendingForChannel($channel)) {
-            // Die Ereignisse nicht zur normalen Positionsberechnung durchlassen,
-            // aber für das Ende der Referenzfahrt auswerten. Beim Rollo folgt
-            // auf den ersten STOP der Positionsfahrt ggf. noch die Lamellenfahrt.
+            // Während des Szenenabrufs darf chnotify keine Zwischenposition in
+            // die normalen Rollo-/Markisenvariablen schreiben. Die Ereignisse
+            // dienen hier ausschließlich dazu, das reale Ende der von zeptrion
+            // selbst ausgeführten Szene zu erkennen.
             $this->ObserveSceneReferenceNotify($channel, $value);
             return;
         }
@@ -1341,9 +1414,30 @@ class ZeptrionAir extends IPSModuleStrict
                 // RUNTER moeglich. (Positionsskala: 0 offen/oben, 100 unten.)
                 $direction=$position===100?'up':($position===0?'down':'unknown');
             }
-            if (strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
-                if ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
-                elseif ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
+            $type=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
+            if ($type==='shutter') {
+                $lid=$this->FindManagedVariableID('Ch'.$channel.'Lamella');
+                $lamella=$lid>0?max(0,min(100,(int)GetValue($lid))):0;
+
+                // Untere Endlage: Position ist bereits 100 %, Lamelle aber noch
+                // nicht vollstaendig geschlossen. Dann behandeln wir den externen
+                // Tastendruck als Wunsch "ganz schliessen". chnotify liefert keine
+                // Richtung, deshalb ist hier der gespeicherte Zustand entscheidend.
+                if (!array_key_exists('commandDirection',$m) && $position===100 && $lamella!==0) {
+                    // Noch nicht auf "down" festlegen. chnotify kennt die Richtung
+                    // nicht; erst die Laufzeit beim STOP entscheidet.
+                    $m['forceCloseAtBottom']=true;
+                    $m['forceCloseStartLamella']=$lamella;
+                    $this->SendDebug(
+                        'ROLLO ENDSCHLIESSEN',
+                        'ch'.$channel.' START-KANDIDAT | Position=100% | Lamelle='.$lamella.'% | Richtung noch offen',
+                        0
+                    );
+                } else {
+                    unset($m['forceCloseAtBottom']);
+                    if ($direction==='down') $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+                    elseif ($direction==='up') $this->SetValueIfChanged('Ch'.$channel.'Lamella',100);
+                }
             }
             $m['moving']=true; $m['moveStartMs']=$now; $m['direction']=$direction;
             $state[$key]=$m; $this->WriteMotorState($state);
@@ -1365,6 +1459,77 @@ class ZeptrionAir extends IPSModuleStrict
         $type=strtolower($this->ReadPropertyString('Channel'.$channel.'Type'));
         $lamellaTime=max(100,min(32000,$this->ReadPropertyInteger('Channel'.$channel.'LamellaTimeMs')));
         $lastDirection=(string)($m['lastDirection']??'');
+
+        // Untere Endlage + Lamelle war beim Start != 0:
+        // Nicht anhand der Laufzeit entscheiden. Bis der reale Endschalter
+        // reagiert, kann der Motor laenger als die konfigurierte Lamellenzeit
+        // laufen. Am Ende bleibt der Behang auf 100 % und die Lamelle ist 0 %.
+        if ($type==='shutter' && (bool)($m['forceCloseAtBottom']??false)) {
+            // Kurze Bewegung: Lamellen/Endschliessen. Laengere Bewegung:
+            // bei Position 100% kann sie positionsmaessig nur nach oben gehen.
+            $closeLimit=max(2000,$lamellaTime+2000);
+            unset($m['forceCloseAtBottom'],$m['forceCloseStartLamella']);
+
+            if ($elapsed <= $closeLimit) {
+                $newPosition=100;
+                $this->SetMotorPosition($channel,100);
+                $this->SetValueIfChanged('Ch'.$channel.'Lamella',0);
+                $direction='down';
+                $m['moving']=false;
+                $m['direction']='';
+                $m['lastDirection']='down';
+                unset($m['commandDirection'],$m['commandTarget'],$m['commandStartPosition']);
+                $state[$key]=$m;
+                $this->WriteMotorState($state);
+                $this->SendDebug(
+                    'ROLLO ENDSCHLIESSEN',
+                    'ch'.$channel.' ENDE | '.$elapsed.'ms <= '.$closeLimit.'ms | Position=100% | Lamelle=0%',
+                    0
+                );
+                return;
+            }
+
+            $direction='up';
+            $this->SendDebug(
+                'ROLLO PLAUSI',
+                'ch'.$channel.' '.$elapsed.'ms > '.$closeLimit.'ms | Position=100%: down unmoeglich -> up',
+                0
+            );
+        }
+
+        // Externe Fahrt auf Plausibilitaet pruefen:
+        // Wenn die beobachtete Laufzeit in der angenommenen Richtung bis zur
+        // Endlage gar nicht moeglich ist, die Gegenrichtung verwenden.
+        // Eigene Modulfahrten werden hier nicht korrigiert, da deren Richtung
+        // durch den gesendeten Befehl bekannt ist.
+        if (!array_key_exists('commandDirection',$m)
+            && !((bool)($m['forceCloseAtBottom']??false))
+            && ($direction==='up'||$direction==='down')) {
+            $tolUp=max(750,(int)round($expectUp*0.10));
+            $tolDown=max(750,(int)round($expectDown*0.10));
+            $upPossible=$elapsed<=($expectUp+$tolUp);
+            $downPossible=$elapsed<=($expectDown+$tolDown);
+            $originalDirection=$direction;
+
+            if ($direction==='down' && !$downPossible && $upPossible) {
+                $direction='up';
+            } elseif ($direction==='up' && !$upPossible && $downPossible) {
+                $direction='down';
+            } elseif (!$upPossible && !$downPossible) {
+                // Beide Endlagenzeiten wurden ueberschritten: die zeitlich
+                // passendere Richtung ist die bessere Naeherung.
+                $direction=$errUp<=$errDown?'up':'down';
+            }
+
+            if ($direction!==$originalDirection) {
+                $this->SendDebug(
+                    'ROLLO PLAUSI',
+                    'ch'.$channel.' '.$elapsed.'ms | '.$originalDirection.' zeitlich unmoeglich -> '.$direction.
+                    ' | maxUp~'.($expectUp+$tolUp).'ms | maxDown~'.($expectDown+$tolDown).'ms',
+                    0
+                );
+            }
+        }
 
         // Kurze EXTERNE Gegenfahrt: nur Blende, keine Positionsaenderung.
         $endPositionForcesTravel =
@@ -1388,28 +1553,93 @@ class ZeptrionAir extends IPSModuleStrict
                     0
                 );
             }
+            $forcedEndStop=null;
             if ($direction==='unknown') {
-                $tolUp=max(750,(int)round($expectUp*0.10));
-                $tolDown=max(750,(int)round($expectDown*0.10));
-                $upPossible=$elapsed<=($expectUp+$tolUp);
-                $downPossible=$elapsed<=($expectDown+$tolDown);
-                if (!$upPossible && $downPossible) $direction='down';
-                elseif (!$downPossible && $upPossible) $direction='up';
-                else $direction=$errUp<=$errDown?'up':'down';
-                $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
+                $reachTolUp=max(1000,(int)round($expectUp*0.10));
+                $reachTolDown=max(1000,(int)round($expectDown*0.10));
+                $canReachUp=$expectUp>0 && $elapsed >= max(0,$expectUp-$reachTolUp);
+                $canReachDown=$expectDown>0 && $elapsed >= max(0,$expectDown-$reachTolDown);
+
+                // Ein in dieser Fahrzeit erreichbarer Endanschlag hat Vorrang.
+                // Sind theoretisch beide erreichbar, gewinnt der zeitlich
+                // besser passende Anschlag.
+                if ($canReachUp || $canReachDown) {
+                    if ($canReachUp && !$canReachDown) {
+                        $direction='up';
+                        $forcedEndStop=0;
+                    } elseif ($canReachDown && !$canReachUp) {
+                        $direction='down';
+                        $forcedEndStop=100;
+                    } elseif ($errUp <= $errDown) {
+                        $direction='up';
+                        $forcedEndStop=0;
+                    } else {
+                        $direction='down';
+                        $forcedEndStop=100;
+                    }
+                    $this->SendDebug(
+                        'ROLLO ANSCHLAG MATCH',
+                        'ch'.$channel.' extern | '.$elapsed.'ms | von '.$position.'% erreichbarer Anschlag -> '.$forcedEndStop.'%',
+                        0
+                    );
+                } else {
+                    $tolUp=max(750,(int)round($expectUp*0.10));
+                    $tolDown=max(750,(int)round($expectDown*0.10));
+                    $upPossible=$elapsed<=($expectUp+$tolUp);
+                    $downPossible=$elapsed<=($expectDown+$tolDown);
+                    if (!$upPossible && $downPossible) $direction='down';
+                    elseif (!$downPossible && $upPossible) $direction='up';
+                    else $direction=$errUp<=$errDown?'up':'down';
+                    $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
+                }
             }
-            if ($type==='shutter' && $endPositionForcesTravel && $elapsed<$lamellaTime) {
-                // Direkt aus einer Endlage bewegt sich zuerst die Lamelle.
-                // Beispiel: Lamellenzeit 1000 ms, 300 ms HOCH aus 100 %
-                // => Position bleibt 100 %, Lamelle ca. 30 % geschlossen
-                // bzw. 70 % offen (Skala 0=geschlossen, 100=offen).
+
+            // Hat eine externe Fahrt von der bekannten Startposition lange genug
+            // gedauert, um den Anschlag in der erkannten Richtung zu erreichen,
+            // ist der Motor dort physisch stehen geblieben. Dann exakt 0/100
+            // setzen und nicht rechnerisch in die Gegenrichtung "weiterfahren".
+            $endStopReached=false;
+            if (($forcedEndStop??null)!==null) {
+                $newPosition=(int)$forcedEndStop;
+                $endStopReached=true;
+                // Den anhand der Fahrzeit sicher erreichten Anschlag auch
+                // wirklich in die IP-Symcon-Positionsvariable schreiben.
+                $this->SetMotorPosition($channel,$newPosition);
+                if ($type==='shutter') {
+                    $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
+                }
+                $this->SendDebug(
+                    'ROLLO ANSCHLAG SET',
+                    'ch'.$channel.' Variable gesetzt -> Position='.$newPosition.'%',
+                    0
+                );
+            } elseif (!array_key_exists('commandDirection',$m)) {
+                $endTolUp=max(1000,(int)round($expectUp*0.10));
+                $endTolDown=max(1000,(int)round($expectDown*0.10));
+                if ($direction==='up' && $expectUp>0 && $elapsed >= max(0,$expectUp-$endTolUp)) {
+                    $newPosition=0;
+                    $endStopReached=true;
+                } elseif ($direction==='down' && $expectDown>0 && $elapsed >= max(0,$expectDown-$endTolDown)) {
+                    $newPosition=100;
+                    $endStopReached=true;
+                }
+                if ($endStopReached) {
+                    $this->SetMotorPosition($channel,$newPosition);
+                    if ($type==='shutter') {
+                        $this->SetValueIfChanged('Ch'.$channel.'Lamella',$direction==='up'?100:0);
+                    }
+                    $this->SendDebug(
+                        'ROLLO ANSCHLAG',
+                        'ch'.$channel.' '.$elapsed.'ms | '.$direction.' | rechnerischer Anschlag erreicht -> Position='.$newPosition.'%',
+                        0
+                    );
+                }
+            }
+            if ($endStopReached ?? false) {
+                // Position wurde oben bereits exakt auf den erreichten Anschlag gesetzt.
+            } elseif ($type==='shutter' && $endPositionForcesTravel && $elapsed<$lamellaTime) {
                 $newPosition=$position;
                 $fraction=max(0.0,min(1.0,$elapsed/max(1,$lamellaTime)));
-                // In den ersten Lamellenzeit-ms ab einer Endlage bewegt sich
-                // nur die Lamelle. Die Prozentzahl entspricht direkt dem bereits
-                // durchlaufenen Anteil dieser Lamellenzeit:
-                // unten -> HOCH: 0 % geschlossen -> Richtung 100 % offen
-                // oben  -> RUNTER: 100 % offen -> Richtung 0 % geschlossen.
                 $newLamella=$direction==='up'
                     ? max(0,min(100,(int)round(100*$fraction)))
                     : max(0,min(100,(int)round(100-(100*$fraction))));
@@ -1452,6 +1682,38 @@ class ZeptrionAir extends IPSModuleStrict
             if ($now<=(int)($v['until']??0)) continue;
 
             $channel=(int)$k;
+
+            // Zwischenposition wie die originale zeptrionAIR-App beenden:
+            // runter = off ... on, rauf = on ... off.
+            if (in_array(($v['type']??''), ['position', 'lamella'], true) && isset($v['stopCommand'])) {
+                $stopCommand=(string)$v['stopCommand'];
+                $stateType=(string)($v['type']??'');
+                unset($v['stopCommand']);
+                // Vor dem Senden Zustand aktualisieren, damit ein eingehendes
+                // chnotify des Stopp-Befehls nicht erneut denselben Befehl ausloest.
+                $all[$k]=$v;
+                $this->WriteOwnMotorStates($all);
+                $this->SendDebug(
+                    $stateType==='lamella' ? 'LAMELLE STOP' : 'ROLLO STOP',
+                    'ch'.$channel.' '.($stateType==='lamella'?'Lamellenziel':'Zwischenposition').' erreicht | cmd='.$stopCommand,
+                    0
+                );
+                $this->SendCommand($channel,$stopCommand);
+            }
+            if (($v['type']??'')==='position'
+                && !array_key_exists('pendingLamella',$v)
+                && !isset($v['stopCommand'])
+                && in_array((int)($v['target']??-1), [0,100], true)
+                && strtolower($this->ReadPropertyString('Channel'.$channel.'Type'))==='shutter') {
+                $finalLamella=(int)$v['target']===100?0:100;
+                $this->SetValueIfChanged('Ch'.$channel.'Lamella',$finalLamella);
+                $this->SendDebug(
+                    'LAMELLE ENDE',
+                    'ch'.$channel.' Endlagenfahrt abgeschlossen | Lamelle='.$finalLamella.'%',
+                    0
+                );
+            }
+
             if (($v['type']??'')==='position' && array_key_exists('pendingLamella',$v)) {
                 // Positionsfahrt ist beendet. Gepufferte Blende NICHT sofort
                 // senden, sondern dem Aktor 500 ms zum Stillstand geben.
@@ -1522,7 +1784,7 @@ class ZeptrionAir extends IPSModuleStrict
         // IMMER an den Aktor gesendet werden. Die intern bekannte Position darf
         // den Befehl nicht unterdrücken, da sie von der realen Position abweichen kann.
         $direction = $target === 100 ? 'down' : 'up';
-        $command = $target === 0 ? 'open' : 'close';
+        $command = $target === 0 ? 'on' : 'off';
         $duration = $direction === 'down'
             ? (int)round((100 - $current) * $this->EffectiveMotorTime($channel, 'down') / 100)
             : (int)round($current * $this->EffectiveMotorTime($channel, 'up') / 100);
@@ -1533,9 +1795,8 @@ class ZeptrionAir extends IPSModuleStrict
         if (!$this->SendCommand($channel, $command)) return;
 
         $this->SetMotorPosition($channel, $target);
-        if (strtolower($this->ReadPropertyString('Channel' . $channel . 'Type')) === 'shutter') {
-            $this->SetValueIfChanged('Ch' . $channel . 'Lamella', $direction === 'down' ? 0 : 100);
-        }
+        // Die Lamellenanzeige nicht schon beim Fahrstart auf 0/100 springen lassen.
+        // Der Endwert wird erst nach Ablauf der eigenen Endlagenfahrt gesetzt.
         $this->SetOwnMotorState($channel, [
             'type' => 'position',
             'startMs' => $nowMs,
@@ -1562,14 +1823,21 @@ class ZeptrionAir extends IPSModuleStrict
         // gilt nur nach einer gepufferten Positionsfahrt.
         $time=max(100,min(32000,$calculatedTime));
         $direction=$target>$current?'up':'down';
-        $command=$direction==='up'?'move_open_'.$time:'move_close_'.$time;
-        $this->SendDebug('LAMELLE EXEC','ch'.$channel.' Puffer/Variablenbefehl '.$current.'% -> '.$target.'% | berechnet='.$calculatedTime.'ms | gesendet='.$time.'ms',0);
+        // Wie bei der originalen zeptrionAIR-Bedienung:
+        // rauf = on ... off, runter = off ... on.
+        $command=$direction==='up'?'on':'off';
+        $stopCommand=$direction==='up'?'off':'on';
+        $this->SendDebug(
+            'LAMELLE EXEC',
+            'ch'.$channel.' Puffer/Variablenbefehl '.$current.'% -> '.$target.'% | berechnet='.$calculatedTime.'ms | Start='.$command.' | Stop='.$stopCommand.' nach '.$time.'ms',
+            0
+        );
         if ($this->SendCommand($channel,$command)) {
             $this->SetValueIfChanged('Ch'.$channel.'Lamella',$target);
             $now=(int)round(microtime(true)*1000);
             $this->SetOwnMotorState($channel,[
-                'type'=>'lamella','startMs'=>$now,'until'=>$now+$time+300,
-                'target'=>$target,'direction'=>$direction
+                'type'=>'lamella','startMs'=>$now,'until'=>$now+$time,
+                'target'=>$target,'direction'=>$direction,'stopCommand'=>$stopCommand
             ]);
             $this->SendDebug('LAMELLE SOLL','ch'.$channel.' '.$current.'% -> '.$target.'% | '.$direction.' | '.$time.'ms',0);
         }
@@ -2007,6 +2275,46 @@ class ZeptrionAir extends IPSModuleStrict
                     'PERCENTAGE' => false,
                     'SUFFIX' => ' %'
                 ], 20);
+                // Separate Bedienungsvariable für externe Taster/Ablaufpläne:
+                // Heller startet dim_up, Stopp beendet die Fahrt, Dunkler startet dim_down.
+                $commandIdent = 'Ch' . $channel . 'Command';
+                $commandOptions = [
+                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                ];
+                for ($scene = 1; $scene <= 4; $scene++) {
+                    if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
+                        continue;
+                    }
+                    $caption = trim($this->ReadPropertyString('Channel' . $channel . 'Scene' . $scene . 'Name'));
+                    $commandOptions[] = [
+                        'Value' => 10 + $scene,
+                        'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
+                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                    ];
+                }
+                $commandPresentation = [
+                    'PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION,
+                    'LAYOUT' => 1,
+                    'DISPLAY' => 0,
+                    'OPTIONS' => json_encode($commandOptions, JSON_UNESCAPED_UNICODE)
+                ];
+                // Bedienung wie bei Rollo/Markise direkt unter der Modulinstanz.
+                // Bestehende Variable nur verschieben, niemals löschen/neuanlegen.
+                $existingCommandID = $this->FindManagedVariableID($commandIdent);
+                if ($existingCommandID > 0 && IPS_VariableExists($existingCommandID)) {
+                    IPS_SetParent($existingCommandID, $this->InstanceID);
+                } else {
+                    $this->RegisterVariableInteger($commandIdent, $name . ' Bedienung', $commandPresentation, $channel * 10 + 2);
+                }
+                $this->SetVariableName($commandIdent, $name . ' Bedienung');
+                $this->EnableAction($commandIdent);
+                $commandID = @$this->GetIDForIdent($commandIdent);
+                if ($commandID > 0 && IPS_VariableExists($commandID)) {
+                    IPS_SetPosition($commandID, $channel * 10 + 2);
+                    IPS_SetVariableCustomPresentation($commandID, $commandPresentation);
+                }
             } elseif ($active && $type === 'awning') {
                 // Markise: Position plus Bedienung wie beim Rollo, jedoch ohne Lamellen.
                 $this->RemoveShutterDummy($channel);
@@ -2116,7 +2424,7 @@ class ZeptrionAir extends IPSModuleStrict
                 'Level' => $active && $type === 'dimmer',
                 'Position' => $active && in_array($type, ['shutter', 'awning'], true),
                 'Lamella' => $active && $type === 'shutter',
-                'Command' => $active && in_array($type, ['shutter', 'awning'], true)
+                'Command' => $active && in_array($type, ['dimmer', 'shutter', 'awning'], true)
             ] as $suffix => $needed) {
                 if ($needed) {
                     continue;
@@ -2142,7 +2450,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
             }
             $sceneIdent = 'Ch' . $channel . 'Scene';
-            if ($active && $showSceneVariable && !in_array($type, ['shutter', 'awning'], true)) {
+            if ($active && $showSceneVariable && !in_array($type, ['dimmer', 'shutter', 'awning'], true)) {
                 $sceneName = $name . ' Szenen';
                 $sceneOptions = [];
                 for ($scene = 1; $scene <= 4; $scene++) {
@@ -3039,27 +3347,14 @@ class ZeptrionAir extends IPSModuleStrict
         $channel = (int)($ref['channel'] ?? 0);
         $type = (string)($ref['type'] ?? '');
         if ($channel < 1 || $channel > 4 || !in_array($type, ['dimmer', 'shutter', 'awning'], true)) return false;
-        // Referenzen enthalten die gespeicherte S1-S4-Nummer. Dadurch wird
-        // auch bei Smart-Taster-/Callback-Aufrufen die Bedienungsvariable
-        // auf die tatsächlich ausgelöste Speicherposition synchronisiert.
+
+        // Die gespeicherte Referenz ist der autoritative Endwert. chnotify wird
+        // nur zur Erkennung des tatsächlichen Bewegungsendes verwendet.
         $scene = (int)($ref['scene'] ?? 0);
         if ($scene >= 1 && $scene <= 4) {
             $this->SyncMotorSceneCommandStatus($channel, $scene);
         }
-        $delay = 300;
-        if ($type === 'dimmer') {
-            $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Level');
-            $current = $currentID > 0 ? (int)GetValue($currentID) : 0;
-            $goal = max(0, min(100, (int)($ref['level'] ?? 0)));
-            $delay = max(300, abs($goal - $current) * 320 + 500);
-        } else {
-            $currentID = $this->FindManagedVariableID('Ch' . $channel . 'Position');
-            $current = $currentID > 0 ? (int)GetValue($currentID) : 0;
-            $goal = max(0, min(100, (int)($ref['position'] ?? 0)));
-            $full = $goal >= $current ? $this->EffectiveMotorTime($channel, 'down') : $this->EffectiveMotorTime($channel, 'up');
-            $delay = max(300, (int)round(abs($goal - $current) / 100 * $full) + 500);
-            if ($type === 'shutter') $delay += max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs'));
-        }
+
         $now = (int)round(microtime(true) * 1000);
         $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
         if (!is_array($pending)) $pending = [];
@@ -3068,10 +3363,14 @@ class ZeptrionAir extends IPSModuleStrict
             $r = is_array($item['reference'] ?? null) ? $item['reference'] : [];
             return (int)($r['channel'] ?? 0) !== $channel;
         }));
+
+        // Nur Sicherheitsnetz: normal beendet chnotify den Vorgang ereignisbasiert.
+        $full = max(300, $this->EffectiveMotorTime($channel, 'up'), $this->EffectiveMotorTime($channel, 'down'));
+        $lamella = $type === 'shutter' ? max(100, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')) : 0;
+        $fallback = $type === 'dimmer' ? 35000 : $full + $lamella + 10000;
+
         $pending[] = [
-            // Die Zeit ist nur noch Sicherheits-Timeout. Normalerweise entscheidet
-            // die chnotify-Folge über das tatsächliche Ende der Bewegung.
-            'fallbackDue' => $now + $delay + 7000,
+            'fallbackDue' => $now + $fallback,
             'settleUntil' => 0,
             'applied' => false,
             'movementStarted' => false,
@@ -3082,14 +3381,18 @@ class ZeptrionAir extends IPSModuleStrict
         ];
         $this->WriteAttributeString('PendingSceneReferences', json_encode($pending, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         $this->SetTimerInterval('SceneReferenceTimer', 100);
-        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Referenzfahrt gestartet; Abschluss per chnotify, Timeout in '.($delay + 7000).'ms', 0);
+        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Szenenabruf überwacht; Abschluss über chnotify', 0);
         return true;
     }
 
     public function SceneReferenceTick(): void
     {
         $pending = json_decode($this->ReadAttributeString('PendingSceneReferences'), true);
-        if (!is_array($pending) || $pending === []) { $this->SetTimerInterval('SceneReferenceTimer', 0); return; }
+        if (!is_array($pending) || $pending === []) {
+            $this->SetTimerInterval('SceneReferenceTimer', 0);
+            return;
+        }
+
         $now = (int)round(microtime(true) * 1000);
         $left = [];
         foreach ($pending as $item) {
@@ -3101,33 +3404,25 @@ class ZeptrionAir extends IPSModuleStrict
 
             if (!$applied) {
                 $firstStopAt = (int)($item['firstStopAt'] ?? 0);
-                // Nach dem ersten STOP kurz auf eine mögliche Lamellen-Gegenfahrt warten.
-                // Die vorherige feste 5-s-Wartezeit ist wieder entfernt. Entscheidend ist
-                // jetzt die korrekte Kanalsperre: während des gesamten Referenzvorgangs
-                // gelangt kein Notify in die normale Positionsberechnung.
-                $lamellaWait = max(1200, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 200);
-                if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false) && $now >= $firstStopAt + $lamellaWait) {
-                    $this->ApplySceneReferenceEnd($ref);
-                    $item['applied'] = true;
-                    $item['settleUntil'] = $now + 1500;
-                    $applied = true;
-                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' keine Lamellenfahrt im Wartefenster erkannt; erster STOP ist final', 0);
-                } elseif ($now >= (int)($item['fallbackDue'] ?? 0)) {
-                    $this->ApplySceneReferenceEnd($ref);
-                    $item['applied'] = true;
-                    $item['settleUntil'] = $now + 1500;
-                    $applied = true;
-                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Sicherheits-Timeout verwendet', 0);
-                } elseif ($type === 'dimmer') {
-                    // Beim Dimmer gibt es laut Gerät keine verwertbare Zwischenstufe
-                    // über chnotify; hier bleibt die Zeitberechnung der Abschlussgeber.
-                    $fallback = (int)($item['fallbackDue'] ?? 0) - 7000;
-                    if ($now >= $fallback) {
+                if ($type === 'shutter' && $firstStopAt > 0 && !(bool)($item['lamellaStarted'] ?? false)) {
+                    // Nach dem ersten STOP nur kurz auf eine eventuelle
+                    // Lamellen-Gegenfahrt warten. Kommt keine, war der STOP final.
+                    $lamellaWait = max(1200, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs') + 300);
+                    if ($now >= $firstStopAt + $lamellaWait) {
                         $this->ApplySceneReferenceEnd($ref);
                         $item['applied'] = true;
                         $item['settleUntil'] = $now + 1500;
                         $applied = true;
+                        $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Szene beendet; gespeicherten Endwert gesetzt', 0);
                     }
+                }
+
+                if (!$applied && $now >= (int)($item['fallbackDue'] ?? 0)) {
+                    $this->ApplySceneReferenceEnd($ref);
+                    $item['applied'] = true;
+                    $item['settleUntil'] = $now + 1500;
+                    $applied = true;
+                    $this->SendDebug('SZENEN-REFERENZ', 'ch'.$channel.' Sicherheits-Timeout; gespeicherten Endwert gesetzt', 0);
                 }
             }
 
@@ -3137,8 +3432,9 @@ class ZeptrionAir extends IPSModuleStrict
                 $left[] = $item;
             }
         }
+
         $this->WriteAttributeString('PendingSceneReferences', json_encode($left, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        if ($left === []) $this->SetTimerInterval('SceneReferenceTimer', 0);
+        $this->SetTimerInterval('SceneReferenceTimer', $left === [] ? 0 : 100);
     }
 
     private function BuildInterface(): string
