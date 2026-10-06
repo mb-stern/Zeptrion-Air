@@ -117,6 +117,9 @@ Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **Zeptrion
 
 ## Versionen
 
+### Version 1.3
+- Weiter Modifikationen an der Logik zur Rückgabe der Rollostellung bei Schalterbetätigung.
+
 ### Version 1.2
 - Umbau auf CHNOTIFY Kommunikation um das aggressive Polling zu verhindern.
 
