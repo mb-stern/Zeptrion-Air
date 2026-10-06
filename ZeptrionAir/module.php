@@ -1555,13 +1555,17 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $forcedEndStop=null;
             if ($direction==='unknown') {
-                $reachTolUp=max(1000,(int)round($expectUp*0.10));
-                $reachTolDown=max(1000,(int)round($expectDown*0.10));
-                $canReachUp=$expectUp>0 && $elapsed >= max(0,$expectUp-$reachTolUp);
-                $canReachDown=$expectDown>0 && $elapsed >= max(0,$expectDown-$reachTolDown);
+                $reachTolUp=max(2000,(int)round($expectUp*0.10));
+                $reachTolDown=max(2000,(int)round($expectDown*0.10));
+                // Ein Anschlag gilt nur dann als passend, wenn die gemessene
+                // Fahrzeit auch zeitlich zu diesem Anschlag passt. Nur "irgendwann
+                // innerhalb der Fahrzeit erreichbar" reicht nicht: Der reale
+                // Endschalter haette die Fahrt sonst bereits beendet.
+                $canReachUp=$expectUp>0 && abs($elapsed-$expectUp) <= $reachTolUp;
+                $canReachDown=$expectDown>0 && abs($elapsed-$expectDown) <= $reachTolDown;
 
-                // Ein in dieser Fahrzeit erreichbarer Endanschlag hat Vorrang.
-                // Sind theoretisch beide erreichbar, gewinnt der zeitlich
+                // Ein zeitlich passender Endanschlag hat Vorrang.
+                // Sind beide innerhalb des Zeitfensters, gewinnt der zeitlich
                 // besser passende Anschlag.
                 if ($canReachUp || $canReachDown) {
                     if ($canReachUp && !$canReachDown) {
@@ -1614,12 +1618,12 @@ class ZeptrionAir extends IPSModuleStrict
                     0
                 );
             } elseif (!array_key_exists('commandDirection',$m)) {
-                $endTolUp=max(1000,(int)round($expectUp*0.10));
-                $endTolDown=max(1000,(int)round($expectDown*0.10));
-                if ($direction==='up' && $expectUp>0 && $elapsed >= max(0,$expectUp-$endTolUp)) {
+                $endTolUp=max(2000,(int)round($expectUp*0.10));
+                $endTolDown=max(2000,(int)round($expectDown*0.10));
+                if ($direction==='up' && $expectUp>0 && abs($elapsed-$expectUp) <= $endTolUp) {
                     $newPosition=0;
                     $endStopReached=true;
-                } elseif ($direction==='down' && $expectDown>0 && $elapsed >= max(0,$expectDown-$endTolDown)) {
+                } elseif ($direction==='down' && $expectDown>0 && abs($elapsed-$expectDown) <= $endTolDown) {
                     $newPosition=100;
                     $endStopReached=true;
                 }
