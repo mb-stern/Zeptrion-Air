@@ -1505,8 +1505,8 @@ class ZeptrionAir extends IPSModuleStrict
         if (!array_key_exists('commandDirection',$m)
             && !((bool)($m['forceCloseAtBottom']??false))
             && ($direction==='up'||$direction==='down')) {
-            $tolUp=max(750,(int)round($expectUp*0.10));
-            $tolDown=max(750,(int)round($expectDown*0.10));
+            $tolUp=max(2000,(int)round($expectUp*0.10));
+            $tolDown=max(2000,(int)round($expectDown*0.10));
             $upPossible=$elapsed<=($expectUp+$tolUp);
             $downPossible=$elapsed<=($expectDown+$tolDown);
             $originalDirection=$direction;
@@ -1583,8 +1583,8 @@ class ZeptrionAir extends IPSModuleStrict
                         0
                     );
                 } else {
-                    $tolUp=max(750,(int)round($expectUp*0.10));
-                    $tolDown=max(750,(int)round($expectDown*0.10));
+                    $tolUp=max(2000,(int)round($expectUp*0.10));
+                    $tolDown=max(2000,(int)round($expectDown*0.10));
                     $upPossible=$elapsed<=($expectUp+$tolUp);
                     $downPossible=$elapsed<=($expectDown+$tolDown);
                     if (!$upPossible && $downPossible) $direction='down';
