@@ -29,8 +29,8 @@ function IPS_GetObjectIDByIdent($ident,$parent) {$ids=&$GLOBALS["ids"];if(!is_ar
 function IPS_VariableExists($id) {return true;}
 function IPS_GetObject($id) {return ['ParentID'=>99,'ObjectIdent'=>array_search($id,$GLOBALS['ids'])];}
 function GetValue($id) {return $GLOBALS['values'][array_search($id,$GLOBALS['ids'])]??0;}
-function ZC_QueryServiceType($id,$type,$domain) {return [['Name'=>'Living room','Type'=>$type.'.','Domain'=>'local.']];}
-function ZC_QueryService($id,$name,$type,$domain) {$GLOBALS['serviceQueries'][]=[$name,$type,$domain];return [['Host'=>'zapp-19370098.local.','IPv4'=>['192.0.2.1'],'Port'=>$GLOBALS['servicePort']??80]];}
+function ZC_QueryServiceType($id,$type,$domain) {if(in_array($type,$GLOBALS['browseErrors']??[],true))throw new RuntimeException('Fetching addresses for services: error 87');return $GLOBALS['browseServices'][$type]??[['Name'=>'Living room','Type'=>$type.'.','Domain'=>'local.']];}
+function ZC_QueryService($id,$name,$type,$domain) {$GLOBALS['serviceQueries'][]=[$name,$type,$domain];if($GLOBALS['resolveError']??false)throw new RuntimeException('Address lookup error 87');return [['Host'=>'zapp-19370098.local.','IPv4'=>['192.0.2.1'],'Port'=>$GLOBALS['servicePort']??80]];}
 function IPS_GetInstance($id) {return ['ConnectionID'=>11];}
 function IPS_SetProperty($id,$key,$value) {$GLOBALS['parentChanges'][]=[$id,$key,$value];}
 function IPS_ApplyChanges($id) {}

@@ -143,20 +143,20 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
     private function DiscoverDevices(): array
     {
         $found = [];
+        // Existing devices can still be checked through their configured host
+        // even when native DNS-SD address lookup fails.
+        foreach (IPS_GetInstanceListByModuleID(self::DEVICE_MODULE_ID) as $instanceID) {
+            $host = trim((string)IPS_GetProperty($instanceID, 'Host'));
+            if ($host !== '') $this->AddDiscoveredDevice($found, $host, '', $host);
+        }
         $zcIDs = IPS_GetInstanceListByModuleID(self::ZEROCONF_MODULE_ID);
         if ($zcIDs === []) {
-            $this->SendDebug('Discovery', 'Kein DNS-SD Control (Zeroconf) gefunden', 0);
-            return [];
+            $this->SendDebug('Discovery', 'Kein DNS-SD Control (Zeroconf) gefunden; prüfe konfigurierte Hosts', 0);
+            $this->EnrichDevicesParallel($found);
+            return array_values($found);
         }
         $zcID = $zcIDs[0];
-        $previousCount = -1;
-        for ($attempt = 1; $attempt <= 3; $attempt++) {
-            $this->CollectServices($zcID, '_zapp._tcp', false, $found);
-            $count = count($found);
-            if ($attempt > 1 && $count === $previousCount) break;
-            $previousCount = $count;
-            if ($attempt < 3) usleep(250000);
-        }
+        $this->CollectServices($zcID, '_zapp._tcp', false, $found);
         $this->CollectServices($zcID, '_http._tcp', true, $found);
         $this->EnrichDevicesParallel($found);
         return array_values($found);
@@ -172,47 +172,76 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         }
         if (!is_array($services)) return;
         foreach ($services as $service) {
-            $name = (string)($service['Name'] ?? '');
-            if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) continue;
+            if (!is_array($service)) continue;
+            $name = trim((string)($service['Name'] ?? ''));
             if ($name === '') continue;
-            $domain = (string)($service['Domain'] ?? 'local.');
-            if ($domain === '') $domain = 'local.';
+            // Some runtimes return qualified service names; strip only the
+            // requested service suffix, not a part of the device's own name.
+            $name = preg_replace('/\.' . preg_quote($type, '/') . '\.[^.]+\.?$/i', '', $name) ?? $name;
+            $fellerName = preg_match('/^zapp-\d{8}(?:\.local\.?)?$/i', $name) === 1;
+            if ($legacyOnly && !$fellerName) continue;
+            if ((int)($service['Port'] ?? 80) !== 80) continue;
+
+            $host = rtrim((string)($service['Host'] ?? ''), '.');
+            $ip = $this->ServiceIPv4($service);
+            if ($host !== '' || $ip !== '') {
+                $this->AddDiscoveredDevice($found, $host !== '' ? $host : $ip, $ip, $name);
+                continue;
+            }
+            if ($fellerName) {
+                // API chapter 4 documents this exact hostname format. Avoid the
+                // extra native service-address query for these known zApps.
+                $host = preg_replace('/\.local\.?$/i', '', $name) . '.local';
+                $this->AddDiscoveredDevice($found, $host, '', $name);
+                continue;
+            }
+
+            // Friendly service names still need resolution, but a failure must
+            // not discard other discovered devices or the known host fallback.
+            $domain = trim((string)($service['Domain'] ?? 'local.'), '.');
+            $domain = ($domain !== '' ? $domain : 'local') . '.';
             try {
-                $details = ZC_QueryService($zcID, $name, rtrim((string)($service['Type'] ?? $type), '.'), $domain);
+                $details = ZC_QueryService($zcID, $name, $type, $domain);
             } catch (Throwable $e) {
                 $this->SendDebug('mDNS Auflösung', $name . ': ' . $e->getMessage(), 0);
                 continue;
             }
             foreach (is_array($details) ? $details : [] as $detail) {
+                if (!is_array($detail) || (int)($detail['Port'] ?? 80) !== 80) continue;
                 $host = rtrim((string)($detail['Host'] ?? ''), '.');
-                $ip = '';
-                foreach ((array)($detail['IPv4'] ?? []) as $address) {
-                    if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                        $ip = (string)$address;
-                        break;
-                    }
-                }
+                $ip = $this->ServiceIPv4($detail);
                 if ($host === '') $host = $ip;
-                if ($host === '') continue;
-                // zrap uses the Feller HTTP endpoint on port 80. Do not silently
-                // create a device whose control requests would use another port.
-                if ((int)($detail['Port'] ?? 80) !== 80) {
-                    $this->SendDebug('mDNS Auflösung', $host . ': HTTP-Port ungleich 80 wird nicht unterstützt', 0);
-                    continue;
-                }
-                $found[$host] = $found[$host] ?? [
-                    'host' => $host,
-                    'ip' => $ip,
-                    'rssi' => '',
-                    'name' => $name,
-                    'type' => '',
-                    'serial' => '',
-                    'sw' => '',
-                    'channels' => 2,
-                    'channelInfo' => '',
-                    'channelConfig' => []
-                ];
+                if ($host !== '') $this->AddDiscoveredDevice($found, $host, $ip, $name);
             }
+        }
+    }
+
+    private function ServiceIPv4(array $service): string
+    {
+        foreach ((array)($service['IPv4'] ?? []) as $address) {
+            if (is_string($address) && filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return $address;
+        }
+        return '';
+    }
+
+    private function AddDiscoveredDevice(array &$found, string $host, string $ip, string $name): void
+    {
+        $host = strtolower(rtrim($host, '.'));
+        if (!isset($found[$host])) {
+            $found[$host] = [
+                'host' => $host,
+                'ip' => $ip,
+                'rssi' => '',
+                'name' => $name,
+                'type' => '',
+                'serial' => '',
+                'sw' => '',
+                'channels' => 2,
+                'channelInfo' => '',
+                'channelConfig' => []
+            ];
+        } elseif ($ip !== '') {
+            $found[$host]['ip'] = $ip;
         }
     }
 

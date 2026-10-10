@@ -139,6 +139,14 @@ Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **Zeptrion
 - Smart-Taster-Ziele für IP-Symcon Variablen, Skripte und eingebundene zeptrionAIR Geräte
 - Koordinierte Gerätekommunikation bei Polling und Smart-Taster-Programmierung
 
+Die Discovery übernimmt verfügbare Host-/IPv4-Angaben direkt. Für die von Feller
+dokumentierten Namen `zapp-XXXXXXXX.local` ist keine zusätzliche
+DNS-SD-Serviceauflösung erforderlich. Nur frei benannte Dienste werden bei Bedarf
+separat aufgelöst. Fehler einzelner Dienste blockieren die weitere Suche nicht;
+auch die `_http._tcp`-Suche und die HTTP-Prüfung bereits konfigurierter Geräte
+werden weiter ausgeführt. Ein DNS-SD-Fehler kann weiterhin im Symcon-Log erscheinen;
+die Rückfälle beseitigen nicht die Ursache eines nativen DNS-SD-Fehlers.
+
 ## Branches
 
 - **main** – stabil
