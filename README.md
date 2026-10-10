@@ -117,6 +117,9 @@ Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **Zeptrion
 
 ## Versionen
 
+### Version 1.4
+- Kleine Modifikationen und Fehlerverbesserung.
+
 ### Version 1.3
 - Weiter Modifikationen an der Logik zur Rückgabe der Rollostellung bei Schalterbetätigung.
 
