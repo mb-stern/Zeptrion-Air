@@ -150,3 +150,43 @@ Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **Zeptrion
 - IP-Symcon ab Version 8.2
 - Feller zeptrionAIR
 - Netzwerkverbindung zwischen IP-Symcon und den verwendeten zeptrionAIR-Geräten
+
+## Zugriff auf die Smart-Taster-Konfiguration
+
+Das Smart-Taster-Webinterface wird über **„Smart-Taster konfigurieren“** im
+Symcon-Konfigurationsformular geöffnet. Dieser Link enthält einen eigenen
+Zugangsschlüssel und sollte vertraulich behandelt werden. Direkte Aufrufe des
+Hook-Pfads ohne Schlüssel werden abgewiesen. Nach dem Modulupdate die
+Geräteinstanz einmal übernehmen und das Webinterface über diesen Button neu
+öffnen; alte Lesezeichen ohne Schlüssel funktionieren nicht mehr.
+
+Der Gerätecallback verwendet weiterhin sein separates Token. Bereits
+programmierte Smart-Taster müssen wegen des neuen Administrationszugangs nicht
+neu programmiert werden.
+
+Bei neu gespeicherten Dimmer-Szenen werden Helligkeit und Ein-/Aus-Zustand getrennt
+geführt. Bestehende AUS-Szenen bitte erneut im gewünschten AUS-Zustand speichern,
+damit auch deren Schaltzustand als Referenz erfasst wird.
+
+Ein fehlgeschlagener zeitgesteuerter Motorstopp wird insgesamt höchstens dreimal
+versucht. Nach einem unsicheren ersten Übertragungsversuch verwenden Wiederholungen
+den API-Befehl `stop`. Bleiben alle Versuche erfolglos, meldet die Instanz einen
+Fehler und behält den unbestätigten Stoppzustand. Dann den Stopp über die
+Bedienungsvariable oder `ZEPA_Stop` erneut ausführen und die reale Position prüfen.
+
+## Entwicklung und Regressionstests
+
+Die lokalen Tests benötigen PHP mit cURL und SimpleXML:
+
+```bash
+bash tests/run.sh
+```
+
+Mit `PHP_BIN=/pfad/zu/php bash tests/run.sh` kann eine alternative PHP-CLI verwendet
+werden. Die Tests verwenden kleine Symcon-Testadapter und einen lokalen
+HTTP-Fixture-Server; sie senden keine Befehle an reale Geräte. Sie prüfen unter
+anderem Zugriffsschutz, Listener-Recovery, Lamellenstopps, unbekannte Zustände,
+Szenenreferenzen und die vollständige 730-Byte-Grenze. Integrationstests mit
+IP-Symcon 8.2 und der tatsächlichen Gerätefirmware bleiben zusätzlich erforderlich.
+
+Änderungen werden ausschließlich auf dem Branch **development** veröffentlicht.
