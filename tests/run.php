@@ -51,39 +51,29 @@ $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent
 $d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']>0,'Parent status change enters recovery');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
 
-$discovery=new ZeptrionAirDiscovery();$found=[];(new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);
-check(isset($found['zapp-19370098.local']) && $found['zapp-19370098.local']['ip']==='192.0.2.1','Discovery uses resolved host/IP instead of service name');
-check($GLOBALS['serviceQueries'][0]===['Living room','_zapp._tcp','local.'],'Discovery passes service name/type/domain to resolver');
-check(invoke($discovery,'FindExistingHost','zapp-19370098.local','192.0.2.1',['zapp-19370098'=>[]])==='zapp-19370098','Bare legacy host matches resolved local host');
-check(invoke($discovery,'FindExistingHost','zapp-19370098.local','192.0.2.1',['192.0.2.1'=>[]])==='192.0.2.1','Existing IP configuration matches resolved host');
-check(invoke($discovery,'FindExistingHost','zapp-19370098.local','192.0.2.1',[])==='zapp-19370098.local','New device keeps resolved host');
-$GLOBALS['servicePort']=8080;$found=[];(new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);check($found===[],'Unsupported port does not silently create an unusable device');
-
-// DNS-SD address errors must not hide known zApp names or other services.
-$GLOBALS['servicePort']=80;
-$GLOBALS['resolveError']=true;
-$GLOBALS['browseServices']['_zapp._tcp']=[['Name'=>'zapp-19370098','Type'=>'_zapp._tcp.','Domain'=>'local.']];
-$count=count($GLOBALS['serviceQueries']);$found=[];
+// Discovery retains the original service-name host behavior.
+$discovery=new ZeptrionAirDiscovery();$found=[];
+$GLOBALS['browseServices']['_zapp._tcp']=[
+ ['Name'=>'zapp-19370098','Host'=>'different.local.','IPv4'=>['192.0.2.1'],'Port'=>8080],
+ ['Name'=>'zapp-19370099.local.'],
+ ['Name'=>'Living room'],
+ ['Name'=>'zapp-19370098'],
+ ['Name'=>'']
+];
 (new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);
-check(isset($found['zapp-19370098.local']), 'Documented Feller name works without native address query');
-check(count($GLOBALS['serviceQueries'])===$count,'Known Feller service bypasses failing extra resolver');
-$GLOBALS['browseServices']['_zapp._tcp']=[['Name'=>'zapp-19370098._zapp._tcp.local.','Type'=>'_zapp._tcp.local.','Domain'=>'local.']];$found=[];
+check(isset($found['zapp-19370098']),'Bare service name is used directly as host');
+check(isset($found['zapp-19370099.local']),'Only trailing root dot is removed from service name');
+check(isset($found['Living room']),'Primary discovery keeps service name without extra resolution');
+check($found['zapp-19370098']['ip']==='' && !isset($found['different.local']),'Host and IP details do not replace service name');
+check(count($found)===3,'Duplicate service names are merged and empty names ignored');
+check(($GLOBALS['serviceQueries']??[])===[],'Discovery does not issue extra address queries');
+$GLOBALS['browseErrors']=['_zapp._tcp'];$before=$found;
 (new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);
-check(isset($found['zapp-19370098.local']),'Qualified Feller service name is normalized');
-$GLOBALS['browseServices']['_zapp._tcp']=[['Name'=>'Living room','Host'=>'zapp-19370098.local.','IPv4'=>['192.0.2.1'],'Port'=>80]];$found=[];
-(new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);
-check(($found['zapp-19370098.local']['ip']??'')==='192.0.2.1' && count($GLOBALS['serviceQueries'])===$count,'Native browse host/address data is used directly');
-$GLOBALS['browseServices']['_zapp._tcp']=[['Name'=>'Unresolvable friendly name'],['Name'=>'zapp-19370099']];$found=[];
-(new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);
-check(isset($found['zapp-19370099.local']),'One failed friendly-name lookup does not block other devices');
-$GLOBALS['browseErrors']=['_zapp._tcp'];$found=[];
-(new ReflectionMethod($discovery,'AddDiscoveredDevice'))->invokeArgs($discovery,[&$found,'192.0.2.10','','configured']);
-(new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_zapp._tcp',false,&$found]);
-check(isset($found['192.0.2.10']),'Browse error preserves configured fallback');
-$GLOBALS['browseServices']['_http._tcp']=[['Name'=>'zapp-19370098']];
+check($found===$before,'Browse error preserves already discovered services');
+$GLOBALS['browseServices']['_http._tcp']=[['Name'=>'zapp-19370100'],['Name'=>'Other web service']];
 (new ReflectionMethod($discovery,'CollectServices'))->invokeArgs($discovery,[1,'_http._tcp',true,&$found]);
-check(isset($found['zapp-19370098.local']),'Legacy browse still runs after primary error 87');
-$GLOBALS['browseErrors']=[];$GLOBALS['browseServices']=[];$GLOBALS['resolveError']=false;
+check(isset($found['zapp-19370100']) && !isset($found['Other web service']),'Legacy discovery retains original Feller-name filter');
+$GLOBALS['browseErrors']=[];$GLOBALS['browseServices']=[];
 
 $d=new TestDevice();$d->attrs['MotorRuntimeState']=json_encode(['1'=>['moving'=>true,'moveStartMs'=>1000,'direction'=>'down']]);invoke($d,'ProcessMotorNotify',1,100);check(json_decode($d->attrs['MotorRuntimeState'],true)[1]['moveStartMs']===1000,'Repeated running status preserves start time');
 $d=new TestDevice();invoke($d,'ProcessMotorNotify',1,100);check(json_decode($d->attrs['MotorRuntimeState'],true)[1]['moving'],'New running status starts travel');
