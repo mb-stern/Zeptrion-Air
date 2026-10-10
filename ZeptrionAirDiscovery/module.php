@@ -18,7 +18,9 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         $rows = [];
         foreach ($discovered as $device) {
             $host = $device['host'];
-            $instance = $existing[$host] ?? null;
+            $existingHost = $this->FindExistingHost($host, $device['ip'], $existing);
+            $instance = $existing[$existingHost] ?? null;
+            if ($instance !== null) $host = $existingHost;
             $reachable = (bool)($device['reachable'] ?? false);
             if ($instance !== null && !$reachable) {
                 $rows[$host] = $this->BuildExistingInstanceRow($host, $instance, 'Nicht erreichbar');
@@ -123,6 +125,16 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
+    private function FindExistingHost(string $host, string $ip, array $existing): string
+    {
+        if (isset($existing[$host])) return $host;
+        $normalize = static fn(string $value): string => preg_replace('/\.local\.?$/i', '', strtolower(rtrim($value, '.'))) ?? $value;
+        foreach (array_keys($existing) as $candidate) {
+            if ($normalize($candidate) === $normalize($host) || ($ip !== '' && $candidate === $ip)) return $candidate;
+        }
+        return $host;
+    }
+
     private function DefaultTime(string $type): int
     {
         return $type === 'shutter' ? 27000 : ($type === 'awning' ? 25000 : 4000);
@@ -162,20 +174,45 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         foreach ($services as $service) {
             $name = (string)($service['Name'] ?? '');
             if ($legacyOnly && !preg_match('/^zapp-\d{8}$/i', $name)) continue;
-            $host = rtrim($name, '.');
-            if ($host === '') continue;
-            $found[$host] = [
-                'host' => $host,
-                'ip' => '',
-                'rssi' => '',
-                'name' => preg_replace('/\.local\.?$/i', '', $name) ?: $name,
-                'type' => '',
-                'serial' => '',
-                'sw' => '',
-                'channels' => 2,
-                'channelInfo' => '',
-                'channelConfig' => []
-            ];
+            if ($name === '') continue;
+            $domain = (string)($service['Domain'] ?? 'local.');
+            if ($domain === '') $domain = 'local.';
+            try {
+                $details = ZC_QueryService($zcID, $name, rtrim((string)($service['Type'] ?? $type), '.'), $domain);
+            } catch (Throwable $e) {
+                $this->SendDebug('mDNS Auflösung', $name . ': ' . $e->getMessage(), 0);
+                continue;
+            }
+            foreach (is_array($details) ? $details : [] as $detail) {
+                $host = rtrim((string)($detail['Host'] ?? ''), '.');
+                $ip = '';
+                foreach ((array)($detail['IPv4'] ?? []) as $address) {
+                    if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                        $ip = (string)$address;
+                        break;
+                    }
+                }
+                if ($host === '') $host = $ip;
+                if ($host === '') continue;
+                // zrap uses the Feller HTTP endpoint on port 80. Do not silently
+                // create a device whose control requests would use another port.
+                if ((int)($detail['Port'] ?? 80) !== 80) {
+                    $this->SendDebug('mDNS Auflösung', $host . ': HTTP-Port ungleich 80 wird nicht unterstützt', 0);
+                    continue;
+                }
+                $found[$host] = $found[$host] ?? [
+                    'host' => $host,
+                    'ip' => $ip,
+                    'rssi' => '',
+                    'name' => $name,
+                    'type' => '',
+                    'serial' => '',
+                    'sw' => '',
+                    'channels' => 2,
+                    'channelInfo' => '',
+                    'channelConfig' => []
+                ];
+            }
         }
     }
 
@@ -184,14 +221,15 @@ class ZeptrionAirDiscovery extends IPSModuleStrict
         if ($devices === []) return;
         $requests = [];
         foreach ($devices as $host => $device) {
-            $requests[$host . '|id'] = ['host' => $host, 'path' => '/zrap/id'];
-            $requests[$host . '|chdes'] = ['host' => $host, 'path' => '/zrap/chdes'];
-            $requests[$host . '|rssi'] = ['host' => $host, 'path' => '/zrap/rssi'];
+            $requestHost = $device['ip'] !== '' ? $device['ip'] : $host;
+            $requests[$host . '|id'] = ['host' => $requestHost, 'path' => '/zrap/id'];
+            $requests[$host . '|chdes'] = ['host' => $requestHost, 'path' => '/zrap/chdes'];
+            $requests[$host . '|rssi'] = ['host' => $requestHost, 'path' => '/zrap/rssi'];
         }
         $responses = $this->HttpXmlGetMulti($requests);
         foreach ($devices as $host => &$device) {
             $id = $responses[$host . '|id'] ?? null;
-            $device['ip'] = $this->ResolveIPv4($host);
+            $device['ip'] = $device['ip'] !== '' ? $device['ip'] : $this->ResolveIPv4($host);
             $device['rssi'] = $this->ExtractRssi($responses[$host . '|rssi'] ?? null);
             $device['reachable'] = $id !== null && strtoupper((string)($id['sys'] ?? '')) === 'ZEPTRION';
             $this->ApplyApiData($device, $id, $responses[$host . '|chdes'] ?? null);

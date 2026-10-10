@@ -39,12 +39,14 @@ class ZeptrionAir extends IPSModuleStrict
         $this->RegisterAttributeString('MotorLearnedTimes', '{}');
         $this->RegisterAttributeString('SmartButtonScenes', '[]');
         $this->RegisterAttributeString('SmartButtonToken', '');
+        $this->RegisterAttributeString('SmartButtonAdminToken', '');
         $this->RegisterAttributeString('SceneReferences', '{}');
         $this->RegisterAttributeString('PendingSceneReferences', '[]');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
+        $this->SetBuffer('NotifyDeadline', '0');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
             $this->RegisterPropertyString('Channel' . $channel . 'Name', 'Kanal ' . $channel);
@@ -140,7 +142,7 @@ class ZeptrionAir extends IPSModuleStrict
                     'type' => 'Button',
                     'caption' => 'Smart-Taster konfigurieren',
                     'link' => true,
-                    'onClick' => "echo '/hook/" . $this->SmartButtonHookName() . "';"
+                    'onClick' => "echo " . var_export($this->SmartButtonAdminURL(), true) . ";"
                 ];
             } else {
                 $items = [
@@ -159,7 +161,7 @@ class ZeptrionAir extends IPSModuleStrict
                         'type' => 'Button',
                         'caption' => 'Smart-Taster konfigurieren',
                         'link' => true,
-                        'onClick' => "echo '/hook/" . $this->SmartButtonHookName() . "';"
+                        'onClick' => "echo " . var_export($this->SmartButtonAdminURL(), true) . ";"
                     ];
                 }
             }
@@ -316,9 +318,20 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadAttributeString('SmartButtonToken') === '') {
             $this->WriteAttributeString('SmartButtonToken', bin2hex(random_bytes(16)));
         }
+        if ($this->ReadAttributeString('SmartButtonAdminToken') === '') {
+            $this->WriteAttributeString('SmartButtonAdminToken', bin2hex(random_bytes(32)));
+        }
+        $parent = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
+        $previousParent = (int)$this->GetBuffer('NotifyParent');
+        if ($previousParent > 0 && $previousParent !== $parent) {
+            $this->UnregisterMessage($previousParent, IM_CHANGESTATUS);
+        }
+        if ($parent > 0) $this->RegisterMessage($parent, IM_CHANGESTATUS);
+        $this->SetBuffer('NotifyParent', (string)$parent);
         $this->UpdateSmartButtonHook();
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
+        $this->SetBuffer('NotifyDeadline', '0');
         $this->SetBuffer('NotifyOnline', '0');
         $this->SetBuffer('NotifyListening', '1');
         $this->SetTimerInterval('RecoveryTimer', 0);
@@ -346,7 +359,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SendDebug('CHNOTIFY','Listener aktiviert',0);
         $this->SetTimerInterval('NotifyTimer', 0);
         $this->SetTimerInterval('PollTimer', 0);
-        $this->SetStatus(102);
+        $this->SetCommunicationReady();
         $this->SendDebug('Polling', 'chscan-Dauerpolling deaktiviert – Kanalstatus über chnotify', 0);
         $this->RefreshDeviceInfo();
         // Eigener Client Socket: initial chscan, danach dauerhaft chnotify.
@@ -356,6 +369,17 @@ class ZeptrionAir extends IPSModuleStrict
             $this->EnterNotifyRecovery('Client Socket noch nicht aktiv');
         }
     }
+    private function SetCommunicationReady(): void
+    {
+        foreach ($this->ReadOwnMotorStates() as $state) {
+            if ((bool)($state['stopFailed'] ?? false)) {
+                $this->SetStatus(202);
+                return;
+            }
+        }
+        $this->SetStatus(102);
+    }
+
     private function IsMotorOnlyDevice(): bool
     {
         $found = false;
@@ -438,7 +462,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
         }
-        $this->SetStatus(102);
+        $this->SetCommunicationReady();
     }
     public function RebootDevice(): string
     {
@@ -480,7 +504,7 @@ class ZeptrionAir extends IPSModuleStrict
         for ($attempt = 1; $attempt <= 12; $attempt++) {
             $id = $this->HttpXmlGet('/zrap/id');
             if ($id !== null) {
-                $this->SetStatus(102);
+                $this->SetCommunicationReady();
                 $this->Poll();
                 $this->RefreshDeviceInfo();
                 $this->SendDebug('Geräte-Neustart', 'Gerät wieder erreichbar', 0);
@@ -555,7 +579,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', true);
         }
-        $this->SetStatus(102);
+        $this->SetCommunicationReady();
     }
     public function RefreshDeviceInfo(): void
     {
@@ -863,13 +887,16 @@ class ZeptrionAir extends IPSModuleStrict
                     return;
                 }
 
-                $lamellaFullTime = max(100, min(32000, $this->ReadPropertyInteger('Channel' . $channel . 'LamellaTimeMs')));
-                $lamellaStepTime = max(100, min(32000, (int)round($lamellaFullTime / 3)));
+                if ($value === 1 || $value === 3) {
+                    $id = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
+                    $current = $id > 0 ? (int)GetValue($id) : ($value === 1 ? 0 : 100);
+                    $this->RequestAction('Ch' . $channel . 'Lamella', max(0, min(100, $current + ($value === 1 ? 33 : -33))));
+                    $this->SetValueIfChanged($Ident, $value);
+                    return;
+                }
                 $commands = [
                     0 => 'on',
-                    1 => 'on',
                     2 => 'stop',
-                    3 => 'off',
                     4 => 'off'
                 ];
                 if (!isset($commands[$value])) {
@@ -884,17 +911,7 @@ class ZeptrionAir extends IPSModuleStrict
                 }
                 if ($this->SendCommand($channel, $commands[$value])) {
                     $this->SetValueIfChanged((string)$Ident, $value);
-                    if ($value === 1) {
-                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
-                        $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 0;
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', min(100, $currentLamella + 33));
-                    } elseif ($value === 3) {
-                        $lamellaID = $this->FindManagedVariableID('Ch' . $channel . 'Lamella');
-                        $currentLamella = $lamellaID > 0 ? (int)GetValue($lamellaID) : 100;
-                        $this->SetValueIfChanged('Ch' . $channel . 'Lamella', max(0, $currentLamella - 33));
-                    } elseif ($value === 2) {
-                        $this->ClearOwnMotorState($channel);
-                    }
+                    $this->ClearOwnMotorState($channel);
                 }
                 return;
             case 'Scene':
@@ -987,7 +1004,9 @@ class ZeptrionAir extends IPSModuleStrict
     }
     public function Stop(int $Channel): bool
     {
-        return $this->SendCommand($Channel, 'stop');
+        if (!$this->SendCommand($Channel, 'stop')) return false;
+        $this->ClearOwnMotorState($Channel);
+        return true;
     }
     public function Open(int $Channel): bool
     {
@@ -1075,6 +1094,8 @@ class ZeptrionAir extends IPSModuleStrict
             $id = $this->FindManagedVariableID('Ch' . $channel . 'Level');
             if ($id <= 0) return;
             $ref['level'] = max(0, min(100, (int)GetValue($id)));
+            $switchID = $this->FindManagedVariableID('Ch' . $channel . 'DimmerSwitch');
+            $ref['on'] = $switchID > 0 ? (bool)GetValue($switchID) : $ref['level'] > 0;
         } else {
             $id = $this->FindManagedVariableID('Ch' . $channel . 'Position');
             if ($id <= 0) return;
@@ -1094,7 +1115,7 @@ class ZeptrionAir extends IPSModuleStrict
         $ref = json_decode($this->GetSceneReferenceData($channel, $scene), true);
         if (!is_array($ref) || $ref === []) return '';
         $type = (string)($ref['type'] ?? '');
-        if ($type === 'dimmer') return (int)($ref['level'] ?? 0) . ' %';
+        if ($type === 'dimmer') return (int)($ref['level'] ?? 0) . ' %' . (array_key_exists('on', $ref) && !$ref['on'] ? ' (Aus)' : '');
         if ($type === 'shutter') return (int)($ref['position'] ?? 0) . ' % / Lamelle ' . (int)($ref['lamella'] ?? 0) . ' %';
         if ($type === 'awning') return (int)($ref['position'] ?? 0) . ' %';
         return '';
@@ -1223,6 +1244,10 @@ class ZeptrionAir extends IPSModuleStrict
             $raw = $this->FindNumericValue($chState, ['val', 'value', 'state']);
             if ($raw === null) continue;
             $value = (int) round($raw);
+            if ($value < 0) { // API: -1 means unknown; preserve the last known state.
+                if ($this->ReadPropertyBoolean('ShowChannelActualValues')) $this->SetValueIfChanged('Ch' . $channel . 'ActualValue', $value);
+                continue;
+            }
             $type = strtolower($this->ReadPropertyString('Channel' . $channel . 'Type'));
             $this->SendDebug('CHNOTIFY EVENT', 'ch' . $channel . '=' . $value . ' | ' . $type, 0);
             if (in_array($type, ['shutter', 'awning'], true)) {
@@ -1398,7 +1423,7 @@ class ZeptrionAir extends IPSModuleStrict
         $own=$this->GetOwnMotorState($channel);
         if ((bool)($own['active']??false)) {
             $until=(int)($own['until']??0);
-            if ($now <= $until) {
+            if ($now <= $until || isset($own['stopCommand'])) {
                 $this->SendDebug('OWN MOTOR','ch'.$channel.' chnotify Event='.$value.' ignoriert fuer Variablen | Typ='.(string)($own['type']??''),0);
                 return;
             }
@@ -1406,6 +1431,7 @@ class ZeptrionAir extends IPSModuleStrict
         }
 
         if ($value === 100) {
+            if ((bool)($m['moving'] ?? false)) return; // Repeated running notifications are not new starts.
             $position=array_key_exists('commandStartPosition',$m) ? max(0,min(100,(int)$m['commandStartPosition'])) : $this->GetMotorPosition($channel);
             $direction=(string)($m['commandDirection']??'');
             if ($direction==='') {
@@ -1675,7 +1701,7 @@ class ZeptrionAir extends IPSModuleStrict
         foreach (array_keys($all) as $k) {
             $v=$all[$k]??null;
             if (!is_array($v)) { unset($all[$k]); continue; }
-            if ($now<=(int)($v['until']??0)) continue;
+            if ((bool)($v['stopFailed'] ?? false) || $now<=(int)($v['until']??0)) continue;
 
             $channel=(int)$k;
 
@@ -1684,17 +1710,22 @@ class ZeptrionAir extends IPSModuleStrict
             if (in_array(($v['type']??''), ['position', 'lamella'], true) && isset($v['stopCommand'])) {
                 $stopCommand=(string)$v['stopCommand'];
                 $stateType=(string)($v['type']??'');
-                unset($v['stopCommand']);
-                // Vor dem Senden Zustand aktualisieren, damit ein eingehendes
-                // chnotify des Stopp-Befehls nicht erneut denselben Befehl ausloest.
-                $all[$k]=$v;
-                $this->WriteOwnMotorStates($all);
-                $this->SendDebug(
-                    $stateType==='lamella' ? 'LAMELLE STOP' : 'ROLLO STOP',
-                    'ch'.$channel.' '.($stateType==='lamella'?'Lamellenziel':'Zwischenposition').' erreicht | cmd='.$stopCommand,
-                    0
-                );
-                $this->SendCommand($channel,$stopCommand);
+                // Keep the stop pending until transmission succeeds. Retry with the
+                // idempotent API stop command: a timed-out on/off may already have arrived.
+                if (!$this->SendCommand($channel, $stopCommand)) {
+                    $v['stopAttempts'] = (int)($v['stopAttempts'] ?? 0) + 1;
+                    $v['stopCommand'] = 'stop';
+                    $v['until'] = $now + 1000;
+                    if ($v['stopAttempts'] >= 3) {
+                        $v['stopFailed'] = true;
+                        $this->SetStatus(202);
+                        $this->LogMessage('Motorstopp für Kanal ' . $channel . ' fehlgeschlagen; Position unbestätigt. Bitte Stopp erneut ausführen.', KL_ERROR);
+                    }
+                    $all[$k] = $v;
+                    continue;
+                }
+                unset($v['stopCommand'], $v['stopAttempts']);
+                $this->SendDebug($stateType === 'lamella' ? 'LAMELLE STOP' : 'ROLLO STOP', 'ch' . $channel . ' Stopp übertragen', 0);
             }
             if (($v['type']??'')==='position'
                 && !array_key_exists('pendingLamella',$v)
@@ -1737,7 +1768,8 @@ class ZeptrionAir extends IPSModuleStrict
             unset($all[$k]);
         }
         $this->WriteOwnMotorStates($all);
-        if (count($all)===0) $this->SetTimerInterval('OwnMotorTimer',0);
+        $pending = array_filter($all, static fn(array $state): bool => !(bool)($state['stopFailed'] ?? false));
+        if ($pending === []) $this->SetTimerInterval('OwnMotorTimer', 0);
     }
     private function ReadOwnMotorStates(): array
     {
@@ -1910,6 +1942,7 @@ class ZeptrionAir extends IPSModuleStrict
                 $rawIdent = 'Ch' . $channel . 'ActualValue';
                 $this->SetValueIfChanged($rawIdent, $rawValue);
             }
+            if ($rawValue !== null && $rawValue < 0) continue;
             // Für den DALI-Test den gelieferten Rohwert separat sichtbar machen.
             if ($type === 'dimmer') {
                 $this->SendDebug(
@@ -1985,7 +2018,7 @@ class ZeptrionAir extends IPSModuleStrict
             return false;
         }
         if (is_numeric($state)) {
-            return (float)$state > 0;
+            return (float)$state < 0 ? null : (float)$state > 0;
         }
         return null;
     }
@@ -2600,8 +2633,16 @@ class ZeptrionAir extends IPSModuleStrict
             $this->EnterNotifyRecovery('Client Socket nicht aktiv');
             return false;
         }
-        $this->SetTimerInterval('RecoveryTimer', 0);
+        $this->SetTimerInterval('RecoveryTimer', 5000);
         return $this->SendNotifyRequest('/zrap/chscan', 'scan');
+    }
+
+    public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
+    {
+        if ($Message === IM_CHANGESTATUS && $SenderID === (int)$this->GetBuffer('NotifyParent')
+            && $this->GetBuffer('NotifyListening') === '1') {
+            $this->EnterNotifyRecovery('Client Socket Status geändert');
+        }
     }
 
     public function RecoveryTick(): void
@@ -2611,12 +2652,22 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         if (!$this->HasActiveParent()) {
-            $this->SendDebug('RECOVERY', 'Client Socket noch nicht aktiv -> auf Symcon-Reconnect warten', 0);
+            $this->EnterNotifyRecovery('Client Socket nicht aktiv');
             return;
         }
         if ($this->GetBuffer('NotifyPending') !== '') {
-            $this->SetBuffer('NotifyPending', '');
-            $this->SetBuffer('NotifyBuffer', '');
+            if (microtime(true) < (float)$this->GetBuffer('NotifyDeadline')) return;
+            $this->EnterNotifyRecovery('Antwortfrist überschritten');
+            // Discard the old TCP stream before sending a fresh scan. Otherwise a
+            // late response could be mistaken for the new request's response.
+            $parent = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
+            if ($parent > 0) {
+                IPS_SetProperty($parent, 'Open', false);
+                IPS_ApplyChanges($parent);
+                IPS_SetProperty($parent, 'Open', true);
+                IPS_ApplyChanges($parent);
+            }
+            return;
         }
         $this->SendDebug('RECOVERY', 'Probe mit chscan', 0);
         $this->SendNotifyRequest('/zrap/chscan', 'scan');
@@ -2624,6 +2675,7 @@ class ZeptrionAir extends IPSModuleStrict
 
     public function ReceiveData(string $JSONString): string
     {
+        if ($this->GetBuffer('NotifyListening') !== '1' || $this->GetBuffer('NotifyPending') === '') return '';
         $d = json_decode($JSONString, true);
         if (!is_array($d) || !isset($d['Buffer']) || $d['Buffer'] === '') return '';
         $received = hex2bin((string)$d['Buffer']);
@@ -2638,15 +2690,16 @@ class ZeptrionAir extends IPSModuleStrict
             $buffer = $r['rest'];
             $kind = $this->GetBuffer('NotifyPending');
             $this->SetBuffer('NotifyPending', '');
+            $this->SetBuffer('NotifyDeadline', '0');
             $this->SetBuffer('NotifyOnline', '1');
             $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
             if ($r['status'] !== 200 && $r['status'] !== 302) {
                 $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
-                continue;
+                return '';
             }
             if ($kind === 'scan') {
                 $this->ProcessNotifyData($r['body']);
-                $this->SetTimerInterval('RecoveryTimer', 0);
+                $this->SetTimerInterval('RecoveryTimer', 5000);
                 $this->SendDebug('RECOVERY', 'chscan OK -> chnotify aktivieren', 0);
             } elseif ($kind === 'notify') {
                 $this->ProcessNotifyData($r['body']);
@@ -2663,6 +2716,7 @@ class ZeptrionAir extends IPSModuleStrict
     {
         $this->SetBuffer('NotifyOnline', '0');
         $this->SetBuffer('NotifyPending', '');
+        $this->SetBuffer('NotifyDeadline', '0');
         $this->SetBuffer('NotifyBuffer', '');
         $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
         $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
@@ -2682,6 +2736,8 @@ class ZeptrionAir extends IPSModuleStrict
              "Cache-Control: no-cache\r\n" .
              "Connection: keep-alive\r\n\r\n";
         $this->SetBuffer('NotifyPending', $kind);
+        $this->SetBuffer('NotifyDeadline', (string)(microtime(true) + ($kind === 'notify' ? 40 : 10)));
+        $this->SetTimerInterval('RecoveryTimer', 5000);
         $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
         $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         if ($ok === false) {
@@ -2796,12 +2852,33 @@ class ZeptrionAir extends IPSModuleStrict
         }
         return (string)$value;
     }
+    private function SmartButtonAdminURL(): string
+    {
+        return '/hook/' . $this->SmartButtonHookName() . '?admin=' . rawurlencode($this->ReadAttributeString('SmartButtonAdminToken'));
+    }
+
+    private function AuthorizeSmartButtonAdmin(): bool
+    {
+        $expected = $this->ReadAttributeString('SmartButtonAdminToken');
+        $isPost = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST';
+        $provided = $isPost ? (string)($_SERVER['HTTP_X_ZEPTRION_ADMIN_TOKEN'] ?? '') : (string)($_GET['admin'] ?? '');
+        if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+            http_response_code(403);
+            echo 'Forbidden';
+            return false;
+        }
+        header('Cache-Control: no-store');
+        header('Referrer-Policy: no-referrer');
+        return true;
+    }
+
     protected function ProcessHookData(): void
     {
         if ((string)($_GET['action'] ?? '') === 'run') {
             $this->RunScene((string)($_GET['scene'] ?? ''), (string)($_GET['token'] ?? ''));
             return;
         }
+        if (!$this->AuthorizeSmartButtonAdmin()) return;
         if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'POST') {
             header('Content-Type: application/json; charset=utf-8');
             set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
@@ -3004,7 +3081,7 @@ class ZeptrionAir extends IPSModuleStrict
         if (!is_string($encoded)) {
             return ['ok' => false, 'message' => 'Smart-Taster-Programm konnte nicht erzeugt werden.'];
         }
-        $estimatedBytes = strlen($encoded) + strlen('Content-Type: application/json\r\nContent-Length: ' . strlen($encoded) . '\r\nConnection: close\r\n');
+        $estimatedBytes = $this->SmartButtonRequestSize((string)$sel['host'], 'POST', '/zapi/smartbt/prgs', $encoded);
         // Diagnose: exakt anzeigen, was tatsächlich auf die zuvor gedrückte Smart-Taste geschrieben wird.
         $this->SendDebug('SMARTBT PRGS PAYLOAD', 'Bytes=' . $estimatedBytes . ' | ' . $encoded, 0);
         if ($estimatedBytes > 730) {
@@ -3122,6 +3199,16 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SendDebug('Smart-Taster erkannt', 'zApp: ' . $selected . ' / Gerät: ' . $device['name'] . ' / Instanz: ' . $device['instance'], 0);
         return ['success' => true, 'host' => $selected, 'name' => $device['name'], 'instance' => $device['instance']];
     }
+    private function SmartButtonRequestSize(string $host, string $method, string $path, string $body): int
+    {
+        $headers = $method . ' ' . $path . " HTTP/1.1\r\n" .
+            'Host: ' . $host . "\r\n" .
+            'Content-Type: application/json' . "\r\n" .
+            'Content-Length: ' . strlen($body) . "\r\n" .
+            "Connection: close\r\n\r\n";
+        return strlen($headers) + strlen($body);
+    }
+
     private function SmartButtonRequest(string $host, string $method, string $path, mixed $payload = null, int $timeoutMs = 4000): array
     {
         $lockName = 'ZEPA_SMART_HTTP_' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $host);
@@ -3140,12 +3227,18 @@ class ZeptrionAir extends IPSModuleStrict
                 CURLOPT_CONNECTTIMEOUT_MS => 2000,
                 CURLOPT_TIMEOUT_MS => $timeoutMs,
                 CURLOPT_CUSTOMREQUEST => $method,
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                CURLOPT_PROXY => '',
                 CURLOPT_HTTPHEADER => ['Connection: close']
             ];
             if ($payload !== null) {
                 $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 $options[CURLOPT_POSTFIELDS] = $body;
-                $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close'];
+                $options[CURLOPT_HTTPHEADER] = ['Host: ' . $host, 'Content-Type: application/json', 'Content-Length: ' . strlen((string)$body), 'Connection: close', 'Accept:', 'Expect:'];
+                if ($path === '/zapi/smartbt/prgs' && $this->SmartButtonRequestSize($host, $method, $path, (string)$body) > 730) {
+                    curl_close($ch);
+                    return ['success' => false, 'message' => 'Smart-Taster-Anfrage überschreitet 730 Byte inklusive HTTP-Header.', 'raw' => '', 'httpCode' => 0];
+                }
             }
             curl_setopt_array($ch, $options);
             $response = curl_exec($ch);
@@ -3255,7 +3348,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($type === 'dimmer') {
             $level = max(0, min(100, (int)($ref['level'] ?? 0)));
             $this->SetValueIfChanged('Ch' . $channel . 'Level', $level);
-            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', $level > 0);
+            $this->SetValueIfChanged('Ch' . $channel . 'DimmerSwitch', (bool)($ref['on'] ?? ($level > 0)));
         } elseif ($type === 'shutter' || $type === 'awning') {
             $position = max(0, min(100, (int)($ref['position'] ?? 0)));
             $this->SetMotorPosition($channel, $position);
@@ -3472,9 +3565,9 @@ const D=__DATA__;let scenes=Array.isArray(D.scenes)?D.scenes:[];const Z=D.zeptri
 const el=id=>document.getElementById(id),mk=(t,x)=>{const e=document.createElement(t);if(x!==undefined)e.textContent=x;return e};
 function msg(x){el('status').textContent=x||''}function busy(v){document.body.classList.toggle('busy',!!v)}
 function opts(s,l,v){s.replaceChildren();l.forEach(x=>{const o=mk('option',x.caption);o.value=x.value;if(String(x.value)===String(v))o.selected=true;s.append(o)})}
-async function api(x){try{const r=await fetch('__HOOK__',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
+async function api(x){try{const r=await fetch('__HOOK__',{method:'POST',headers:{'Content-Type':'application/json','X-Zeptrion-Admin-Token':__ADMIN_TOKEN__},body:JSON.stringify(x)});const raw=await r.text();try{return JSON.parse(raw)}catch(e){return{ok:false,message:'Ungültige Serverantwort: '+raw.trim().slice(0,500)}}}catch(e){return{ok:false,message:e.message}}}
 async function objectInfo(id){if(!id)return null;if(cache.has(+id))return cache.get(+id);const r=await api({op:'object-info',id:+id});if(r.ok&&r.object){cache.set(+id,r.object);return r.object}return null}
-function referenceText(ref){if(!ref||typeof ref!=='object'||!Object.keys(ref).length)return 'Szenen-Referenz: nicht gespeichert';if(ref.type==='dimmer')return 'Szenen-Referenz: '+Number(ref.level||0)+' %';if(ref.type==='shutter')return 'Szenen-Referenz: Position '+Number(ref.position||0)+' % · Lamelle '+Number(ref.lamella||0)+' %';if(ref.type==='awning')return 'Szenen-Referenz: Position '+Number(ref.position||0)+' %';return 'Szenen-Referenz: nicht erforderlich'}
+function referenceText(ref){if(!ref||typeof ref!=='object'||!Object.keys(ref).length)return 'Szenen-Referenz: nicht gespeichert';if(ref.type==='dimmer')return 'Szenen-Referenz: '+Number(ref.level||0)+' %'+(ref.on===false?' (Aus)':'');if(ref.type==='shutter')return 'Szenen-Referenz: Position '+Number(ref.position||0)+' % · Lamelle '+Number(ref.lamella||0)+' %';if(ref.type==='awning')return 'Szenen-Referenz: Position '+Number(ref.position||0)+' %';return 'Szenen-Referenz: nicht erforderlich'}
 async function updateReference(t,label){label.textContent='Szenen-Referenz: wird geladen …';const r=await api({op:'scene-reference',instance:+t.instance,channel:+t.channel,memory:+t.memory});label.textContent=r.ok?referenceText(r.reference):'Szenen-Referenz: nicht verfügbar'}
 function migrate(t){if(t.type==='variable')return{type:'symcon',object:+t.variable,value:t.value};if(t.type==='script')return{type:'symcon',object:+t.script};return t}
 async function pick(t,done){const m=mk('div');m.className='modal';const b=mk('div');b.className='modalbox';const head=mk('div');head.className='modalHead';head.append(mk('h3','Symcon-Objekt auswählen'));const x=mk('button','Schliessen');x.className='close';x.onclick=()=>m.remove();head.append(x);const q=mk('input');q.className='search';q.placeholder='Objekt suchen …';const tree=mk('div');tree.className='tree';b.append(head,q,tree);m.append(b);document.body.append(m);
@@ -3490,7 +3583,7 @@ async function clearButton(){if(!confirm('Die Smart-Tasten beginnen jetzt zu bli
 el('addScene').onclick=addScene;el('clearButton').onclick=clearButton;render();
 </script></body></html>
 HTML;
-        return str_replace(['__DATA__', '__HOOK__'], [$data, '/hook/' . $this->SmartButtonHookName()], $html);
+        return str_replace(['__DATA__', '__HOOK__', '__ADMIN_TOKEN__'], [$data, '/hook/' . $this->SmartButtonHookName(), json_encode($this->ReadAttributeString('SmartButtonAdminToken'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)], $html);
     }
     private function GetDeviceHosts(): array
     {
