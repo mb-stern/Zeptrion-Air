@@ -1505,8 +1505,8 @@ class ZeptrionAir extends IPSModuleStrict
         if (!array_key_exists('commandDirection',$m)
             && !((bool)($m['forceCloseAtBottom']??false))
             && ($direction==='up'||$direction==='down')) {
-            $tolUp=max(750,(int)round($expectUp*0.10));
-            $tolDown=max(750,(int)round($expectDown*0.10));
+            $tolUp=max(1000,(int)round($expectUp*0.10));
+            $tolDown=max(1000,(int)round($expectDown*0.10));
             $upPossible=$elapsed<=($expectUp+$tolUp);
             $downPossible=$elapsed<=($expectDown+$tolDown);
             $originalDirection=$direction;
@@ -1555,43 +1555,39 @@ class ZeptrionAir extends IPSModuleStrict
             }
             $forcedEndStop=null;
             if ($direction==='unknown') {
-                $reachTolUp=max(1000,(int)round($expectUp*0.10));
-                $reachTolDown=max(1000,(int)round($expectDown*0.10));
-                $canReachUp=$expectUp>0 && $elapsed >= max(0,$expectUp-$reachTolUp);
-                $canReachDown=$expectDown>0 && $elapsed >= max(0,$expectDown-$reachTolDown);
+                $tolUp=max(1000,(int)round($expectUp*0.10));
+                $tolDown=max(1000,(int)round($expectDown*0.10));
+                $upPossible=$elapsed<=($expectUp+$tolUp);
+                $downPossible=$elapsed<=($expectDown+$tolDown);
 
-                // Ein in dieser Fahrzeit erreichbarer Endanschlag hat Vorrang.
-                // Sind theoretisch beide erreichbar, gewinnt der zeitlich
-                // besser passende Anschlag.
-                if ($canReachUp || $canReachDown) {
-                    if ($canReachUp && !$canReachDown) {
-                        $direction='up';
-                        $forcedEndStop=0;
-                    } elseif ($canReachDown && !$canReachUp) {
-                        $direction='down';
-                        $forcedEndStop=100;
-                    } elseif ($errUp <= $errDown) {
-                        $direction='up';
-                        $forcedEndStop=0;
-                    } else {
-                        $direction='down';
-                        $forcedEndStop=100;
-                    }
-                    $this->SendDebug(
-                        'ROLLO ANSCHLAG MATCH',
-                        'ch'.$channel.' extern | '.$elapsed.'ms | von '.$position.'% erreichbarer Anschlag -> '.$forcedEndStop.'%',
-                        0
-                    );
+                // Die Fahrzeit darf eine Richtung ausschliessen, aber nicht allein
+                // deshalb eine Richtung beweisen, weil ein Endanschlag zeitlich
+                // erreichbar waere. Sind beide Richtungen noch moeglich, verwenden
+                // wir die letzte bekannte externe Fahrtrichtung als beste Information.
+                if (!$upPossible && $downPossible) {
+                    $direction='down';
+                    $reason='up zeitlich unmoeglich';
+                } elseif (!$downPossible && $upPossible) {
+                    $direction='up';
+                    $reason='down zeitlich unmoeglich';
+                } elseif ($upPossible && $downPossible && ($lastDirection==='up'||$lastDirection==='down')) {
+                    $direction=$lastDirection;
+                    $reason='beide moeglich, letzte Richtung';
                 } else {
-                    $tolUp=max(750,(int)round($expectUp*0.10));
-                    $tolDown=max(750,(int)round($expectDown*0.10));
-                    $upPossible=$elapsed<=($expectUp+$tolUp);
-                    $downPossible=$elapsed<=($expectDown+$tolDown);
-                    if (!$upPossible && $downPossible) $direction='down';
-                    elseif (!$downPossible && $upPossible) $direction='up';
-                    else $direction=$errUp<=$errDown?'up':'down';
-                    $this->SendDebug('ROLLO MATCH','ch'.$channel.' extern | '.$elapsed.'ms -> '.$direction,0);
+                    // Keine eindeutige Ausschlussentscheidung moeglich. Falls keine
+                    // letzte Richtung vorhanden ist (oder beide Endlagenzeiten bereits
+                    // ueberschritten wurden), bleibt nur die zeitlich naehere Schaetzung.
+                    $direction=$errUp<=$errDown?'up':'down';
+                    $reason=(!$upPossible && !$downPossible)
+                        ? 'beide Endlagenzeiten ueberschritten, zeitlich naeher'
+                        : 'beide moeglich, keine letzte Richtung, zeitlich naeher';
                 }
+
+                $this->SendDebug(
+                    'ROLLO MATCH',
+                    'ch'.$channel.' extern | '.$elapsed.'ms | upMax~'.($expectUp+$tolUp).'ms | downMax~'.($expectDown+$tolDown).'ms -> '.$direction.' | '.$reason,
+                    0
+                );
             }
 
             // Hat eine externe Fahrt von der bekannten Startposition lange genug
@@ -1616,10 +1612,10 @@ class ZeptrionAir extends IPSModuleStrict
             } elseif (!array_key_exists('commandDirection',$m)) {
                 $endTolUp=max(1000,(int)round($expectUp*0.10));
                 $endTolDown=max(1000,(int)round($expectDown*0.10));
-                if ($direction==='up' && $expectUp>0 && $elapsed >= max(0,$expectUp-$endTolUp)) {
+                if ($direction==='up' && $expectUp>0 && abs($elapsed-$expectUp) <= $endTolUp) {
                     $newPosition=0;
                     $endStopReached=true;
-                } elseif ($direction==='down' && $expectDown>0 && $elapsed >= max(0,$expectDown-$endTolDown)) {
+                } elseif ($direction==='down' && $expectDown>0 && abs($elapsed-$expectDown) <= $endTolDown) {
                     $newPosition=100;
                     $endStopReached=true;
                 }
