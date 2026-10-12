@@ -51,6 +51,36 @@ $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent
 $d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']>0,'Parent status change enters recovery');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
 
+// A responding notify socket must win over independent RSSI/DNS failures.
+$d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;
+$d->attrs['CommunicationFailures']=8;$d->status=202;$GLOBALS['values']['Online']=false;
+$d->StartNotifyListener();$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->attrs['CommunicationFailures']===0 && $d->status===102 && $GLOBALS['values']['Online']===true,'Successful socket response clears accumulated RSSI failures and restores online status');
+check($d->buffers['NotifyPending']==='notify' && count($d->sent)===2,'Recovered scan immediately starts chnotify');
+for($i=0;$i<3;$i++)$d->RefreshRuntimeInfo();
+check($d->attrs['CommunicationFailures']===0 && $d->status===102 && $GLOBALS['values']['Online']===true,'Repeated failed RSSI requests cannot mark a responding socket offline');
+check($d->buffers['NotifyPending']==='notify' && count($d->sent)===2,'RSSI failure does not cancel or duplicate pending chnotify');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->buffers['NotifyPending']==='notify' && count($d->sent)===3,'Next socket response continues long-poll after RSSI failures');
+$d->active=false;$d->RecoveryTick();
+check($d->timers['RecoveryTimer']===10000 && $d->status===202 && $GLOBALS['values']['Online']===false,'Socket outage schedules ten-second recovery and reports offline');
+$d->RecoveryTick();
+check($d->timers['RecoveryTimer']===10000 && count($d->sent)===3,'Recovery remains scheduled while parent is inactive without sending to a closed socket');
+$d->active=true;$d->RecoveryTick();
+check($d->buffers['NotifyPending']==='scan' && count($d->sent)===4,'Ten-second recovery probes reopened socket with chscan');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->status===102 && $GLOBALS['values']['Online']===true && $d->buffers['NotifyPending']==='notify' && count($d->sent)===5,'Recovered socket clears outage and resumes chnotify');
+$d->buffers['NotifyDeadline']='1';
+for($i=0;$i<3;$i++)$d->RefreshRuntimeInfo();
+check($d->attrs['CommunicationFailures']===3 && $d->status===202,'Expired socket response cannot mask a genuine HTTP communication failure');
+$d->RecoveryTick();
+check($d->timers['RecoveryTimer']===10000 && $d->buffers['NotifyOnline']==='0' && $d->buffers['NotifyPending']==='','Watchdog enters recovery for an unresponsive socket');
+$d->RecoveryTick();$d->ReceiveData(json_encode(['Buffer'=>bin2hex("HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n")]));
+check($d->attrs['CommunicationFailures']===3 && $d->status===202 && $d->buffers['NotifyOnline']==='0' && $d->timers['RecoveryTimer']===10000,'HTTP error cannot report connection recovered or stop retries');
+$d->RecoveryTick();$d->attrs['OwnMotorState']=json_encode(['1'=>['stopFailed'=>true]]);
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->status===202 && $d->attrs['CommunicationFailures']===0 && $GLOBALS['values']['Online']===true,'Socket recovery preserves a separate failed motor stop');
+
 // Discovery retains the original service-name host behavior.
 $discovery=new ZeptrionAirDiscovery();$found=[];
 $GLOBALS['browseServices']['_zapp._tcp']=[

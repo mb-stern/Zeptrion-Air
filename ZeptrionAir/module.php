@@ -380,6 +380,28 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetStatus(102);
     }
 
+    private function HasHealthyNotifyConnection(): bool
+    {
+        return $this->GetBuffer('NotifyListening') === '1'
+            && $this->GetBuffer('NotifyOnline') === '1'
+            && $this->HasActiveParent()
+            && microtime(true) < (float)$this->GetBuffer('NotifyDeadline');
+    }
+
+    private function ConfirmNotifyCommunication(): void
+    {
+        $this->SetBuffer('NotifyOnline', '1');
+        if ($this->ReadAttributeInteger('CommunicationFailures') > 0) {
+            $this->SendDebug('Kommunikation', 'Client Socket antwortet wieder – Kommunikationsfehler zurückgesetzt', 0);
+            $this->LogMessage('Kommunikation über Client Socket wiederhergestellt', KL_MESSAGE);
+        }
+        $this->WriteAttributeInteger('CommunicationFailures', 0);
+        if ($this->ReadPropertyBoolean('ShowOnline')) {
+            $this->SetValueIfChanged('Online', true);
+        }
+        $this->SetCommunicationReady();
+    }
+
     private function IsMotorOnlyDevice(): bool
     {
         $found = false;
@@ -537,6 +559,12 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         if ($rssi === null) {
+            // A separate HTTP/DNS failure must not override a responding socket.
+            // The notify watchdog detects a stalled connection independently.
+            if ($this->HasHealthyNotifyConnection()) {
+                $this->SendDebug('RSSI', 'Keine Antwort – Client Socket antwortet weiterhin; kein Geräteausfall', 0);
+                return;
+            }
             $failures = $this->ReadAttributeInteger('CommunicationFailures') + 1;
             $this->WriteAttributeInteger('CommunicationFailures', $failures);
             // Motoraktoren werden bewusst nur einmal pro Minute geprüft.
@@ -2691,12 +2719,12 @@ class ZeptrionAir extends IPSModuleStrict
             $kind = $this->GetBuffer('NotifyPending');
             $this->SetBuffer('NotifyPending', '');
             $this->SetBuffer('NotifyDeadline', '0');
-            $this->SetBuffer('NotifyOnline', '1');
             $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
             if ($r['status'] !== 200 && $r['status'] !== 302) {
                 $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
                 return '';
             }
+            $this->ConfirmNotifyCommunication();
             if ($kind === 'scan') {
                 $this->ProcessNotifyData($r['body']);
                 $this->SetTimerInterval('RecoveryTimer', 5000);
@@ -2718,6 +2746,10 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyDeadline', '0');
         $this->SetBuffer('NotifyBuffer', '');
+        if ($this->ReadPropertyBoolean('ShowOnline')) {
+            $this->SetValueIfChanged('Online', false);
+        }
+        $this->SetStatus(202);
         $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
         $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
         $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s chscan versuchen', 0);

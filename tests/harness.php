@@ -14,6 +14,8 @@ class IPSModuleStrict {
  protected function WriteAttributeString($k,$v): void {$this->attrs[$k]=$v;}
  protected function ReadAttributeInteger($k): int {return (int)($this->attrs[$k]??0);}
  protected function WriteAttributeInteger($k,$v): void {$this->attrs[$k]=$v;}
+ protected function ReadAttributeBoolean($k): bool {return (bool)($this->attrs[$k]??false);}
+ protected function WriteAttributeBoolean($k,$v): void {$this->attrs[$k]=$v;}
  protected function SetBuffer($k,$v): void {$this->buffers[$k]=$v;}
  protected function GetBuffer($k): string {return (string)($this->buffers[$k]??'');}
  protected function SetTimerInterval($k,$v): void {$this->timers[$k]=$v;}
@@ -38,6 +40,7 @@ function IPS_SemaphoreEnter($name,$timeout) {return true;}
 function IPS_SemaphoreLeave($name) {}
 define('IM_CHANGESTATUS',10505);
 define('KL_ERROR',102);
+define('KL_MESSAGE',101);
 require dirname(__DIR__) . '/ZeptrionAir/module.php';
 require dirname(__DIR__) . '/ZeptrionAirDiscovery/module.php';
 class TestDevice extends ZeptrionAir {

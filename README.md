@@ -76,6 +76,18 @@ Nach einer Statusmeldung wird die Überwachung unmittelbar erneut gestartet. Ein
 
 Bei Kommunikationsproblemen wird die Verbindung automatisch überwacht und die Benachrichtigung wieder gestartet.
 
+Der Watchdog prüft alle fünf Sekunden, ob die Antwortfrist des Client Sockets
+abgelaufen ist. Bei einer Unterbrechung wird standardmäßig alle zehn Sekunden
+geprüft, ob der Socket wieder aktiv ist. Dann startet ein `chscan` die Überwachung;
+nach erfolgreicher Antwort folgt wieder `chnotify`. Solange eine Long-Poll-Antwort
+noch aussteht (das Gerät antwortet spätestens nach 30 Sekunden), wird keine
+zusätzliche Anfrage über denselben Socket gesendet.
+
+Erfolgreiche Socket-Antworten setzen Kommunikationsfehler und den Online-Status
+zurück. Ein Fehler der separaten RSSI-Abfrage, etwa bei der Namensauflösung, zählt
+bei weiterhin antwortendem Socket nicht als Geräteausfall. Ein fehlgeschlagener
+Motorstopp bleibt unabhängig davon als Fehler sichtbar.
+
 ### Hinweis zu Dimmern
 
 Bei den getesteten zeptrionAIR-Dimmern liefert `chnotify` beim Dimmen nur den Ein-/Aus-Zustand und keinen zuverlässigen tatsächlichen Dimmwert. Deshalb wird ein vorhandener bekannter Dimmwert nicht durch diese Meldung überschrieben.
