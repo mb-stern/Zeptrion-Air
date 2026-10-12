@@ -361,13 +361,14 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetTimerInterval('PollTimer', 0);
         $this->SetCommunicationReady();
         $this->SendDebug('Polling', 'chscan-Dauerpolling deaktiviert – Kanalstatus über chnotify', 0);
-        $this->RefreshDeviceInfo();
         // Eigener Client Socket: initial chscan, danach dauerhaft chnotify.
         if ($this->HasActiveParent()) {
             $this->StartNotifyListener();
         } else {
             $this->EnterNotifyRecovery('Client Socket noch nicht aktiv');
         }
+        // Start the socket listener before potentially slow HTTP/DNS info calls.
+        $this->RefreshDeviceInfo();
     }
     private function SetCommunicationReady(): void
     {
@@ -2669,7 +2670,17 @@ class ZeptrionAir extends IPSModuleStrict
     {
         if ($Message === IM_CHANGESTATUS && $SenderID === (int)$this->GetBuffer('NotifyParent')
             && $this->GetBuffer('NotifyListening') === '1') {
-            $this->EnterNotifyRecovery('Client Socket Status geändert');
+            $status = (int)($Data[0] ?? 0);
+            $this->SendDebug('RECOVERY', 'Client Socket ' . $SenderID . ' Status: ' . $status, 0);
+            if ($status === 102 && $this->HasActiveParent()) {
+                // Do not reset or duplicate an already pending scan/long-poll.
+                if ($this->GetBuffer('NotifyPending') === '') {
+                    $this->SendDebug('RECOVERY', 'Client Socket aktiv -> sofort chscan starten', 0);
+                    $this->SendNotifyRequest('/zrap/chscan', 'scan');
+                }
+                return;
+            }
+            $this->EnterNotifyRecovery('Client Socket Status ' . $status);
         }
     }
 
@@ -2752,7 +2763,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetStatus(202);
         $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
         $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
-        $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s chscan versuchen', 0);
+        $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s Socket prüfen; chscan sobald aktiv', 0);
     }
 
     private function SendNotifyRequest(string $path, string $kind): bool

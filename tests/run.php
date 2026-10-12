@@ -51,6 +51,24 @@ $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent
 $d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']>0,'Parent status change enters recovery');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
 
+// A brief ready window must start the scan before the ten-second timer fires.
+$d=new TestDevice();$d->buffers['NotifyParent']='11';$d->active=false;$d->StartNotifyListener();
+$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===1 && $d->buffers['NotifyPending']==='scan','Ready status immediately starts scan without waiting for recovery timer');
+$deadline=$d->buffers['NotifyDeadline'];$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===1 && $d->buffers['NotifyDeadline']===$deadline,'Repeated ready status preserves pending scan and its deadline');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));$deadline=$d->buffers['NotifyDeadline'];
+$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===2 && $d->buffers['NotifyPending']==='notify' && $d->buffers['NotifyDeadline']===$deadline,'Ready status does not interrupt running chnotify');
+$d->MessageSink(time(),12,IM_CHANGESTATUS,[202]);
+check($d->buffers['NotifyPending']==='notify','Status of another socket does not affect listener');
+$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);
+check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===10000,'Actual socket error retains ten-second recovery');
+$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===10000,'Ready event cannot send while physical parent chain is inactive');
+$d->buffers['NotifyListening']='0';$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===2,'Disabled listener is not restarted by ready event');
+
 // A responding notify socket must win over independent RSSI/DNS failures.
 $d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;
 $d->attrs['CommunicationFailures']=8;$d->status=202;$GLOBALS['values']['Online']=false;

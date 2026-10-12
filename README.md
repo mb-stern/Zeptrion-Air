@@ -78,10 +78,15 @@ Bei Kommunikationsproblemen wird die Verbindung automatisch überwacht und die B
 
 Der Watchdog prüft alle fünf Sekunden, ob die Antwortfrist des Client Sockets
 abgelaufen ist. Bei einer Unterbrechung wird standardmäßig alle zehn Sekunden
-geprüft, ob der Socket wieder aktiv ist. Dann startet ein `chscan` die Überwachung;
-nach erfolgreicher Antwort folgt wieder `chnotify`. Solange eine Long-Poll-Antwort
+geprüft, ob der Socket wieder aktiv ist. Meldet der Socket zuvor bereits den
+Status „Aktiv“, startet `chscan` sofort, ohne auf den nächsten Timerlauf zu warten.
+Nach erfolgreicher Antwort folgt wieder `chnotify`. Solange eine Long-Poll-Antwort
 noch aussteht (das Gerät antwortet spätestens nach 30 Sekunden), wird keine
 zusätzliche Anfrage über denselben Socket gesendet.
+
+Beim Anwenden der Konfiguration wird der Socket-Listener vor den HTTP-Abfragen
+für Geräteinformationen und RSSI gestartet. Socket-Statusänderungen erscheinen
+mit Instanz-ID und Statusnummer im Debug.
 
 Erfolgreiche Socket-Antworten setzen Kommunikationsfehler und den Online-Status
 zurück. Ein Fehler der separaten RSSI-Abfrage, etwa bei der Namensauflösung, zählt
