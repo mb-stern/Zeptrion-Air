@@ -48,10 +48,10 @@ $d->RecoveryTick();check(count($d->sent)===2,'Watchdog leaves unexpired long-pol
 $d->buffers['NotifyDeadline']='1';$d->RecoveryTick();check($d->buffers['NotifyPending']==='' && $GLOBALS['parentChanges']===[[11,'Open',false],[11,'Open',true]],'Expired stream is closed before recovery');
 $d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));check($d->buffers['NotifyPending']==='' && count($d->sent)===2,'Unsolicited stale data cannot restart notify during recovery');
 $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent)===3,'Recovery sends fresh scan');
-$d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']>0,'Parent status change enters recovery');
+$d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===0,'Inactive parent stops recovery timer and waits for status event');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
 
-// A brief ready window must start the scan before the ten-second timer fires.
+// Reconnection is driven by ready events, with no polling of an inactive socket.
 $d=new TestDevice();$d->buffers['NotifyParent']='11';$d->active=false;$d->StartNotifyListener();
 $d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
 check(count($d->sent)===1 && $d->buffers['NotifyPending']==='scan','Ready status immediately starts scan without waiting for recovery timer');
@@ -63,14 +63,14 @@ check(count($d->sent)===2 && $d->buffers['NotifyPending']==='notify' && $d->buff
 $d->MessageSink(time(),12,IM_CHANGESTATUS,[202]);
 check($d->buffers['NotifyPending']==='notify','Status of another socket does not affect listener');
 $d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);
-check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===10000,'Actual socket error retains ten-second recovery');
+check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===0,'Inactive socket error waits for native reconnect without recovery polling');
 $d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
-check(count($d->sent)===2 && $d->timers['RecoveryTimer']===10000,'Ready event cannot send while physical parent chain is inactive');
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Ready event cannot send or poll while physical parent chain is inactive');
 $d->buffers['NotifyListening']='0';$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
 check(count($d->sent)===2,'Disabled listener is not restarted by ready event');
 
 // A responding notify socket must win over independent RSSI/DNS failures.
-$d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;
+$d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;$d->buffers['NotifyParent']='11';
 $d->attrs['CommunicationFailures']=8;$d->status=202;$GLOBALS['values']['Online']=false;
 $d->StartNotifyListener();$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
 check($d->attrs['CommunicationFailures']===0 && $d->status===102 && $GLOBALS['values']['Online']===true,'Successful socket response clears accumulated RSSI failures and restores online status');
@@ -81,11 +81,11 @@ check($d->buffers['NotifyPending']==='notify' && count($d->sent)===2,'RSSI failu
 $d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
 check($d->buffers['NotifyPending']==='notify' && count($d->sent)===3,'Next socket response continues long-poll after RSSI failures');
 $d->active=false;$d->RecoveryTick();
-check($d->timers['RecoveryTimer']===10000 && $d->status===202 && $GLOBALS['values']['Online']===false,'Socket outage schedules ten-second recovery and reports offline');
+check($d->timers['RecoveryTimer']===0 && $d->status===202 && $GLOBALS['values']['Online']===false,'Socket outage stops polling and reports offline');
 $d->RecoveryTick();
-check($d->timers['RecoveryTimer']===10000 && count($d->sent)===3,'Recovery remains scheduled while parent is inactive without sending to a closed socket');
-$d->active=true;$d->RecoveryTick();
-check($d->buffers['NotifyPending']==='scan' && count($d->sent)===4,'Ten-second recovery probes reopened socket with chscan');
+check($d->timers['RecoveryTimer']===0 && count($d->sent)===3,'Even a manual recovery tick leaves an inactive socket waiting without requests');
+$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check($d->buffers['NotifyPending']==='scan' && count($d->sent)===4,'Ready status restarts scan after timer-free reconnect wait');
 $d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
 check($d->status===102 && $GLOBALS['values']['Online']===true && $d->buffers['NotifyPending']==='notify' && count($d->sent)===5,'Recovered socket clears outage and resumes chnotify');
 $d->buffers['NotifyDeadline']='1';

@@ -2761,9 +2761,16 @@ class ZeptrionAir extends IPSModuleStrict
             $this->SetValueIfChanged('Online', false);
         }
         $this->SetStatus(202);
+        if (!$this->HasActiveParent()) {
+            // The native Client Socket owns reconnect. Its ready event starts
+            // the scan; no timer is needed while the connection is unavailable.
+            $this->SetTimerInterval('RecoveryTimer', 0);
+            $this->SendDebug('RECOVERY', $reason . ' -> warte auf Socket-Status Aktiv (102)', 0);
+            return;
+        }
         $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
         $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
-        $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s Socket prüfen; chscan sobald aktiv', 0);
+        $this->SendDebug('RECOVERY', $reason . ' -> aktiver Socket; chscan erneut in ' . $sec . ' s', 0);
     }
 
     private function SendNotifyRequest(string $path, string $kind): bool
