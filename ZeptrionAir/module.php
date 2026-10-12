@@ -361,13 +361,14 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetTimerInterval('PollTimer', 0);
         $this->SetCommunicationReady();
         $this->SendDebug('Polling', 'chscan-Dauerpolling deaktiviert – Kanalstatus über chnotify', 0);
-        $this->RefreshDeviceInfo();
         // Eigener Client Socket: initial chscan, danach dauerhaft chnotify.
         if ($this->HasActiveParent()) {
             $this->StartNotifyListener();
         } else {
             $this->EnterNotifyRecovery('Client Socket noch nicht aktiv');
         }
+        // Start the socket listener before potentially slow HTTP/DNS info calls.
+        $this->RefreshDeviceInfo();
     }
     private function SetCommunicationReady(): void
     {
@@ -378,6 +379,28 @@ class ZeptrionAir extends IPSModuleStrict
             }
         }
         $this->SetStatus(102);
+    }
+
+    private function HasHealthyNotifyConnection(): bool
+    {
+        return $this->GetBuffer('NotifyListening') === '1'
+            && $this->GetBuffer('NotifyOnline') === '1'
+            && $this->HasActiveParent()
+            && microtime(true) < (float)$this->GetBuffer('NotifyDeadline');
+    }
+
+    private function ConfirmNotifyCommunication(): void
+    {
+        $this->SetBuffer('NotifyOnline', '1');
+        if ($this->ReadAttributeInteger('CommunicationFailures') > 0) {
+            $this->SendDebug('Kommunikation', 'Client Socket antwortet wieder – Kommunikationsfehler zurückgesetzt', 0);
+            $this->LogMessage('Kommunikation über Client Socket wiederhergestellt', KL_MESSAGE);
+        }
+        $this->WriteAttributeInteger('CommunicationFailures', 0);
+        if ($this->ReadPropertyBoolean('ShowOnline')) {
+            $this->SetValueIfChanged('Online', true);
+        }
+        $this->SetCommunicationReady();
     }
 
     private function IsMotorOnlyDevice(): bool
@@ -537,6 +560,12 @@ class ZeptrionAir extends IPSModuleStrict
             return;
         }
         if ($rssi === null) {
+            // A separate HTTP/DNS failure must not override a responding socket.
+            // The notify watchdog detects a stalled connection independently.
+            if ($this->HasHealthyNotifyConnection()) {
+                $this->SendDebug('RSSI', 'Keine Antwort – Client Socket antwortet weiterhin; kein Geräteausfall', 0);
+                return;
+            }
             $failures = $this->ReadAttributeInteger('CommunicationFailures') + 1;
             $this->WriteAttributeInteger('CommunicationFailures', $failures);
             // Motoraktoren werden bewusst nur einmal pro Minute geprüft.
@@ -2641,7 +2670,17 @@ class ZeptrionAir extends IPSModuleStrict
     {
         if ($Message === IM_CHANGESTATUS && $SenderID === (int)$this->GetBuffer('NotifyParent')
             && $this->GetBuffer('NotifyListening') === '1') {
-            $this->EnterNotifyRecovery('Client Socket Status geändert');
+            $status = (int)($Data[0] ?? 0);
+            $this->SendDebug('RECOVERY', 'Client Socket ' . $SenderID . ' Status: ' . $status, 0);
+            if ($status === 102 && $this->HasActiveParent()) {
+                // Do not reset or duplicate an already pending scan/long-poll.
+                if ($this->GetBuffer('NotifyPending') === '') {
+                    $this->SendDebug('RECOVERY', 'Client Socket aktiv -> sofort chscan starten', 0);
+                    $this->SendNotifyRequest('/zrap/chscan', 'scan');
+                }
+                return;
+            }
+            $this->EnterNotifyRecovery('Client Socket Status ' . $status);
         }
     }
 
@@ -2691,12 +2730,12 @@ class ZeptrionAir extends IPSModuleStrict
             $kind = $this->GetBuffer('NotifyPending');
             $this->SetBuffer('NotifyPending', '');
             $this->SetBuffer('NotifyDeadline', '0');
-            $this->SetBuffer('NotifyOnline', '1');
             $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
             if ($r['status'] !== 200 && $r['status'] !== 302) {
                 $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
                 return '';
             }
+            $this->ConfirmNotifyCommunication();
             if ($kind === 'scan') {
                 $this->ProcessNotifyData($r['body']);
                 $this->SetTimerInterval('RecoveryTimer', 5000);
@@ -2718,9 +2757,20 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyDeadline', '0');
         $this->SetBuffer('NotifyBuffer', '');
+        if ($this->ReadPropertyBoolean('ShowOnline')) {
+            $this->SetValueIfChanged('Online', false);
+        }
+        $this->SetStatus(202);
+        if (!$this->HasActiveParent()) {
+            // The native Client Socket owns reconnect. Its ready event starts
+            // the scan; no timer is needed while the connection is unavailable.
+            $this->SetTimerInterval('RecoveryTimer', 0);
+            $this->SendDebug('RECOVERY', $reason . ' -> warte auf Socket-Status Aktiv (102)', 0);
+            return;
+        }
         $sec = max(5, $this->ReadPropertyInteger('RecoveryInterval'));
         $this->SetTimerInterval('RecoveryTimer', $sec * 1000);
-        $this->SendDebug('RECOVERY', $reason . ' -> alle ' . $sec . ' s chscan versuchen', 0);
+        $this->SendDebug('RECOVERY', $reason . ' -> aktiver Socket; chscan erneut in ' . $sec . ' s', 0);
     }
 
     private function SendNotifyRequest(string $path, string $kind): bool

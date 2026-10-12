@@ -48,8 +48,56 @@ $d->RecoveryTick();check(count($d->sent)===2,'Watchdog leaves unexpired long-pol
 $d->buffers['NotifyDeadline']='1';$d->RecoveryTick();check($d->buffers['NotifyPending']==='' && $GLOBALS['parentChanges']===[[11,'Open',false],[11,'Open',true]],'Expired stream is closed before recovery');
 $d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));check($d->buffers['NotifyPending']==='' && count($d->sent)===2,'Unsolicited stale data cannot restart notify during recovery');
 $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent)===3,'Recovery sends fresh scan');
-$d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']>0,'Parent status change enters recovery');
+$d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===0,'Inactive parent stops recovery timer and waits for status event');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
+
+// Reconnection is driven by ready events, with no polling of an inactive socket.
+$d=new TestDevice();$d->buffers['NotifyParent']='11';$d->active=false;$d->StartNotifyListener();
+$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===1 && $d->buffers['NotifyPending']==='scan','Ready status immediately starts scan without waiting for recovery timer');
+$deadline=$d->buffers['NotifyDeadline'];$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===1 && $d->buffers['NotifyDeadline']===$deadline,'Repeated ready status preserves pending scan and its deadline');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));$deadline=$d->buffers['NotifyDeadline'];
+$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===2 && $d->buffers['NotifyPending']==='notify' && $d->buffers['NotifyDeadline']===$deadline,'Ready status does not interrupt running chnotify');
+$d->MessageSink(time(),12,IM_CHANGESTATUS,[202]);
+check($d->buffers['NotifyPending']==='notify','Status of another socket does not affect listener');
+$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);
+check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===0,'Inactive socket error waits for native reconnect without recovery polling');
+$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Ready event cannot send or poll while physical parent chain is inactive');
+$d->buffers['NotifyListening']='0';$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check(count($d->sent)===2,'Disabled listener is not restarted by ready event');
+
+// A responding notify socket must win over independent RSSI/DNS failures.
+$d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;$d->buffers['NotifyParent']='11';
+$d->attrs['CommunicationFailures']=8;$d->status=202;$GLOBALS['values']['Online']=false;
+$d->StartNotifyListener();$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->attrs['CommunicationFailures']===0 && $d->status===102 && $GLOBALS['values']['Online']===true,'Successful socket response clears accumulated RSSI failures and restores online status');
+check($d->buffers['NotifyPending']==='notify' && count($d->sent)===2,'Recovered scan immediately starts chnotify');
+for($i=0;$i<3;$i++)$d->RefreshRuntimeInfo();
+check($d->attrs['CommunicationFailures']===0 && $d->status===102 && $GLOBALS['values']['Online']===true,'Repeated failed RSSI requests cannot mark a responding socket offline');
+check($d->buffers['NotifyPending']==='notify' && count($d->sent)===2,'RSSI failure does not cancel or duplicate pending chnotify');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->buffers['NotifyPending']==='notify' && count($d->sent)===3,'Next socket response continues long-poll after RSSI failures');
+$d->active=false;$d->RecoveryTick();
+check($d->timers['RecoveryTimer']===0 && $d->status===202 && $GLOBALS['values']['Online']===false,'Socket outage stops polling and reports offline');
+$d->RecoveryTick();
+check($d->timers['RecoveryTimer']===0 && count($d->sent)===3,'Even a manual recovery tick leaves an inactive socket waiting without requests');
+$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check($d->buffers['NotifyPending']==='scan' && count($d->sent)===4,'Ready status restarts scan after timer-free reconnect wait');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->status===102 && $GLOBALS['values']['Online']===true && $d->buffers['NotifyPending']==='notify' && count($d->sent)===5,'Recovered socket clears outage and resumes chnotify');
+$d->buffers['NotifyDeadline']='1';
+for($i=0;$i<3;$i++)$d->RefreshRuntimeInfo();
+check($d->attrs['CommunicationFailures']===3 && $d->status===202,'Expired socket response cannot mask a genuine HTTP communication failure');
+$d->RecoveryTick();
+check($d->timers['RecoveryTimer']===10000 && $d->buffers['NotifyOnline']==='0' && $d->buffers['NotifyPending']==='','Watchdog enters recovery for an unresponsive socket');
+$d->RecoveryTick();$d->ReceiveData(json_encode(['Buffer'=>bin2hex("HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n")]));
+check($d->attrs['CommunicationFailures']===3 && $d->status===202 && $d->buffers['NotifyOnline']==='0' && $d->timers['RecoveryTimer']===10000,'HTTP error cannot report connection recovered or stop retries');
+$d->RecoveryTick();$d->attrs['OwnMotorState']=json_encode(['1'=>['stopFailed'=>true]]);
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->status===202 && $d->attrs['CommunicationFailures']===0 && $GLOBALS['values']['Online']===true,'Socket recovery preserves a separate failed motor stop');
 
 // Discovery retains the original service-name host behavior.
 $discovery=new ZeptrionAirDiscovery();$found=[];

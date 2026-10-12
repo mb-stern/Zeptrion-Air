@@ -76,6 +76,27 @@ Nach einer Statusmeldung wird die Überwachung unmittelbar erneut gestartet. Ein
 
 Bei Kommunikationsproblemen wird die Verbindung automatisch überwacht und die Benachrichtigung wieder gestartet.
 
+Der Watchdog prüft alle fünf Sekunden, ob die Antwortfrist einer gesendeten
+Anfrage abgelaufen ist. Bei einem inaktiven Socket wird dieser Timer abgeschaltet:
+Die Wiederverbindung übernimmt der native Client Socket. Das Modul wartet auf
+dessen Statusmeldung „Aktiv“ (102) und startet dann sofort `chscan`.
+Nach erfolgreicher Antwort folgt wieder `chnotify`. Solange eine Long-Poll-Antwort
+noch aussteht (das Gerät antwortet spätestens nach 30 Sekunden), wird keine
+zusätzliche Anfrage über denselben Socket gesendet.
+
+Bleibt der Socket aktiv, aber eine Anfrage schlägt fehl (etwa mit HTTP 500), wird
+`chscan` standardmäßig nach zehn Sekunden erneut versucht. Antwortfristen und die
+Wiederherstellung eines hängenden TCP-Streams bleiben überwacht.
+
+Beim Anwenden der Konfiguration wird der Socket-Listener vor den HTTP-Abfragen
+für Geräteinformationen und RSSI gestartet. Socket-Statusänderungen erscheinen
+mit Instanz-ID und Statusnummer im Debug.
+
+Erfolgreiche Socket-Antworten setzen Kommunikationsfehler und den Online-Status
+zurück. Ein Fehler der separaten RSSI-Abfrage, etwa bei der Namensauflösung, zählt
+bei weiterhin antwortendem Socket nicht als Geräteausfall. Ein fehlgeschlagener
+Motorstopp bleibt unabhängig davon als Fehler sichtbar.
+
 ### Hinweis zu Dimmern
 
 Bei den getesteten zeptrionAIR-Dimmern liefert `chnotify` beim Dimmen nur den Ein-/Aus-Zustand und keinen zuverlässigen tatsächlichen Dimmwert. Deshalb wird ein vorhandener bekannter Dimmwert nicht durch diese Meldung überschrieben.
@@ -116,6 +137,9 @@ Unterstützt werden die zeptrionAIR-mDNS-Dienste `_zapp._tcp` sowie für ältere
 Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **ZeptrionAir Device → Client Socket** automatisch angelegt.
 
 ## Versionen
+
+### Version 1.5
+- Verbesserung der Kommunikation mit den Schaltern.
 
 ### Version 1.4
 - Kleine Modifikationen und Fehlerverbesserung.
