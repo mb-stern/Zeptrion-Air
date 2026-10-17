@@ -368,6 +368,7 @@ class ZeptrionAir extends IPSModuleStrict
             $this->EnterNotifyRecovery('Client Socket noch nicht aktiv');
         }
         // Start the socket listener before potentially slow HTTP/DNS info calls.
+        $this->CheckNotifySocket();
         $this->RefreshDeviceInfo();
     }
     private function SetCommunicationReady(): void
@@ -539,6 +540,7 @@ class ZeptrionAir extends IPSModuleStrict
     }
     public function RefreshRuntimeInfo(): void
     {
+        $this->CheckNotifySocket();
         if ($this->IsMotorOnlyDevice()) {
             $this->RefreshMotorCommunication();
             return;
@@ -2650,6 +2652,36 @@ class ZeptrionAir extends IPSModuleStrict
             : (string)call_user_func('ZEPA_StoreSmartButtonSceneData', $instanceID, $json);
         $result = json_decode($raw, true);
         return is_array($result) ? $result : ['success' => false, 'message' => 'Antwort der Zielinstanz ist ungültig.'];
+    }
+
+    private function CheckNotifySocket(): void
+    {
+        if ($this->GetBuffer('NotifyListening') !== '1') return;
+        $parent = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
+        if ($parent <= 0 || !IPS_InstanceExists($parent)) {
+            $this->SendDebug('Socketstatus', 'Kein Client Socket zugeordnet oder Instanz nicht vorhanden: ' . $parent, 0);
+            return;
+        }
+        $instance = IPS_GetInstance($parent);
+        $configuration = json_decode(IPS_GetConfiguration($parent), true) ?? [];
+        $active = $this->HasActiveParent();
+        $status = (int)($instance['InstanceStatus'] ?? 0);
+        $this->SendDebug('Socketstatus', json_encode([
+            'InstanzID' => $parent,
+            'Status' => $status,
+            'Host' => (string)($configuration['Host'] ?? ''),
+            'Port' => (int)($configuration['Port'] ?? 0),
+            'Open' => (bool)($configuration['Open'] ?? false),
+            'ParentAktiv' => $active,
+            'Anfrage' => $this->GetBuffer('NotifyPending')
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
+        // Reconcile a missed ready event on the existing info tick. Do not dial
+        // an inactive socket or interfere with pending requests/backoff timers.
+        if ($active && $status === 102 && ($configuration['Open'] ?? false)
+            && $this->GetBuffer('NotifyPending') === '' && $this->GetTimerInterval('RecoveryTimer') === 0) {
+            $this->SendDebug('RECOVERY', 'Client Socket bereits aktiv, keine Anfrage ausstehend -> chscan starten', 0);
+            $this->SendNotifyRequest('/zrap/chscan', 'scan');
+        }
     }
 
     public function StartNotifyListener(): bool

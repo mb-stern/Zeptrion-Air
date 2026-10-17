@@ -69,6 +69,37 @@ check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Ready event cannot
 $d->buffers['NotifyListening']='0';$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
 check(count($d->sent)===2,'Disabled listener is not restarted by ready event');
 
+// The existing info tick recovers a missed ready event, without dialing a closed socket.
+$d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['Channel1Type']='light';$d->active=false;
+$GLOBALS['instanceData'][11]=['InstanceStatus'=>202];
+$GLOBALS['socketConfig'][11]=['Host'=>'zapp-19370093','Port'=>80,'Open'=>true];
+$d->StartNotifyListener();$d->RefreshRuntimeInfo();
+check($d->sent===[] && $d->timers['RecoveryTimer']===0,'Info tick leaves disconnected socket waiting without requests');
+$d->active=true;$GLOBALS['instanceData'][11]['InstanceStatus']=102;
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===1 && $d->buffers['NotifyPending']==='scan','Info tick starts scan when ready event was missed, even if independent RSSI lookup fails');
+$snapshots=array_values(array_filter($d->debug,fn($entry)=>$entry[0]==='Socketstatus'));
+$snapshot=json_decode(end($snapshots)[1],true,512,JSON_THROW_ON_ERROR);
+check($snapshot['InstanzID']===11 && $snapshot['Status']===102 && $snapshot['Host']==='zapp-19370093' && $snapshot['Port']===80 && $snapshot['Open']===true && $snapshot['ParentAktiv']===true,'Device debug exposes actual socket ID, state and selected configuration');
+$deadline=$d->buffers['NotifyDeadline'];$d->RefreshRuntimeInfo();
+check(count($d->sent)===1 && $d->buffers['NotifyDeadline']===$deadline,'Info tick does not duplicate or reset pending scan');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->buffers['NotifyPending']==='notify','Info fallback resumes chnotify and preserves running long-poll');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex("HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n")]));
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===10000,'Info fallback respects scheduled recovery after active HTTP error');
+$d->timers['RecoveryTimer']=0;$d->buffers['NotifyListening']='0';$d->RefreshRuntimeInfo();
+check(count($d->sent)===2,'Info fallback cannot restart a disabled listener');
+$d->buffers['NotifyListening']='1';$GLOBALS['instanceData'][99]=['ConnectionID'=>0];$d->RefreshRuntimeInfo();
+check(count($d->sent)===2,'Missing parent is reported without starting a request');
+unset($GLOBALS['instanceData'][99]);$GLOBALS['socketConfig'][11]['Open']=false;
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Info fallback respects disabled Open setting even with a stale active status');
+$GLOBALS['socketConfig'][11]['Open']=true;$GLOBALS['instanceData'][11]['InstanceStatus']=202;
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Info fallback requires actual socket status 102 as well as an active parent chain');
+unset($GLOBALS['instanceData'],$GLOBALS['socketConfig']);
+
 // A responding notify socket must win over independent RSSI/DNS failures.
 $d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;$d->buffers['NotifyParent']='11';
 $d->attrs['CommunicationFailures']=8;$d->status=202;$GLOBALS['values']['Online']=false;

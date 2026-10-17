@@ -92,6 +92,14 @@ Beim Anwenden der Konfiguration wird der Socket-Listener vor den HTTP-Abfragen
 für Geräteinformationen und RSSI gestartet. Socket-Statusänderungen erscheinen
 mit Instanz-ID und Statusnummer im Debug.
 
+Zusätzlich liest das Modul beim Start und beim vorhandenen minütlichen
+Info-Termin den Zustand der Schnittstelle aus. Unter `Socketstatus` zeigt der
+Geräte-Debug Instanz-ID, Statusnummer, Host, Port, `Open`, den aktiven Parent-Zustand
+und die ausstehende Anfrage. Ist der Socket bereits aktiv und geöffnet, aber weder
+eine Anfrage noch ein Recovery-Timer ausstehend, startet `chscan` auch dann, wenn
+die Statusmeldung verpasst wurde. Ein inaktiver Socket wird dabei nicht geöffnet
+oder erneut verbunden.
+
 Erfolgreiche Socket-Antworten setzen Kommunikationsfehler und den Online-Status
 zurück. Ein Fehler der separaten RSSI-Abfrage, etwa bei der Namensauflösung, zählt
 bei weiterhin antwortendem Socket nicht als Geräteausfall. Ein fehlgeschlagener
