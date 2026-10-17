@@ -210,7 +210,9 @@ Mit `PHP_BIN=/pfad/zu/php bash tests/run.sh` kann eine alternative PHP-CLI verwe
 werden. Die Tests verwenden kleine Symcon-Testadapter und einen lokalen
 HTTP-Fixture-Server; sie senden keine Befehle an reale Geräte. Sie prüfen unter
 anderem Zugriffsschutz, Listener-Recovery, Lamellenstopps, unbekannte Zustände,
-Szenenreferenzen und die vollständige 730-Byte-Grenze. Integrationstests mit
-IP-Symcon 8.2 und der tatsächlichen Gerätefirmware bleiben zusätzlich erforderlich.
+Szenenreferenzen, die vollständige 730-Byte-Grenze sowie das Anlegen und
+Aktualisieren der Bedienungsvariablen mit den dokumentierten Enumeration-Optionen.
+Integrationstests mit IP-Symcon 8.2 und der tatsächlichen Gerätefirmware bleiben
+zusätzlich erforderlich.
 
 Änderungen werden ausschließlich auf dem Branch **development** veröffentlicht.

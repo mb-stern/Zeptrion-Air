@@ -5,6 +5,7 @@ php_bin=${PHP_BIN:-php}
 "$php_bin" -l ZeptrionAir/module.php
 "$php_bin" -l ZeptrionAirDiscovery/module.php
 "$php_bin" tests/run.php
+"$php_bin" tests/presentations.php
 log=$(mktemp)
 "$php_bin" -S 127.0.0.1:18984 tests/http-router.php > "$log" 2>&1 &
 server_pid=$!

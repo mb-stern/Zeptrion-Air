@@ -2337,9 +2337,9 @@ class ZeptrionAir extends IPSModuleStrict
                 // Heller startet dim_up, Stopp beendet die Fahrt, Dunkler startet dim_down.
                 $commandIdent = 'Ch' . $channel . 'Command';
                 $commandOptions = [
-                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'Color' => -1]
                 ];
                 for ($scene = 1; $scene <= 4; $scene++) {
                     if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
@@ -2349,7 +2349,7 @@ class ZeptrionAir extends IPSModuleStrict
                     $commandOptions[] = [
                         'Value' => 10 + $scene,
                         'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
-                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                        'IconActive' => false, 'IconValue' => '', 'Color' => -1
                     ];
                 }
                 $commandPresentation = [
@@ -2388,9 +2388,9 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($positionIdent);
 
                 $commandOptions = [
-                    ['Value' => 0, 'Caption' => 'Hoch',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 2, 'Caption' => 'Stopp', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 4, 'Caption' => 'Tief',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ['Value' => 0, 'Caption' => 'Hoch',  'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp', 'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',  'IconActive' => false, 'IconValue' => '', 'Color' => -1]
                 ];
                 for ($scene = 1; $scene <= 4; $scene++) {
                     if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
@@ -2398,7 +2398,7 @@ class ZeptrionAir extends IPSModuleStrict
                     $commandOptions[] = [
                         'Value' => 10 + $scene,
                         'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
-                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                        'IconActive' => false, 'IconValue' => '', 'Color' => -1
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
@@ -2441,11 +2441,11 @@ class ZeptrionAir extends IPSModuleStrict
                 ], 20);
 
                 $commandOptions = [
-                    ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'Color' => -1]
                 ];
                 for ($scene = 1; $scene <= 4; $scene++) {
                     if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
@@ -2453,7 +2453,7 @@ class ZeptrionAir extends IPSModuleStrict
                     $commandOptions[] = [
                         'Value' => 10 + $scene,
                         'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
-                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                        'IconActive' => false, 'IconValue' => '', 'Color' => -1
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
@@ -2523,7 +2523,6 @@ class ZeptrionAir extends IPSModuleStrict
                         // Fehlen sie, wirft enumerationForm.php u.a. "Undefined array key IconActive".
                         'IconActive' => false,
                         'IconValue' => '',
-                        'IconDisplay' => 'Default',
                         'Color' => -1
                     ];
                 }
