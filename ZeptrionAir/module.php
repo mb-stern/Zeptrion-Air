@@ -2725,6 +2725,8 @@ class ZeptrionAir extends IPSModuleStrict
             $this->EnterNotifyRecovery('Client Socket nicht aktiv');
             return;
         }
+        // The response is complete; channel updates may still yield to timers.
+        if ($this->GetBuffer('NotifyPending') === 'processing') return;
         if ($this->GetBuffer('NotifyPending') !== '') {
             if (microtime(true) < (float)$this->GetBuffer('NotifyDeadline')) return;
             $this->EnterNotifyRecovery('Antwortfrist überschritten');
@@ -2759,23 +2761,34 @@ class ZeptrionAir extends IPSModuleStrict
             if ($r === null) break;
             $buffer = $r['rest'];
             $kind = $this->GetBuffer('NotifyPending');
-            $this->SetBuffer('NotifyPending', '');
+            // Keep ownership of the request until its response has been applied
+            // and the next long-poll is prepared. An empty slot lets RecoveryTick
+            // inject an unrelated chscan in the middle of channel updates.
+            $this->SetBuffer('NotifyPending', 'processing');
             $this->SetBuffer('NotifyDeadline', '0');
-            $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
-            if ($r['status'] !== 200 && $r['status'] !== 302) {
-                $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
-                return '';
-            }
-            $this->ConfirmNotifyCommunication();
-            if ($kind === 'scan') {
-                $this->ProcessNotifyData($r['body']);
-                $this->SetTimerInterval('RecoveryTimer', 5000);
-                $this->SendDebug('RECOVERY', 'chscan OK -> chnotify aktivieren', 0);
-            } elseif ($kind === 'notify') {
-                $this->ProcessNotifyData($r['body']);
-            }
-            if ($this->GetBuffer('NotifyListening') === '1' && $this->GetBuffer('NotifyPending') === '') {
-                $this->SendNotifyRequest('/zrap/chnotify', 'notify');
+            try {
+                $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
+                if ($r['status'] !== 200 && $r['status'] !== 302) {
+                    $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
+                    return '';
+                }
+                $this->ConfirmNotifyCommunication();
+                if ($kind === 'scan') {
+                    $this->ProcessNotifyData($r['body']);
+                } elseif ($kind === 'notify') {
+                    $this->ProcessNotifyData($r['body']);
+                }
+                if ($this->GetBuffer('NotifyListening') === '1' && $this->GetBuffer('NotifyPending') === 'processing') {
+                    if ($kind === 'scan') $this->SendDebug('RECOVERY', 'chscan OK -> chnotify aktivieren', 0);
+                    $this->SendNotifyRequest('/zrap/chnotify', 'notify', true);
+                }
+            } finally {
+                // Release on processing errors, but preserve requests/recovery
+                // states installed by another callback during processing.
+                if ($this->GetBuffer('NotifyPending') === 'processing') {
+                    $this->SetBuffer('NotifyPending', '');
+                    $this->SetBuffer('NotifyDeadline', '0');
+                }
             }
         }
         $this->SetBuffer('NotifyBuffer', $buffer);
@@ -2804,20 +2817,21 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SendDebug('RECOVERY', $reason . ' -> aktiver Socket; chscan erneut in ' . $sec . ' s', 0);
     }
 
-    private function SendNotifyRequest(string $path, string $kind): bool
+    private function SendNotifyRequest(string $path, string $kind, bool $completingResponse = false): bool
     {
         if ($this->GetBuffer('NotifyListening') !== '1' || !$this->HasActiveParent()) {
             $this->EnterNotifyRecovery('Senden nicht möglich');
             return false;
         }
-        if ($this->GetBuffer('NotifyPending') !== '') return false;
+        $pending = $this->GetBuffer('NotifyPending');
+        if ($pending !== '' && !($completingResponse && $pending === 'processing')) return false;
         $q = "GET " . $path . " HTTP/1.1\r\n" .
              "Host: zeptrion\r\n" .
              "Accept: application/xml,text/xml,*/*\r\n" .
              "Cache-Control: no-cache\r\n" .
              "Connection: keep-alive\r\n\r\n";
-        $this->SetBuffer('NotifyPending', $kind);
         $this->SetBuffer('NotifyDeadline', (string)(microtime(true) + ($kind === 'notify' ? 40 : 10)));
+        $this->SetBuffer('NotifyPending', $kind);
         $this->SetTimerInterval('RecoveryTimer', 5000);
         $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
         $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));

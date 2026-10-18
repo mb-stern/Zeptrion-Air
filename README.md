@@ -84,6 +84,12 @@ Nach erfolgreicher Antwort folgt wieder `chnotify`. Solange eine Long-Poll-Antwo
 noch aussteht (das Gerät antwortet spätestens nach 30 Sekunden), wird keine
 zusätzliche Anfrage über denselben Socket gesendet.
 
+Während eine vollständig empfangene Antwort auf die Kanalvariablen angewendet
+wird, bleibt die Anfrage für weitere Sendungen gesperrt. Erst danach wird direkt
+die nächste `chnotify`-Anfrage vorbereitet. So kann der Recovery-Timer während
+der Antwortverarbeitung kein zusätzliches `chscan` auslösen. Ein gleichzeitiger
+Verbindungsabbruch oder eine bereits gestartete Wiederverbindung bleibt erhalten.
+
 Bleibt der Socket aktiv, aber eine Anfrage schlägt fehl (etwa mit HTTP 500), wird
 `chscan` standardmäßig nach zehn Sekunden erneut versucht. Antwortfristen und die
 Wiederherstellung eines hängenden TCP-Streams bleiben überwacht.

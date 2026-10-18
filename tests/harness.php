@@ -7,6 +7,7 @@ class IPSModuleStrict {
  public array $attrs=['OwnMotorState'=>'{}','MotorRuntimeState'=>'{}','MotorLearnedTimes'=>'{}','PendingSceneReferences'=>'[]','SceneReferences'=>'{}','SmartButtonScenes'=>'[]'];
  public array $buffers=[],$timers=[],$sent=[],$logs=[],$debug=[]; public int $status=102;
  public bool $active=true;
+ public $debugHook=null;
  protected function ReadPropertyString($k): string {return (string)($this->props[$k]??'');}
  protected function ReadPropertyInteger($k): int {return (int)($this->props[$k]??27000);}
  protected function ReadPropertyBoolean($k): bool {return (bool)($this->props[$k]??false);}
@@ -22,7 +23,7 @@ class IPSModuleStrict {
  protected function GetTimerInterval($k): int {return $this->timers[$k]??0;}
  protected function HasActiveParent(): bool {return $this->active;}
  protected function SendDataToParent($json): bool {$this->sent[]=json_decode($json,true); return true;}
- protected function SendDebug(...$args): void {$this->debug[]=$args;}
+ protected function SendDebug(...$args): void {$this->debug[]=$args;if($this->debugHook!==null)($this->debugHook)(...$args);}
  protected function SetStatus(int $status): void {$this->status=$status;}
  protected function LogMessage(string $message,int $severity): void {$this->logs[]=$message;}
  protected function GetIDForIdent(string $ident): int {return IPS_GetObjectIDByIdent($ident,$this->InstanceID);}

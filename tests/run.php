@@ -51,6 +51,40 @@ $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent
 $d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===0,'Inactive parent stops recovery timer and waits for status event');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
 
+// Reproduce a timer callback interleaved with processing a valid HTTP response.
+foreach([false,true] as $notifyResponse){
+ $d=new TestDevice();$d->props['Channel1Type']='light';$d->buffers['NotifyParent']='11';$d->StartNotifyListener();
+ if($notifyResponse)$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+ $before=count($d->sent);$parentChangesBefore=$GLOBALS['parentChanges']??[];$interleaved=false;
+ $d->debugHook=function($label)use($d,&$interleaved){
+  if($label!=='CHNOTIFY EVENT' || $interleaved)return;
+  $interleaved=true;$sent=count($d->sent);
+  $d->RecoveryTick();$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);invoke($d,'CheckNotifySocket');
+  check(count($d->sent)===$sent,'Timer, ready event and info check cannot send while an HTTP response is being processed');
+ };
+ $d->buffers['NotifyDeadline']='1';$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+ check($interleaved && count($d->sent)===$before+1 && str_starts_with(hex2bin(end($d->sent)['Buffer']),'GET /zrap/chnotify '),'Processed response sends exactly one next chnotify, without an extra chscan');
+ check($d->buffers['NotifyPending']==='notify' && (float)$d->buffers['NotifyDeadline']>microtime(true)+30,'Response processing transfers directly to the next long-poll with fresh deadline');
+ check(($GLOBALS['parentChanges']??[])===$parentChangesBefore,'Completed response is not mistaken for a socket timeout during processing');
+}
+$d=new TestDevice();$d->props['Channel1Type']='light';$d->StartNotifyListener();
+$d->debugHook=function($label){if($label==='CHNOTIFY EVENT')throw new RuntimeException('Simulated processing failure');};
+try{$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));throw new LogicException('Expected processing failure');}catch(RuntimeException $e){check($e->getMessage()==='Simulated processing failure','Processing failure propagates');}
+$d->debugHook=null;
+check($d->buffers['NotifyPending']==='' && $d->buffers['NotifyDeadline']==='0','Processing failure releases the response state');
+$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent)===2,'Watchdog can recover after a processing exception');
+foreach([false,true] as $reconnected){
+ $d=new TestDevice();$d->props['Channel1Type']='light';$d->buffers['NotifyParent']='11';$d->StartNotifyListener();
+ $d->debugHook=function($label)use($d,$reconnected){
+  if($label!=='CHNOTIFY EVENT')return;
+  $d->debugHook=null;$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);
+  if($reconnected){$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);}
+ };
+ $d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+ check($reconnected ? ($d->buffers['NotifyPending']==='scan' && count($d->sent)===2) : ($d->buffers['NotifyPending']==='' && count($d->sent)===1),'Response completion preserves a concurrent disconnect or a new reconnect scan');
+ check($d->timers['RecoveryTimer']===($reconnected?5000:0),'Cancelled response cannot rearm the watchdog while socket is disconnected');
+}
+
 // Reconnection is driven by ready events, with no polling of an inactive socket.
 $d=new TestDevice();$d->buffers['NotifyParent']='11';$d->active=false;$d->StartNotifyListener();
 $d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
