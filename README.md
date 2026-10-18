@@ -76,6 +76,17 @@ Nach einer Statusmeldung wird die Überwachung unmittelbar erneut gestartet. Ein
 
 Bei Kommunikationsproblemen wird die Verbindung automatisch überwacht und die Benachrichtigung wieder gestartet.
 
+Beim Anlegen oder erneuten Anwenden der Konfiguration wartet eine Geräteinstanz
+zunächst mit Status 104 „Verbindung wird hergestellt“ auf den Client Socket und
+die erste gültige Antwort. Allein ein noch nicht bereiter Socket löst dabei keinen
+Kommunikationsfehler aus. Sobald er aktiv ist, startet sofort `chscan`; nach dessen
+Antwort folgt `chnotify` und die Instanz wird aktiv. Eine separate erfolgreiche
+RSSI-Abfrage ersetzt diese Bestätigung des Listeners nicht.
+
+Fehlgeschlagene Übertragungen, HTTP-Fehler, abgelaufene Antwortfristen oder der
+Abbruch einer bereits laufenden Verbindung bleiben Kommunikationsfehler.
+Ebenso bleibt ein fehlgeschlagener Motorstopp auch während der Startphase sichtbar.
+
 Der Watchdog prüft alle fünf Sekunden, ob die Antwortfrist einer gesendeten
 Anfrage abgelaufen ist. Bei einem inaktiven Socket wird dieser Timer abgeschaltet:
 Die Wiederverbindung übernimmt der native Client Socket. Das Modul wartet auf

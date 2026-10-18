@@ -46,6 +46,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
+        $this->SetBuffer('NotifyConnectionStatus', '104');
         $this->SetBuffer('NotifyDeadline', '0');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -306,6 +307,7 @@ class ZeptrionAir extends IPSModuleStrict
             ],
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
+                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Verbindung wird hergestellt'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'IP-Adresse / Hostname fehlt'],
                 ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler']
             ]
@@ -333,6 +335,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyDeadline', '0');
         $this->SetBuffer('NotifyOnline', '0');
+        $this->SetBuffer('NotifyConnectionStatus', '104');
         $this->SetBuffer('NotifyListening', '1');
         $this->SetTimerInterval('RecoveryTimer', 0);
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
@@ -373,13 +376,23 @@ class ZeptrionAir extends IPSModuleStrict
     }
     private function SetCommunicationReady(): void
     {
+        $status = 102;
+        if ($this->GetBuffer('NotifyListening') === '1') {
+            $status = (int)$this->GetBuffer('NotifyConnectionStatus');
+            if (!in_array($status, [102, 104, 202], true)) $status = 104;
+        }
+        $this->SetCommunicationStatus($status);
+    }
+
+    private function SetCommunicationStatus(int $status): void
+    {
         foreach ($this->ReadOwnMotorStates() as $state) {
             if ((bool)($state['stopFailed'] ?? false)) {
                 $this->SetStatus(202);
                 return;
             }
         }
-        $this->SetStatus(102);
+        $this->SetStatus($status);
     }
 
     private function HasHealthyNotifyConnection(): bool
@@ -393,6 +406,7 @@ class ZeptrionAir extends IPSModuleStrict
     private function ConfirmNotifyCommunication(): void
     {
         $this->SetBuffer('NotifyOnline', '1');
+        $this->SetBuffer('NotifyConnectionStatus', '102');
         if ($this->ReadAttributeInteger('CommunicationFailures') > 0) {
             $this->SendDebug('Kommunikation', 'Client Socket antwortet wieder – Kommunikationsfehler zurückgesetzt', 0);
             $this->LogMessage('Kommunikation über Client Socket wiederhergestellt', KL_MESSAGE);
@@ -2689,6 +2703,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyListening', '1');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
+        $this->SetCommunicationReady();
         if (!$this->HasActiveParent()) {
             $this->EnterNotifyRecovery('Client Socket nicht aktiv');
             return false;
@@ -2729,7 +2744,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->GetBuffer('NotifyPending') === 'processing') return;
         if ($this->GetBuffer('NotifyPending') !== '') {
             if (microtime(true) < (float)$this->GetBuffer('NotifyDeadline')) return;
-            $this->EnterNotifyRecovery('Antwortfrist überschritten');
+            $this->EnterNotifyRecovery('Antwortfrist überschritten', true);
             // Discard the old TCP stream before sending a fresh scan. Otherwise a
             // late response could be mistaken for the new request's response.
             $parent = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
@@ -2769,7 +2784,7 @@ class ZeptrionAir extends IPSModuleStrict
             try {
                 $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
                 if ($r['status'] !== 200 && $r['status'] !== 302) {
-                    $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
+                    $this->EnterNotifyRecovery('HTTP Status ' . $r['status'], true);
                     return '';
                 }
                 $this->ConfirmNotifyCommunication();
@@ -2795,8 +2810,14 @@ class ZeptrionAir extends IPSModuleStrict
         return '';
     }
 
-    private function EnterNotifyRecovery(string $reason): void
+    private function EnterNotifyRecovery(string $reason, bool $requestFailed = false): void
     {
+        // Waiting for the first usable socket is a normal installation phase.
+        // A failed request or loss of an established listener remains an error.
+        $previousStatus = (int)$this->GetBuffer('NotifyConnectionStatus');
+        $hadPendingRequest = in_array($this->GetBuffer('NotifyPending'), ['scan', 'notify'], true);
+        $status = $requestFailed || $hadPendingRequest || in_array($previousStatus, [102, 202], true) ? 202 : 104;
+        $this->SetBuffer('NotifyConnectionStatus', (string)$status);
         $this->SetBuffer('NotifyOnline', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyDeadline', '0');
@@ -2804,7 +2825,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', false);
         }
-        $this->SetStatus(202);
+        $this->SetCommunicationStatus($status);
         if (!$this->HasActiveParent()) {
             // The native Client Socket owns reconnect. Its ready event starts
             // the scan; no timer is needed while the connection is unavailable.
@@ -2837,7 +2858,7 @@ class ZeptrionAir extends IPSModuleStrict
         $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         if ($ok === false) {
             $this->SetBuffer('NotifyPending', '');
-            $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen');
+            $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen', true);
             return false;
         }
         return true;

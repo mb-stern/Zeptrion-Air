@@ -85,6 +85,35 @@ foreach([false,true] as $reconnected){
  check($d->timers['RecoveryTimer']===($reconnected?5000:0),'Cancelled response cannot rearm the watchdog while socket is disconnected');
 }
 
+// A newly configured device waits neutrally until its socket and first response are ready.
+$d=new TestDevice();$d->props['Channel1Type']='light';$d->props['ShowOnline']=true;$d->buffers['NotifyParent']='11';$d->active=false;
+check(!$d->StartNotifyListener() && $d->status===104 && $d->sent===[] && $d->timers['RecoveryTimer']===0,'Initial socket startup is inactive/waiting, without an immediate error or send');
+$d->MessageSink(time(),11,IM_CHANGESTATUS,[200]);$d->RecoveryTick();
+check($d->status===104 && $d->sent===[],'Initial parent errors keep waiting until a first actual request is possible');
+invoke($d,'SetCommunicationReady');
+check($d->status===104,'Successful metadata/RSSI cannot mark an unconfirmed listener active');
+$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check($d->status===104 && $d->buffers['NotifyPending']==='scan' && count($d->sent)===1,'Ready socket immediately sends initial scan while awaiting first response');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->status===102 && $d->buffers['NotifyPending']==='notify','First successful response activates device and starts chnotify');
+$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[200]);
+check($d->status===202,'Loss of an established listener is still a real communication error');
+invoke($d,'SetCommunicationReady');
+check($d->status===202,'Separate HTTP success cannot hide a failed established listener');
+$d=new TestDevice();$d->props['Channel1Type']='light';$d->StartNotifyListener();
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex("HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n")]));
+check($d->status===202,'An actual initial HTTP failure is not hidden as normal startup');
+$d->active=false;$d->RecoveryTick();invoke($d,'SetCommunicationReady');
+check($d->status===202,'A failed initial request retains its error while waiting for reconnect');
+$d=new TestDevice();$d->sendResult=false;
+check(!$d->StartNotifyListener() && $d->status===202,'Rejected initial socket send remains a genuine error');
+$d=new TestDevice();$d->StartNotifyListener();$d->buffers['NotifyDeadline']='1';$d->RecoveryTick();
+check($d->status===202,'Timeout of the first real request remains a genuine error');
+$d=new TestDevice();$d->StartNotifyListener();$d->active=false;$d->RecoveryTick();
+check($d->status===202,'Disconnect while the first actual scan is pending is not treated as mere startup');
+$d=new TestDevice();$d->attrs['OwnMotorState']=json_encode(['1'=>['stopFailed'=>true]]);$d->active=false;$d->StartNotifyListener();
+check($d->status===202,'Neutral startup cannot hide an unresolved failed motor stop');
+
 // Reconnection is driven by ready events, with no polling of an inactive socket.
 $d=new TestDevice();$d->buffers['NotifyParent']='11';$d->active=false;$d->StartNotifyListener();
 $d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
