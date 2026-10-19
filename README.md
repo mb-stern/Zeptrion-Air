@@ -163,6 +163,9 @@ Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **Zeptrion
 
 ## Versionen
 
+### Version 1.6
+- Fehler beim Anlegen der Geräte behoben.
+
 ### Version 1.5
 - Verbesserung der Kommunikation mit den Schaltern.
 
