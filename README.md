@@ -76,6 +76,17 @@ Nach einer Statusmeldung wird die Überwachung unmittelbar erneut gestartet. Ein
 
 Bei Kommunikationsproblemen wird die Verbindung automatisch überwacht und die Benachrichtigung wieder gestartet.
 
+Beim Anlegen oder erneuten Anwenden der Konfiguration wartet eine Geräteinstanz
+zunächst mit Status 104 „Verbindung wird hergestellt“ auf den Client Socket und
+die erste gültige Antwort. Allein ein noch nicht bereiter Socket löst dabei keinen
+Kommunikationsfehler aus. Sobald er aktiv ist, startet sofort `chscan`; nach dessen
+Antwort folgt `chnotify` und die Instanz wird aktiv. Eine separate erfolgreiche
+RSSI-Abfrage ersetzt diese Bestätigung des Listeners nicht.
+
+Fehlgeschlagene Übertragungen, HTTP-Fehler, abgelaufene Antwortfristen oder der
+Abbruch einer bereits laufenden Verbindung bleiben Kommunikationsfehler.
+Ebenso bleibt ein fehlgeschlagener Motorstopp auch während der Startphase sichtbar.
+
 Der Watchdog prüft alle fünf Sekunden, ob die Antwortfrist einer gesendeten
 Anfrage abgelaufen ist. Bei einem inaktiven Socket wird dieser Timer abgeschaltet:
 Die Wiederverbindung übernimmt der native Client Socket. Das Modul wartet auf
@@ -84,6 +95,12 @@ Nach erfolgreicher Antwort folgt wieder `chnotify`. Solange eine Long-Poll-Antwo
 noch aussteht (das Gerät antwortet spätestens nach 30 Sekunden), wird keine
 zusätzliche Anfrage über denselben Socket gesendet.
 
+Während eine vollständig empfangene Antwort auf die Kanalvariablen angewendet
+wird, bleibt die Anfrage für weitere Sendungen gesperrt. Erst danach wird direkt
+die nächste `chnotify`-Anfrage vorbereitet. So kann der Recovery-Timer während
+der Antwortverarbeitung kein zusätzliches `chscan` auslösen. Ein gleichzeitiger
+Verbindungsabbruch oder eine bereits gestartete Wiederverbindung bleibt erhalten.
+
 Bleibt der Socket aktiv, aber eine Anfrage schlägt fehl (etwa mit HTTP 500), wird
 `chscan` standardmäßig nach zehn Sekunden erneut versucht. Antwortfristen und die
 Wiederherstellung eines hängenden TCP-Streams bleiben überwacht.
@@ -91,6 +108,14 @@ Wiederherstellung eines hängenden TCP-Streams bleiben überwacht.
 Beim Anwenden der Konfiguration wird der Socket-Listener vor den HTTP-Abfragen
 für Geräteinformationen und RSSI gestartet. Socket-Statusänderungen erscheinen
 mit Instanz-ID und Statusnummer im Debug.
+
+Zusätzlich liest das Modul beim Start und beim vorhandenen minütlichen
+Info-Termin den Zustand der Schnittstelle aus. Unter `Socketstatus` zeigt der
+Geräte-Debug Instanz-ID, Statusnummer, Host, Port, `Open`, den aktiven Parent-Zustand
+und die ausstehende Anfrage. Ist der Socket bereits aktiv und geöffnet, aber weder
+eine Anfrage noch ein Recovery-Timer ausstehend, startet `chscan` auch dann, wenn
+die Statusmeldung verpasst wurde. Ein inaktiver Socket wird dabei nicht geöffnet
+oder erneut verbunden.
 
 Erfolgreiche Socket-Antworten setzen Kommunikationsfehler und den Online-Status
 zurück. Ein Fehler der separaten RSSI-Abfrage, etwa bei der Namensauflösung, zählt
@@ -137,6 +162,9 @@ Unterstützt werden die zeptrionAIR-mDNS-Dienste `_zapp._tcp` sowie für ältere
 Beim Erstellen eines gefundenen Geräts wird die benötigte Kette aus **ZeptrionAir Device → Client Socket** automatisch angelegt.
 
 ## Versionen
+
+### Version 1.6
+- Fehler beim Anlegen der Geräte behoben.
 
 ### Version 1.5
 - Verbesserung der Kommunikation mit den Schaltern.
@@ -210,7 +238,9 @@ Mit `PHP_BIN=/pfad/zu/php bash tests/run.sh` kann eine alternative PHP-CLI verwe
 werden. Die Tests verwenden kleine Symcon-Testadapter und einen lokalen
 HTTP-Fixture-Server; sie senden keine Befehle an reale Geräte. Sie prüfen unter
 anderem Zugriffsschutz, Listener-Recovery, Lamellenstopps, unbekannte Zustände,
-Szenenreferenzen und die vollständige 730-Byte-Grenze. Integrationstests mit
-IP-Symcon 8.2 und der tatsächlichen Gerätefirmware bleiben zusätzlich erforderlich.
+Szenenreferenzen, die vollständige 730-Byte-Grenze sowie das Anlegen und
+Aktualisieren der Bedienungsvariablen mit den dokumentierten Enumeration-Optionen.
+Integrationstests mit IP-Symcon 8.2 und der tatsächlichen Gerätefirmware bleiben
+zusätzlich erforderlich.
 
 Änderungen werden ausschließlich auf dem Branch **development** veröffentlicht.

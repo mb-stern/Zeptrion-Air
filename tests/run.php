@@ -51,6 +51,69 @@ $d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent
 $d->buffers['NotifyParent']='11';$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);check($d->buffers['NotifyPending']==='' && $d->timers['RecoveryTimer']===0,'Inactive parent stops recovery timer and waits for status event');
 $d->active=true;$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan','Reconnected parent resumes scan');
 
+// Reproduce a timer callback interleaved with processing a valid HTTP response.
+foreach([false,true] as $notifyResponse){
+ $d=new TestDevice();$d->props['Channel1Type']='light';$d->buffers['NotifyParent']='11';$d->StartNotifyListener();
+ if($notifyResponse)$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+ $before=count($d->sent);$parentChangesBefore=$GLOBALS['parentChanges']??[];$interleaved=false;
+ $d->debugHook=function($label)use($d,&$interleaved){
+  if($label!=='CHNOTIFY EVENT' || $interleaved)return;
+  $interleaved=true;$sent=count($d->sent);
+  $d->RecoveryTick();$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);invoke($d,'CheckNotifySocket');
+  check(count($d->sent)===$sent,'Timer, ready event and info check cannot send while an HTTP response is being processed');
+ };
+ $d->buffers['NotifyDeadline']='1';$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+ check($interleaved && count($d->sent)===$before+1 && str_starts_with(hex2bin(end($d->sent)['Buffer']),'GET /zrap/chnotify '),'Processed response sends exactly one next chnotify, without an extra chscan');
+ check($d->buffers['NotifyPending']==='notify' && (float)$d->buffers['NotifyDeadline']>microtime(true)+30,'Response processing transfers directly to the next long-poll with fresh deadline');
+ check(($GLOBALS['parentChanges']??[])===$parentChangesBefore,'Completed response is not mistaken for a socket timeout during processing');
+}
+$d=new TestDevice();$d->props['Channel1Type']='light';$d->StartNotifyListener();
+$d->debugHook=function($label){if($label==='CHNOTIFY EVENT')throw new RuntimeException('Simulated processing failure');};
+try{$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));throw new LogicException('Expected processing failure');}catch(RuntimeException $e){check($e->getMessage()==='Simulated processing failure','Processing failure propagates');}
+$d->debugHook=null;
+check($d->buffers['NotifyPending']==='' && $d->buffers['NotifyDeadline']==='0','Processing failure releases the response state');
+$d->RecoveryTick();check($d->buffers['NotifyPending']==='scan' && count($d->sent)===2,'Watchdog can recover after a processing exception');
+foreach([false,true] as $reconnected){
+ $d=new TestDevice();$d->props['Channel1Type']='light';$d->buffers['NotifyParent']='11';$d->StartNotifyListener();
+ $d->debugHook=function($label)use($d,$reconnected){
+  if($label!=='CHNOTIFY EVENT')return;
+  $d->debugHook=null;$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[202]);
+  if($reconnected){$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);}
+ };
+ $d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+ check($reconnected ? ($d->buffers['NotifyPending']==='scan' && count($d->sent)===2) : ($d->buffers['NotifyPending']==='' && count($d->sent)===1),'Response completion preserves a concurrent disconnect or a new reconnect scan');
+ check($d->timers['RecoveryTimer']===($reconnected?5000:0),'Cancelled response cannot rearm the watchdog while socket is disconnected');
+}
+
+// A newly configured device waits neutrally until its socket and first response are ready.
+$d=new TestDevice();$d->props['Channel1Type']='light';$d->props['ShowOnline']=true;$d->buffers['NotifyParent']='11';$d->active=false;
+check(!$d->StartNotifyListener() && $d->status===104 && $d->sent===[] && $d->timers['RecoveryTimer']===0,'Initial socket startup is inactive/waiting, without an immediate error or send');
+$d->MessageSink(time(),11,IM_CHANGESTATUS,[200]);$d->RecoveryTick();
+check($d->status===104 && $d->sent===[],'Initial parent errors keep waiting until a first actual request is possible');
+invoke($d,'SetCommunicationReady');
+check($d->status===104,'Successful metadata/RSSI cannot mark an unconfirmed listener active');
+$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
+check($d->status===104 && $d->buffers['NotifyPending']==='scan' && count($d->sent)===1,'Ready socket immediately sends initial scan while awaiting first response');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));
+check($d->status===102 && $d->buffers['NotifyPending']==='notify','First successful response activates device and starts chnotify');
+$d->active=false;$d->MessageSink(time(),11,IM_CHANGESTATUS,[200]);
+check($d->status===202,'Loss of an established listener is still a real communication error');
+invoke($d,'SetCommunicationReady');
+check($d->status===202,'Separate HTTP success cannot hide a failed established listener');
+$d=new TestDevice();$d->props['Channel1Type']='light';$d->StartNotifyListener();
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex("HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n")]));
+check($d->status===202,'An actual initial HTTP failure is not hidden as normal startup');
+$d->active=false;$d->RecoveryTick();invoke($d,'SetCommunicationReady');
+check($d->status===202,'A failed initial request retains its error while waiting for reconnect');
+$d=new TestDevice();$d->sendResult=false;
+check(!$d->StartNotifyListener() && $d->status===202,'Rejected initial socket send remains a genuine error');
+$d=new TestDevice();$d->StartNotifyListener();$d->buffers['NotifyDeadline']='1';$d->RecoveryTick();
+check($d->status===202,'Timeout of the first real request remains a genuine error');
+$d=new TestDevice();$d->StartNotifyListener();$d->active=false;$d->RecoveryTick();
+check($d->status===202,'Disconnect while the first actual scan is pending is not treated as mere startup');
+$d=new TestDevice();$d->attrs['OwnMotorState']=json_encode(['1'=>['stopFailed'=>true]]);$d->active=false;$d->StartNotifyListener();
+check($d->status===202,'Neutral startup cannot hide an unresolved failed motor stop');
+
 // Reconnection is driven by ready events, with no polling of an inactive socket.
 $d=new TestDevice();$d->buffers['NotifyParent']='11';$d->active=false;$d->StartNotifyListener();
 $d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
@@ -68,6 +131,37 @@ $d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
 check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Ready event cannot send or poll while physical parent chain is inactive');
 $d->buffers['NotifyListening']='0';$d->active=true;$d->MessageSink(time(),11,IM_CHANGESTATUS,[102]);
 check(count($d->sent)===2,'Disabled listener is not restarted by ready event');
+
+// The existing info tick recovers a missed ready event, without dialing a closed socket.
+$d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['Channel1Type']='light';$d->active=false;
+$GLOBALS['instanceData'][11]=['InstanceStatus'=>202];
+$GLOBALS['socketConfig'][11]=['Host'=>'zapp-19370093','Port'=>80,'Open'=>true];
+$d->StartNotifyListener();$d->RefreshRuntimeInfo();
+check($d->sent===[] && $d->timers['RecoveryTimer']===0,'Info tick leaves disconnected socket waiting without requests');
+$d->active=true;$GLOBALS['instanceData'][11]['InstanceStatus']=102;
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===1 && $d->buffers['NotifyPending']==='scan','Info tick starts scan when ready event was missed, even if independent RSSI lookup fails');
+$snapshots=array_values(array_filter($d->debug,fn($entry)=>$entry[0]==='Socketstatus'));
+$snapshot=json_decode(end($snapshots)[1],true,512,JSON_THROW_ON_ERROR);
+check($snapshot['InstanzID']===11 && $snapshot['Status']===102 && $snapshot['Host']==='zapp-19370093' && $snapshot['Port']===80 && $snapshot['Open']===true && $snapshot['ParentAktiv']===true,'Device debug exposes actual socket ID, state and selected configuration');
+$deadline=$d->buffers['NotifyDeadline'];$d->RefreshRuntimeInfo();
+check(count($d->sent)===1 && $d->buffers['NotifyDeadline']===$deadline,'Info tick does not duplicate or reset pending scan');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex($response)]));$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->buffers['NotifyPending']==='notify','Info fallback resumes chnotify and preserves running long-poll');
+$d->ReceiveData(json_encode(['Buffer'=>bin2hex("HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n")]));
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===10000,'Info fallback respects scheduled recovery after active HTTP error');
+$d->timers['RecoveryTimer']=0;$d->buffers['NotifyListening']='0';$d->RefreshRuntimeInfo();
+check(count($d->sent)===2,'Info fallback cannot restart a disabled listener');
+$d->buffers['NotifyListening']='1';$GLOBALS['instanceData'][99]=['ConnectionID'=>0];$d->RefreshRuntimeInfo();
+check(count($d->sent)===2,'Missing parent is reported without starting a request');
+unset($GLOBALS['instanceData'][99]);$GLOBALS['socketConfig'][11]['Open']=false;
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Info fallback respects disabled Open setting even with a stale active status');
+$GLOBALS['socketConfig'][11]['Open']=true;$GLOBALS['instanceData'][11]['InstanceStatus']=202;
+$d->RefreshRuntimeInfo();
+check(count($d->sent)===2 && $d->timers['RecoveryTimer']===0,'Info fallback requires actual socket status 102 as well as an active parent chain');
+unset($GLOBALS['instanceData'],$GLOBALS['socketConfig']);
 
 // A responding notify socket must win over independent RSSI/DNS failures.
 $d=new TestDevice();$d->props['Host']='127.0.0.1:1';$d->props['ShowOnline']=true;$d->buffers['NotifyParent']='11';

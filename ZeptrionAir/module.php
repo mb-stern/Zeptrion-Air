@@ -46,6 +46,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyListening', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyOnline', '0');
+        $this->SetBuffer('NotifyConnectionStatus', '104');
         $this->SetBuffer('NotifyDeadline', '0');
         for ($channel = 1; $channel <= 4; $channel++) {
             $this->RegisterPropertyString('Channel' . $channel . 'Type', 'unused');
@@ -306,6 +307,7 @@ class ZeptrionAir extends IPSModuleStrict
             ],
             'status' => [
                 ['code' => 102, 'icon' => 'active', 'caption' => 'Aktiv'],
+                ['code' => 104, 'icon' => 'inactive', 'caption' => 'Verbindung wird hergestellt'],
                 ['code' => 201, 'icon' => 'inactive', 'caption' => 'IP-Adresse / Hostname fehlt'],
                 ['code' => 202, 'icon' => 'error', 'caption' => 'Kommunikationsfehler']
             ]
@@ -333,6 +335,7 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyDeadline', '0');
         $this->SetBuffer('NotifyOnline', '0');
+        $this->SetBuffer('NotifyConnectionStatus', '104');
         $this->SetBuffer('NotifyListening', '1');
         $this->SetTimerInterval('RecoveryTimer', 0);
         $this->SendDebug('Lifecycle', 'ApplyChanges gestartet', 0);
@@ -368,9 +371,20 @@ class ZeptrionAir extends IPSModuleStrict
             $this->EnterNotifyRecovery('Client Socket noch nicht aktiv');
         }
         // Start the socket listener before potentially slow HTTP/DNS info calls.
+        $this->CheckNotifySocket();
         $this->RefreshDeviceInfo();
     }
     private function SetCommunicationReady(): void
+    {
+        $status = 102;
+        if ($this->GetBuffer('NotifyListening') === '1') {
+            $status = (int)$this->GetBuffer('NotifyConnectionStatus');
+            if (!in_array($status, [102, 104, 202], true)) $status = 104;
+        }
+        $this->SetCommunicationStatus($status);
+    }
+
+    private function SetCommunicationStatus(int $status): void
     {
         foreach ($this->ReadOwnMotorStates() as $state) {
             if ((bool)($state['stopFailed'] ?? false)) {
@@ -378,7 +392,7 @@ class ZeptrionAir extends IPSModuleStrict
                 return;
             }
         }
-        $this->SetStatus(102);
+        $this->SetStatus($status);
     }
 
     private function HasHealthyNotifyConnection(): bool
@@ -392,6 +406,7 @@ class ZeptrionAir extends IPSModuleStrict
     private function ConfirmNotifyCommunication(): void
     {
         $this->SetBuffer('NotifyOnline', '1');
+        $this->SetBuffer('NotifyConnectionStatus', '102');
         if ($this->ReadAttributeInteger('CommunicationFailures') > 0) {
             $this->SendDebug('Kommunikation', 'Client Socket antwortet wieder – Kommunikationsfehler zurückgesetzt', 0);
             $this->LogMessage('Kommunikation über Client Socket wiederhergestellt', KL_MESSAGE);
@@ -539,6 +554,7 @@ class ZeptrionAir extends IPSModuleStrict
     }
     public function RefreshRuntimeInfo(): void
     {
+        $this->CheckNotifySocket();
         if ($this->IsMotorOnlyDevice()) {
             $this->RefreshMotorCommunication();
             return;
@@ -2337,9 +2353,9 @@ class ZeptrionAir extends IPSModuleStrict
                 // Heller startet dim_up, Stopp beendet die Fahrt, Dunkler startet dim_down.
                 $commandIdent = 'Ch' . $channel . 'Command';
                 $commandOptions = [
-                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ['Value' => 0, 'Caption' => 'Heller',  'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',   'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Dunkler', 'IconActive' => false, 'IconValue' => '', 'Color' => -1]
                 ];
                 for ($scene = 1; $scene <= 4; $scene++) {
                     if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) {
@@ -2349,7 +2365,7 @@ class ZeptrionAir extends IPSModuleStrict
                     $commandOptions[] = [
                         'Value' => 10 + $scene,
                         'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
-                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                        'IconActive' => false, 'IconValue' => '', 'Color' => -1
                     ];
                 }
                 $commandPresentation = [
@@ -2388,9 +2404,9 @@ class ZeptrionAir extends IPSModuleStrict
                 $this->EnableAction($positionIdent);
 
                 $commandOptions = [
-                    ['Value' => 0, 'Caption' => 'Hoch',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 2, 'Caption' => 'Stopp', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 4, 'Caption' => 'Tief',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ['Value' => 0, 'Caption' => 'Hoch',  'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp', 'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',  'IconActive' => false, 'IconValue' => '', 'Color' => -1]
                 ];
                 for ($scene = 1; $scene <= 4; $scene++) {
                     if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
@@ -2398,7 +2414,7 @@ class ZeptrionAir extends IPSModuleStrict
                     $commandOptions[] = [
                         'Value' => 10 + $scene,
                         'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
-                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                        'IconActive' => false, 'IconValue' => '', 'Color' => -1
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
@@ -2441,11 +2457,11 @@ class ZeptrionAir extends IPSModuleStrict
                 ], 20);
 
                 $commandOptions = [
-                    ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1],
-                    ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1]
+                    ['Value' => 0, 'Caption' => 'Hoch',         'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 1, 'Caption' => 'Lamellen auf', 'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 2, 'Caption' => 'Stopp',        'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 3, 'Caption' => 'Lamellen zu',  'IconActive' => false, 'IconValue' => '', 'Color' => -1],
+                    ['Value' => 4, 'Caption' => 'Tief',         'IconActive' => false, 'IconValue' => '', 'Color' => -1]
                 ];
                 for ($scene = 1; $scene <= 4; $scene++) {
                     if (!$this->ReadPropertyBoolean('Channel' . $channel . 'Scene' . $scene . 'Visible')) continue;
@@ -2453,7 +2469,7 @@ class ZeptrionAir extends IPSModuleStrict
                     $commandOptions[] = [
                         'Value' => 10 + $scene,
                         'Caption' => $caption !== '' ? $caption : 'Szene ' . $scene,
-                        'IconActive' => false, 'IconValue' => '', 'IconDisplay' => 'Default', 'Color' => -1
+                        'IconActive' => false, 'IconValue' => '', 'Color' => -1
                     ];
                 }
                 $commandIdent = 'Ch' . $channel . 'Command';
@@ -2523,7 +2539,6 @@ class ZeptrionAir extends IPSModuleStrict
                         // Fehlen sie, wirft enumerationForm.php u.a. "Undefined array key IconActive".
                         'IconActive' => false,
                         'IconValue' => '',
-                        'IconDisplay' => 'Default',
                         'Color' => -1
                     ];
                 }
@@ -2653,11 +2668,42 @@ class ZeptrionAir extends IPSModuleStrict
         return is_array($result) ? $result : ['success' => false, 'message' => 'Antwort der Zielinstanz ist ungültig.'];
     }
 
+    private function CheckNotifySocket(): void
+    {
+        if ($this->GetBuffer('NotifyListening') !== '1') return;
+        $parent = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
+        if ($parent <= 0 || !IPS_InstanceExists($parent)) {
+            $this->SendDebug('Socketstatus', 'Kein Client Socket zugeordnet oder Instanz nicht vorhanden: ' . $parent, 0);
+            return;
+        }
+        $instance = IPS_GetInstance($parent);
+        $configuration = json_decode(IPS_GetConfiguration($parent), true) ?? [];
+        $active = $this->HasActiveParent();
+        $status = (int)($instance['InstanceStatus'] ?? 0);
+        $this->SendDebug('Socketstatus', json_encode([
+            'InstanzID' => $parent,
+            'Status' => $status,
+            'Host' => (string)($configuration['Host'] ?? ''),
+            'Port' => (int)($configuration['Port'] ?? 0),
+            'Open' => (bool)($configuration['Open'] ?? false),
+            'ParentAktiv' => $active,
+            'Anfrage' => $this->GetBuffer('NotifyPending')
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0);
+        // Reconcile a missed ready event on the existing info tick. Do not dial
+        // an inactive socket or interfere with pending requests/backoff timers.
+        if ($active && $status === 102 && ($configuration['Open'] ?? false)
+            && $this->GetBuffer('NotifyPending') === '' && $this->GetTimerInterval('RecoveryTimer') === 0) {
+            $this->SendDebug('RECOVERY', 'Client Socket bereits aktiv, keine Anfrage ausstehend -> chscan starten', 0);
+            $this->SendNotifyRequest('/zrap/chscan', 'scan');
+        }
+    }
+
     public function StartNotifyListener(): bool
     {
         $this->SetBuffer('NotifyListening', '1');
         $this->SetBuffer('NotifyBuffer', '');
         $this->SetBuffer('NotifyPending', '');
+        $this->SetCommunicationReady();
         if (!$this->HasActiveParent()) {
             $this->EnterNotifyRecovery('Client Socket nicht aktiv');
             return false;
@@ -2694,9 +2740,11 @@ class ZeptrionAir extends IPSModuleStrict
             $this->EnterNotifyRecovery('Client Socket nicht aktiv');
             return;
         }
+        // The response is complete; channel updates may still yield to timers.
+        if ($this->GetBuffer('NotifyPending') === 'processing') return;
         if ($this->GetBuffer('NotifyPending') !== '') {
             if (microtime(true) < (float)$this->GetBuffer('NotifyDeadline')) return;
-            $this->EnterNotifyRecovery('Antwortfrist überschritten');
+            $this->EnterNotifyRecovery('Antwortfrist überschritten', true);
             // Discard the old TCP stream before sending a fresh scan. Otherwise a
             // late response could be mistaken for the new request's response.
             $parent = (int)(IPS_GetInstance($this->InstanceID)['ConnectionID'] ?? 0);
@@ -2728,31 +2776,48 @@ class ZeptrionAir extends IPSModuleStrict
             if ($r === null) break;
             $buffer = $r['rest'];
             $kind = $this->GetBuffer('NotifyPending');
-            $this->SetBuffer('NotifyPending', '');
+            // Keep ownership of the request until its response has been applied
+            // and the next long-poll is prepared. An empty slot lets RecoveryTick
+            // inject an unrelated chscan in the middle of channel updates.
+            $this->SetBuffer('NotifyPending', 'processing');
             $this->SetBuffer('NotifyDeadline', '0');
-            $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
-            if ($r['status'] !== 200 && $r['status'] !== 302) {
-                $this->EnterNotifyRecovery('HTTP Status ' . $r['status']);
-                return '';
-            }
-            $this->ConfirmNotifyCommunication();
-            if ($kind === 'scan') {
-                $this->ProcessNotifyData($r['body']);
-                $this->SetTimerInterval('RecoveryTimer', 5000);
-                $this->SendDebug('RECOVERY', 'chscan OK -> chnotify aktivieren', 0);
-            } elseif ($kind === 'notify') {
-                $this->ProcessNotifyData($r['body']);
-            }
-            if ($this->GetBuffer('NotifyListening') === '1' && $this->GetBuffer('NotifyPending') === '') {
-                $this->SendNotifyRequest('/zrap/chnotify', 'notify');
+            try {
+                $this->SendDebug('CHNOTIFY HTTP', (string)$r['status'] . ' ' . $kind, 0);
+                if ($r['status'] !== 200 && $r['status'] !== 302) {
+                    $this->EnterNotifyRecovery('HTTP Status ' . $r['status'], true);
+                    return '';
+                }
+                $this->ConfirmNotifyCommunication();
+                if ($kind === 'scan') {
+                    $this->ProcessNotifyData($r['body']);
+                } elseif ($kind === 'notify') {
+                    $this->ProcessNotifyData($r['body']);
+                }
+                if ($this->GetBuffer('NotifyListening') === '1' && $this->GetBuffer('NotifyPending') === 'processing') {
+                    if ($kind === 'scan') $this->SendDebug('RECOVERY', 'chscan OK -> chnotify aktivieren', 0);
+                    $this->SendNotifyRequest('/zrap/chnotify', 'notify', true);
+                }
+            } finally {
+                // Release on processing errors, but preserve requests/recovery
+                // states installed by another callback during processing.
+                if ($this->GetBuffer('NotifyPending') === 'processing') {
+                    $this->SetBuffer('NotifyPending', '');
+                    $this->SetBuffer('NotifyDeadline', '0');
+                }
             }
         }
         $this->SetBuffer('NotifyBuffer', $buffer);
         return '';
     }
 
-    private function EnterNotifyRecovery(string $reason): void
+    private function EnterNotifyRecovery(string $reason, bool $requestFailed = false): void
     {
+        // Waiting for the first usable socket is a normal installation phase.
+        // A failed request or loss of an established listener remains an error.
+        $previousStatus = (int)$this->GetBuffer('NotifyConnectionStatus');
+        $hadPendingRequest = in_array($this->GetBuffer('NotifyPending'), ['scan', 'notify'], true);
+        $status = $requestFailed || $hadPendingRequest || in_array($previousStatus, [102, 202], true) ? 202 : 104;
+        $this->SetBuffer('NotifyConnectionStatus', (string)$status);
         $this->SetBuffer('NotifyOnline', '0');
         $this->SetBuffer('NotifyPending', '');
         $this->SetBuffer('NotifyDeadline', '0');
@@ -2760,7 +2825,7 @@ class ZeptrionAir extends IPSModuleStrict
         if ($this->ReadPropertyBoolean('ShowOnline')) {
             $this->SetValueIfChanged('Online', false);
         }
-        $this->SetStatus(202);
+        $this->SetCommunicationStatus($status);
         if (!$this->HasActiveParent()) {
             // The native Client Socket owns reconnect. Its ready event starts
             // the scan; no timer is needed while the connection is unavailable.
@@ -2773,26 +2838,27 @@ class ZeptrionAir extends IPSModuleStrict
         $this->SendDebug('RECOVERY', $reason . ' -> aktiver Socket; chscan erneut in ' . $sec . ' s', 0);
     }
 
-    private function SendNotifyRequest(string $path, string $kind): bool
+    private function SendNotifyRequest(string $path, string $kind, bool $completingResponse = false): bool
     {
         if ($this->GetBuffer('NotifyListening') !== '1' || !$this->HasActiveParent()) {
             $this->EnterNotifyRecovery('Senden nicht möglich');
             return false;
         }
-        if ($this->GetBuffer('NotifyPending') !== '') return false;
+        $pending = $this->GetBuffer('NotifyPending');
+        if ($pending !== '' && !($completingResponse && $pending === 'processing')) return false;
         $q = "GET " . $path . " HTTP/1.1\r\n" .
              "Host: zeptrion\r\n" .
              "Accept: application/xml,text/xml,*/*\r\n" .
              "Cache-Control: no-cache\r\n" .
              "Connection: keep-alive\r\n\r\n";
-        $this->SetBuffer('NotifyPending', $kind);
         $this->SetBuffer('NotifyDeadline', (string)(microtime(true) + ($kind === 'notify' ? 40 : 10)));
+        $this->SetBuffer('NotifyPending', $kind);
         $this->SetTimerInterval('RecoveryTimer', 5000);
         $this->SendDebug('CHNOTIFY TX', $kind . ' ' . $path, 0);
         $ok = $this->SendDataToParent(json_encode(['DataID' => self::TX, 'Buffer' => bin2hex($q)], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         if ($ok === false) {
             $this->SetBuffer('NotifyPending', '');
-            $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen');
+            $this->EnterNotifyRecovery('SendDataToParent fehlgeschlagen', true);
             return false;
         }
         return true;
